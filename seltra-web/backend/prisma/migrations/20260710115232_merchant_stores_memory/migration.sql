@@ -1,0 +1,2 @@
+-- No-op migration.
+-- notionPageId was already removed previously.

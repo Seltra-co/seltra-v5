@@ -1,0 +1,2 @@
+-- This migration already exists in production.
+-- Restored locally to preserve migration history.
