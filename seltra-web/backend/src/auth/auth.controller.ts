@@ -11,7 +11,23 @@ class SignupDto {
 
 class SigninDto {
   email!: string
-  merchantId!: string
+  merchantId?: string
+  password?: string
+}
+
+class ForgotPasswordDto {
+  email!: string
+}
+
+class VerifyResetDto {
+  email!: string
+  code!: string
+}
+
+class ResetPasswordDto {
+  email!: string
+  code!: string
+  password!: string
 }
 
 class OtpVerifyDto {
@@ -37,6 +53,21 @@ export class AuthController {
   @Post('login')
   login(@Body() body: SigninDto, @Req() req: Request) {
     return this.authService.signin(body, this.requestIp(req))
+  }
+
+  @Post('forgot-password')
+  forgotPassword(@Body() body: ForgotPasswordDto) {
+    return this.authService.requestPasswordReset(body.email)
+  }
+
+  @Post('forgot-password/verify')
+  verifyResetCode(@Body() body: VerifyResetDto) {
+    return this.authService.verifyPasswordResetCode(body.email, body.code)
+  }
+
+  @Post('reset-password')
+  resetPassword(@Body() body: ResetPasswordDto) {
+    return this.authService.resetPassword(body.email, body.code, body.password)
   }
 
   @Post('otp/verify')

@@ -137,7 +137,7 @@ export function TypewriterPlaceholder({
 
   return (
     <div aria-hidden="true" className={className}>
-      <div className="min-h-[1.45em] text-current">
+      <div className="text-current">
         {text}
         {!prefersReducedMotion && <span className="ml-0.5 inline-block h-[1em] w-px translate-y-0.5 animate-pulse bg-primary/80" />}
       </div>

@@ -29,6 +29,7 @@ import { SiX } from "@icons-pack/react-simple-icons";
 import { Input } from '@/components/ui/input'
 import { toast } from '@/hooks/use-toast'
 import { TypewriterPlaceholder } from '@/components/marketing/TypewriterPlaceholder'
+import { AuthFlowModal } from '@/components/marketing/AuthFlowModal'
 import { RefreshCw, Globe } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -342,7 +343,7 @@ const featureLinks = [
   { href: '/#pipeline', label: 'How it works' },
 ]
 
-function Header() {
+function Header({ onLogin }: { onLogin: () => void }) {
   const [open, setOpen] = useState(false)
   const [authed, setAuthed] = useState(false)
   const [featuresOpen, setFeaturesOpen] = useState(false)
@@ -413,12 +414,22 @@ function Header() {
           </div>
 
           <div className="flex items-center gap-2.5">
-            <Link
-              href={authed ? '/dashboard' : '/auth?next=/dashboard'}
-              className="hidden items-center rounded-[10px] border border-[#148754] bg-white px-5 py-3 text-[14px] font-medium text-neutral-800 transition-colors hover:bg-neutral-50 md:inline-flex"
-            >
-              {authed ? 'Dashboard' : 'Login'}
-            </Link>
+            {authed ? (
+              <Link
+                href="/dashboard"
+                className="hidden items-center rounded-[10px] border border-[#148754] bg-white px-5 py-3 text-[14px] font-medium text-neutral-800 transition-colors hover:bg-neutral-50 md:inline-flex"
+              >
+                Dashboard
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={onLogin}
+                className="hidden items-center rounded-[10px] border border-[#148754] bg-white px-5 py-3 text-[14px] font-medium text-neutral-800 transition-colors hover:bg-neutral-50 md:inline-flex"
+              >
+                Login
+              </button>
+            )}
             <Link
               href="/apply"
               className="inline-flex items-center rounded-[10px] border-2 border-[#16a34a] bg-[#16a34a] px-5 py-3 text-[14px] font-medium text-white transition-colors hover:border-[#15803d] hover:bg-[#15803d]"
@@ -442,13 +453,22 @@ function Header() {
           <nav className="mx-auto flex max-w-6xl flex-col gap-1 px-5 py-4 text-[15px]">
             <Link href="/#showcase" className="py-2 text-neutral-600 hover:text-neutral-900" onClick={() => setOpen(false)}>showcase</Link>
             <Link href="/#features" className="py-2 text-neutral-600 hover:text-neutral-900" onClick={() => setOpen(false)}>features</Link>
-            <Link
-              href={authed ? '/dashboard' : '/auth?next=/dashboard'}
-              className="py-2 text-neutral-600 hover:text-neutral-900"
-              onClick={() => setOpen(false)}
-            >
-              {authed ? 'Dashboard' : 'Login'}
-            </Link>
+            {authed ? (
+              <Link href="/dashboard" className="py-2 text-neutral-600 hover:text-neutral-900" onClick={() => setOpen(false)}>
+                Dashboard
+              </Link>
+            ) : (
+              <button
+                type="button"
+                className="py-2 text-left text-neutral-600 hover:text-neutral-900"
+                onClick={() => {
+                  setOpen(false)
+                  onLogin()
+                }}
+              >
+                Login
+              </button>
+            )}
           </nav>
         </div>
       )}
@@ -457,7 +477,7 @@ function Header() {
 }
 
 // ─── Hero ─────────────────────────────────────────────────────────────────────
-function Hero() {
+function Hero({ onNeedAuth }: { onNeedAuth: () => void }) {
   const [chatInput, setChatInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
@@ -468,7 +488,8 @@ function Hero() {
     if (prompt) sessionStorage.setItem('seltra:pending_prompt', prompt)
 
     if (!getToken()) {
-      router.push('/auth?next=/onboarding')
+      setIsLoading(false)
+      onNeedAuth()
       return
     }
 
@@ -494,8 +515,8 @@ function Hero() {
           </p>
 
           <div className="mx-auto w-full max-w-[640px] pt-4">
-            <div className="group overflow-hidden rounded-[2rem] border border-black/[0.04] bg-white text-left shadow-[0_18px_50px_-28px_rgba(15,23,15,0.28)] transition-shadow focus-within:shadow-[0_22px_56px_-24px_rgba(15,23,15,0.34)]">
-              <div className="relative px-5 pb-0 pt-4 sm:px-6 sm:pt-5">
+            <div className="group overflow-hidden rounded-[1.75rem] border border-black/[0.04] bg-white text-left shadow-[0_14px_36px_-8px_rgba(22,48,28,0.2),0_4px_12px_-6px_rgba(22,48,28,0.08)] transition-shadow focus-within:shadow-[0_18px_40px_-8px_rgba(22,48,28,0.24),0_6px_14px_-6px_rgba(22,48,28,0.1)]">
+              <div className="relative px-5 pt-4 sm:px-6">
                 <TypewriterPlaceholder
                   prompts={composerPrompts}
                   typingSpeed={35}
@@ -503,7 +524,7 @@ function Hero() {
                   pauseDuration={1600}
                   active={chatInput.length === 0}
                   resumeDelay={200}
-                  className="pointer-events-none absolute inset-x-5 top-4 text-[15px] leading-relaxed text-neutral-400 sm:inset-x-6 sm:top-5 sm:text-base"
+                  className="pointer-events-none absolute inset-x-5 top-4 text-[15px] leading-6 text-neutral-400 sm:inset-x-6 sm:text-base"
                 />
                 <textarea
                   value={chatInput}
@@ -517,21 +538,22 @@ function Hero() {
                   aria-label="Describe your business and what you want to sell"
                   placeholder=""
                   wrap="off"
+                  rows={1}
                   className={cn(
-                    'composer-textarea composer-textarea-light relative z-10 h-[44px] w-full resize-none overflow-x-auto whitespace-pre bg-transparent text-[15px] leading-relaxed text-neutral-900 focus:outline-none sm:h-[48px] sm:text-base',
+                    'composer-textarea composer-textarea-light relative z-10 h-6 w-full resize-none overflow-x-auto whitespace-pre bg-transparent text-[15px] leading-6 text-neutral-900 focus:outline-none sm:text-base',
                     chatInput.length === 0 && 'caret-transparent',
                   )}
                 />
               </div>
 
-              <div className="flex items-center justify-between gap-3 px-4 pb-3.5 sm:px-5 sm:pb-4">
+              <div className="flex items-center justify-between gap-3 px-4 pb-3.5 pt-2.5 sm:px-5 sm:pb-4 sm:pt-3">
                 <button type="button" className="flex h-8 w-8 items-center justify-center rounded-full border border-black/[0.08] bg-white text-neutral-400 transition-colors hover:border-black/15 hover:text-neutral-700 sm:h-9 sm:w-9" title="Attach files">
                   <Plus className="h-4 w-4" />
                 </button>
 
                 <div className="flex items-center gap-1.5">
                   <button type="button" className="hidden items-center gap-1 rounded-full px-3 py-2 text-sm font-medium text-neutral-500 transition-colors hover:bg-neutral-50 hover:text-neutral-800 sm:inline-flex">
-                    build <ChevronDown className="h-4 w-4" />
+                    Build <ChevronDown className="h-4 w-4" />
                   </button>
                   <button type="button" className="flex h-8 w-8 items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-neutral-50 hover:text-neutral-700 sm:h-9 sm:w-9" title="Voice prompt">
                     <Mic className="h-4 w-4" />
@@ -546,7 +568,7 @@ function Hero() {
                     {isLoading ? (
                       <span className="block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                     ) : (
-                      <ArrowUp className="h-4 w-4" />
+                      <img src="/seltra/icons/send.png" alt="" className="h-[18px] w-[18px] object-contain" />
                     )}
                   </button>
                 </div>
@@ -1080,26 +1102,30 @@ function WhySeltra() {
   return (
     <section
       id="why"
-      className="bg-[#f7fbf7] py-12 sm:py-16 [--gutter:max(1.25rem,calc((100%-72rem)/2+1.25rem))] sm:[--gutter:max(2rem,calc((100%-72rem)/2+2rem))]"
+      className="relative overflow-hidden bg-[#212121] py-14 sm:py-20 [--gutter:max(1.25rem,calc((100%-72rem)/2+1.25rem))] sm:[--gutter:max(2rem,calc((100%-72rem)/2+2rem))]"
     >
-      <div className="px-[var(--gutter)]">
-        <div className="rounded-[2rem] bg-[#111814] px-6 py-10 sm:px-12 sm:py-14 lg:px-16 lg:py-16">
-          <h2 className="text-[1.35rem] font-semibold tracking-[-0.03em] text-white sm:text-[1.65rem]">
-            Why Seltra exists.
-          </h2>
-          <p className="mt-6 max-w-3xl text-[1.45rem] font-semibold leading-tight tracking-[-0.03em] text-white sm:text-[2rem]">
-            Commerce is becoming autonomous and AI-first.
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 top-0 h-[240px] w-[min(680px,92%)] -translate-x-1/2"
+        style={{
+          background:
+            'radial-gradient(ellipse at 50% 0%, #1F4634 0%, rgba(31, 70, 52, 0.55) 38%, transparent 72%)',
+        }}
+      />
+      <div className="relative z-10 px-[var(--gutter)]">
+        <h2 className="mx-auto max-w-3xl text-center text-[1.7rem] font-semibold leading-tight tracking-[-0.03em] text-white sm:text-[2.15rem]">
+          “Commerce is becoming autonomous and AI-first.”
+        </h2>
+        <div className="relative mx-auto mt-8 max-w-3xl overflow-hidden rounded-[1.25rem] bg-[#18181A] px-6 py-7 sm:mt-10 sm:px-8 sm:py-8">
+          <img src="/seltra/william.jpg" className="h-12 w-12 rounded-full object-cover" alt="William" />
+          <p className="mt-5 text-[15px] leading-relaxed text-white sm:text-base">
+            Most small and medium businesses (SMEs) still run on a patchwork of DMs, spreadsheets, and disconnected tools selling through Instagram, taking orders on WhatsApp, tracking inventory in a notebook, with no real storefront and no way to scale past one person doing everything manually. Going from &quot;I sell things online&quot; to &quot;I run an online business&quot; has always required a developer, a designer, and weeks of setup. We built Seltra so that gap closes to one sentence.
           </p>
-          <p className="mt-6 max-w-3xl text-[14px] leading-relaxed text-white/70 sm:text-[15px]">
-            Most small and medium businesses still run on a patchwork of DMs, spreadsheets, and disconnected tools — selling through Instagram, taking orders on WhatsApp, tracking inventory in a notebook, with no real storefront and no way to scale past one person doing everything manually. We built Seltra so that gap closes to one sentence.
-          </p>
-          <div className="mt-10 flex items-center justify-end gap-3">
-            <img src="/seltra/william.jpg" className="h-10 w-10 rounded-full object-cover" alt="William" />
-            <div className="text-left">
-              <div className="text-sm font-medium text-white">William</div>
-              <div className="text-[12px] text-white/55">Co-founder, Seltra</div>
-            </div>
+          <div className="mt-5">
+            <div className="text-sm font-semibold text-white">William</div>
+            <div className="text-[13px] text-white/45">Co-Founder @ Seltra</div>
           </div>
+          <div aria-hidden className="absolute inset-x-0 bottom-0 h-[3px] bg-[#3A745C]" />
         </div>
       </div>
     </section>
@@ -1218,15 +1244,17 @@ function Stats() {
 // ─── Features ─────────────────────────────────────────────────────────────────
 function Features() {
   return (
-    <section
-      id="features"
-      className="bg-[#f7fbf7] py-8 sm:py-12 [--gutter:max(1.25rem,calc((100%-72rem)/2+1.25rem))] sm:[--gutter:max(2rem,calc((100%-72rem)/2+2rem))]"
-    >
-      <div className="px-[var(--gutter)]">
-        <div className="rounded-[2rem] bg-[#24A46E] px-6 py-10 sm:px-10 sm:py-14 lg:px-14 lg:py-16">
-          <h2 className="mb-10 max-w-3xl text-[1.65rem] font-semibold tracking-[-0.03em] text-white sm:mb-12 sm:text-[2rem]">
-            Specialized agents that run your store.
-          </h2>
+    <section id="features" className="bg-[#f7fbf7] px-3 py-4 sm:px-4 sm:py-5 lg:px-5">
+      <div
+        className="rounded-[1.75rem] px-6 py-8 sm:rounded-[2rem] sm:px-10 sm:py-12 lg:px-12 lg:py-14"
+        style={{
+          background:
+            'linear-gradient(180deg, #3c4a3c 0%, #354636 38%, #2c3f2c 68%, #38423c 100%)',
+        }}
+      >
+        <h2 className="mb-10 max-w-3xl text-[1.65rem] font-semibold tracking-[-0.03em] text-white sm:mb-12 sm:text-[2rem]">
+          Specialized agents that <span className="text-[#3A996D]">run your store.</span>
+        </h2>
 
           <div className="flex flex-col gap-10 sm:gap-12">
             {features.map((feature) => (
@@ -1237,18 +1265,17 @@ function Features() {
                 <p className="mt-2 max-w-2xl text-[13px] font-medium leading-relaxed text-white/80 sm:text-sm">
                   {feature.desc}
                 </p>
-                <div className="mt-5 min-h-[168px] rounded-[1.35rem] bg-[#e8ebe8] sm:min-h-[210px]" />
+                <div className="mt-5 min-h-[168px] rounded-[1.35rem] bg-[#d9d9d9] sm:min-h-[210px]" />
               </article>
             ))}
           </div>
-        </div>
       </div>
     </section>
   )
 }
 
 // ─── CTA ──────────────────────────────────────────────────────────────────────
-function CTA() {
+function CTA({ onNeedAuth }: { onNeedAuth: () => void }) {
   const [chatInput, setChatInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
@@ -1259,7 +1286,8 @@ function CTA() {
     if (prompt) sessionStorage.setItem('seltra:pending_prompt', prompt)
 
     if (!getToken()) {
-      router.push('/auth?next=/onboarding')
+      setIsLoading(false)
+      onNeedAuth()
       return
     }
 
@@ -1347,18 +1375,29 @@ function Footer() {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function LandingPage() {
+  const [authOpen, setAuthOpen] = useState(false)
+  const [authSession, setAuthSession] = useState(0)
+  const [authNext, setAuthNext] = useState('/dashboard')
+
+  const openAuth = (next: string) => {
+    setAuthNext(next)
+    setAuthSession((session) => session + 1)
+    setAuthOpen(true)
+  }
+
   return (
-    <div className="min-h-screen">
-      <Header />
-      <Hero />
+    <div className="min-h-screen bg-[#f7fbf7]">
+      <Header onLogin={() => openAuth('/dashboard')} />
+      <Hero onNeedAuth={() => openAuth('/onboarding')} />
       <HowItWorks />
       <Showcase />
       <Features />
       <WhySeltra />
       <Testimonials />
       <Stats />
-      <CTA />
+      <CTA onNeedAuth={() => openAuth('/onboarding')} />
       <Footer />
+      <AuthFlowModal key={authSession} open={authOpen} nextPath={authNext} onClose={() => setAuthOpen(false)} />
     </div>
   )
 }

@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt'
 import { AuthController } from './auth.controller'
 import { AuthService } from './auth.service'
 import { TenantEventsService } from '../internal-ops/events/tenant-events.service'
+import { ResendService } from '../resend/resend.service'
 
 @Module({
   imports: [
@@ -12,7 +13,7 @@ import { TenantEventsService } from '../internal-ops/events/tenant-events.servic
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, TenantEventsService],
+  providers: [AuthService, TenantEventsService, ResendService],
   exports: [AuthService],
 })
 export class AuthModule {}

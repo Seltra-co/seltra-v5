@@ -26,6 +26,21 @@ export class ResendService {
     ])
   }
 
+  async sendPasswordResetOtp(input: { to: string; code: string }) {
+    await resend.emails.send({
+      from: FROM,
+      to: input.to,
+      subject: 'Your Seltra password reset code',
+      html: emailShell(`
+        <tr><td style="background:#ffffff;padding:36px 40px">
+          <p style="margin:0 0 8px;font-size:15px;font-weight:600;color:#0a0a0a">Reset your password</p>
+          <p style="margin:0 0 20px;font-size:13px;color:#71717a;line-height:1.7">Enter this code to choose a new password. It expires in 10 minutes.</p>
+          <p style="margin:0;font-size:28px;font-weight:700;letter-spacing:0.35em;color:#16803c">${escapeHtml(input.code)}</p>
+        </td></tr>
+      `),
+    })
+  }
+
   async sendMerchantApproval(input: {
     to: string
     fullName: string
