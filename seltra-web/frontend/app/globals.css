@@ -426,12 +426,63 @@
 }
 .store-shelf-track::-webkit-scrollbar { display: none; }
 
+.landing-hero-wash {
+  background-color: #f6fff8;
+  background-image: url('/seltra/hero/hero-background.png');
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.agent-thinking-text-light {
+  background: linear-gradient(
+    90deg,
+    #737373 0%,
+    #16a34a 40%,
+    #737373 70%,
+    #737373 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: agent-thinking-shimmer 2.4s ease-in-out infinite;
+}
+
+@keyframes pointer-to-store {
+  0%   { transform: translate(18px, 16px); opacity: 0; }
+  12%  { opacity: 1; }
+  42%  { transform: translate(0, 0); }
+  52%  { transform: translate(0, 2px) scale(0.92); }
+  62%  { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(0, 0); opacity: 1; }
+}
+
+.pointer-to-store {
+  animation: pointer-to-store 3.2s ease-in-out infinite;
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 .composer-textarea {
   white-space: pre;
   overflow-wrap: normal;
   word-break: normal;
   scrollbar-width: thin;
   scrollbar-color: rgba(255,255,255,0.45) transparent;
+}
+
+.composer-textarea-light {
+  scrollbar-color: rgba(15, 23, 15, 0.2) transparent;
+}
+.composer-textarea-light::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 15, 0.18);
 }
 .composer-textarea::-webkit-scrollbar {
   height: 8px;
