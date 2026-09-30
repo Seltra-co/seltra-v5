@@ -337,6 +337,18 @@ function SimpleModal({
   )
 }
 
+function Aurora({ tone = 'light' }: { tone?: 'hero' | 'light' | 'dark' | 'cta' }) {
+  return (
+    <div className={cn('landing-aurora', `landing-aurora-${tone}`)} aria-hidden>
+      <span className="aurora-orb orb-a" />
+      <span className="aurora-orb orb-b" />
+      <span className="aurora-orb orb-c" />
+      {tone === 'hero' || tone === 'cta' ? <span className="aurora-orb orb-d" /> : null}
+      <span className="landing-grain" />
+    </div>
+  )
+}
+
 // ─── Header ──────────────────────────────────────────────────────────────────
 const featureLinks = [
   { href: '/#features', label: 'Features' },
@@ -348,6 +360,14 @@ function Header({ onLogin }: { onLogin: () => void }) {
   const [authed, setAuthed] = useState(false)
   const [featuresOpen, setFeaturesOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
+  const [brandReady, setBrandReady] = useState(false)
+
+  const bindLogo = (node: HTMLImageElement | null) => {
+    if (!node) return
+    const ready = () => setBrandReady(true)
+    if (node.complete && node.naturalWidth > 0) ready()
+    else node.addEventListener('load', ready, { once: true })
+  }
 
   useEffect(() => setAuthed(Boolean(getToken())), [])
 
@@ -369,17 +389,24 @@ function Header({ onLogin }: { onLogin: () => void }) {
     <header
       className={cn(
         'fixed left-0 right-0 top-0 z-50 transition-all duration-300',
-        scrolled || open ? 'bg-white/85 shadow-[0_1px_0_rgba(15,23,15,0.06)] backdrop-blur-xl' : 'bg-transparent',
+        scrolled || open ? 'landing-header-glass' : 'bg-transparent',
       )}
     >
       <div className="mx-auto max-w-6xl px-5 sm:px-8">
         <div className="flex h-[4.5rem] items-center justify-between">
-          <div className="flex min-w-0 items-center gap-8">
+          <div className={cn('flex min-w-0 items-center gap-8', brandReady ? 'opacity-100' : 'opacity-0')}>
             <Link href="/" className="flex min-w-0 items-center">
-              <img src="/seltra/hero/seltra-logo.png" alt="seltra" className="h-[23px] w-[89.5px] shrink-0 object-contain" />
+              <img
+                ref={bindLogo}
+                src="/seltra/hero/seltra-logo.png"
+                alt="seltra"
+                onLoad={() => setBrandReady(true)}
+                onError={() => setBrandReady(true)}
+                className="h-[23px] w-[89.5px] shrink-0 object-contain"
+              />
             </Link>
 
-            <nav className="hidden items-center gap-7 text-[15px] text-neutral-600 md:flex">
+            <nav className="landing-menu hidden items-center gap-7 text-[15px] text-neutral-600 md:flex">
               <Link href="/#showcase" className="transition-colors hover:text-neutral-900">showcase</Link>
               <div className="relative">
                 <button
@@ -396,7 +423,7 @@ function Header({ onLogin }: { onLogin: () => void }) {
                   <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', featuresOpen && 'rotate-180')} />
                 </button>
                 {featuresOpen && (
-                  <div className="absolute left-0 top-full z-20 mt-3 min-w-[11.5rem] overflow-hidden rounded-2xl border border-black/[0.06] bg-white py-1.5 shadow-[0_18px_40px_-24px_rgba(15,23,15,0.35)]">
+                  <div className="landing-menu-glass absolute left-0 top-full z-20 mt-3 min-w-[11.5rem] overflow-hidden rounded-2xl py-1.5">
                     {featureLinks.map((item) => (
                       <Link
                         key={item.href}
@@ -450,7 +477,7 @@ function Header({ onLogin }: { onLogin: () => void }) {
 
       {open && (
         <div className="border-t border-black/[0.06] bg-white md:hidden">
-          <nav className="mx-auto flex max-w-6xl flex-col gap-1 px-5 py-4 text-[15px]">
+          <nav className="landing-menu mx-auto flex max-w-6xl flex-col gap-1 px-5 py-4 text-[15px]">
             <Link href="/#showcase" className="py-2 text-neutral-600 hover:text-neutral-900" onClick={() => setOpen(false)}>showcase</Link>
             <Link href="/#features" className="py-2 text-neutral-600 hover:text-neutral-900" onClick={() => setOpen(false)}>features</Link>
             {authed ? (
@@ -504,6 +531,7 @@ function Hero({ onNeedAuth }: { onNeedAuth: () => void }) {
 
   return (
     <section className="landing-hero-wash relative flex min-h-screen items-center justify-center overflow-hidden px-5 pb-20 pt-24 sm:px-6">
+      <Aurora tone="hero" />
       <div className="relative z-10 mx-auto w-full max-w-3xl text-center">
         <div className="fade-in w-full space-y-5">
           <h1 className="text-balance text-[2.35rem] font-semibold leading-[1.05] tracking-[-0.04em] text-neutral-950 sm:text-5xl md:text-[3.5rem]">
@@ -514,8 +542,8 @@ function Hero({ onNeedAuth }: { onNeedAuth: () => void }) {
             Create a storefront by describing what you need.
           </p>
 
-          <div className="mx-auto w-full max-w-[640px] pt-4">
-            <div className="group overflow-hidden rounded-[1.75rem] border border-black/[0.04] bg-white text-left shadow-[0_14px_36px_-8px_rgba(22,48,28,0.2),0_4px_12px_-6px_rgba(22,48,28,0.08)] transition-shadow focus-within:shadow-[0_18px_40px_-8px_rgba(22,48,28,0.24),0_6px_14px_-6px_rgba(22,48,28,0.1)]">
+          <div className="mx-auto w-full max-w-[564px] pt-4">
+            <div className="landing-prompt group flex min-h-[117px] flex-col justify-between overflow-hidden text-left">
               <div className="relative px-5 pt-4 sm:px-6">
                 <TypewriterPlaceholder
                   prompts={composerPrompts}
@@ -746,8 +774,9 @@ function Showcase() {
   return (
     <section
       id="showcase"
-      className="relative overflow-hidden bg-[#f7fbf7] pb-20 pt-6 sm:pb-24 sm:pt-8 [--gutter:max(1.25rem,calc((100%-72rem)/2+1.25rem))] sm:[--gutter:max(2rem,calc((100%-72rem)/2+2rem))]"
+      className="landing-band relative overflow-hidden pb-20 pt-6 sm:pb-24 sm:pt-8 [--gutter:max(1.25rem,calc((100%-72rem)/2+1.25rem))] sm:[--gutter:max(2rem,calc((100%-72rem)/2+2rem))]"
     >
+      <Aurora tone="light" />
       <div className="relative z-10 px-[var(--gutter)]">
         <h2 className="text-left text-[1.85rem] font-bold tracking-[-0.035em] text-[#15803d] sm:text-[2.5rem]">
           Live stores built with Seltra.
@@ -765,7 +794,7 @@ function Showcase() {
             href={store.url}
             target="_blank"
             rel="noreferrer"
-            className="group relative h-[280px] w-[min(86vw,318px)] flex-shrink-0 overflow-hidden rounded-[2rem] bg-white sm:h-[342px] sm:w-[387px]"
+            className="landing-float-card group relative h-[280px] w-[min(86vw,318px)] flex-shrink-0 overflow-hidden rounded-[2rem] bg-white sm:h-[342px] sm:w-[387px]"
           >
             <img
               src={store.image}
@@ -841,7 +870,7 @@ function PreviewWell({
 }) {
   return (
     <div className="relative flex h-[158px] items-center justify-center overflow-hidden rounded-[1.75rem]">
-      <div className={cn('absolute left-1/2 top-[55%] h-[220px] w-[220px] -translate-x-1/2 -translate-y-1/2 rounded-full', circle)} />
+      <div className={cn('landing-blob absolute left-1/2 top-[55%] h-[220px] w-[220px] -translate-x-1/2 -translate-y-1/2 rounded-full', circle)} />
       <div className={cn('relative z-10', width)}>{children}</div>
     </div>
   )
@@ -912,7 +941,8 @@ function StepPreview({ type }: { type: string }) {
 
 function HowItWorks() {
   return (
-    <section id="pipeline" className="relative overflow-x-hidden bg-[#f7fbf7] pt-20 sm:pt-24">
+    <section id="pipeline" className="landing-band relative overflow-x-hidden pt-20 sm:pt-24">
+      <Aurora tone="light" />
       <div className="relative z-10 mx-auto max-w-6xl px-5 sm:px-8">
         <h2 className="mb-10 text-[1.85rem] font-bold tracking-[-0.035em] text-[#15803d] sm:mb-12 sm:text-[2.5rem]">
           One prompt to live store.
@@ -922,7 +952,7 @@ function HowItWorks() {
           {steps.map((step, index) => (
             <article
               key={step.title}
-              className="relative rounded-[2.25rem] border border-[#e6e8e6] bg-white p-4 pb-6 shadow-[0_18px_40px_-22px_rgba(15,23,15,0.22)] sm:p-5"
+              className="landing-glass-card relative rounded-[2.25rem] p-4 pb-6 sm:p-5"
             >
               <div className="mb-5">
                 <StepPreview type={step.preview} />
@@ -946,7 +976,7 @@ function HowItWorks() {
           src="/seltra/hero/section-diamond.png"
           alt=""
           aria-hidden
-          className="pointer-events-none absolute bottom-0 right-0 h-[160px] w-auto max-w-none select-none object-contain object-right sm:h-[240px] lg:h-[276px]"
+          className="landing-diamond pointer-events-none absolute bottom-0 right-0 z-10 h-[160px] w-auto max-w-none select-none object-contain object-right sm:h-[240px] lg:h-[276px]"
         />
       </div>
     </section>
@@ -1102,21 +1132,14 @@ function WhySeltra() {
   return (
     <section
       id="why"
-      className="relative overflow-hidden bg-[#212121] py-14 sm:py-20 [--gutter:max(1.25rem,calc((100%-72rem)/2+1.25rem))] sm:[--gutter:max(2rem,calc((100%-72rem)/2+2rem))]"
+      className="relative overflow-hidden bg-[#1a1c1b] py-14 sm:py-20 [--gutter:max(1.25rem,calc((100%-72rem)/2+1.25rem))] sm:[--gutter:max(2rem,calc((100%-72rem)/2+2rem))]"
     >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute left-1/2 top-0 h-[240px] w-[min(680px,92%)] -translate-x-1/2"
-        style={{
-          background:
-            'radial-gradient(ellipse at 50% 0%, #1F4634 0%, rgba(31, 70, 52, 0.55) 38%, transparent 72%)',
-        }}
-      />
+      <Aurora tone="dark" />
       <div className="relative z-10 px-[var(--gutter)]">
         <h2 className="mx-auto max-w-3xl text-center text-[1.7rem] font-semibold leading-tight tracking-[-0.03em] text-white sm:text-[2.15rem]">
           “Commerce is becoming autonomous and AI-first.”
         </h2>
-        <div className="relative mx-auto mt-8 max-w-3xl overflow-hidden rounded-[1.25rem] bg-[#18181A] px-6 py-7 sm:mt-10 sm:px-8 sm:py-8">
+        <div className="landing-glass-dark relative mx-auto mt-8 max-w-3xl overflow-hidden rounded-[1.25rem] px-6 py-7 sm:mt-10 sm:px-8 sm:py-8">
           <img src="/seltra/william.jpg" className="h-12 w-12 rounded-full object-cover" alt="William" />
           <p className="mt-5 text-[15px] leading-relaxed text-white sm:text-base">
             Most small and medium businesses (SMEs) still run on a patchwork of DMs, spreadsheets, and disconnected tools selling through Instagram, taking orders on WhatsApp, tracking inventory in a notebook, with no real storefront and no way to scale past one person doing everything manually. Going from &quot;I sell things online&quot; to &quot;I run an online business&quot; has always required a developer, a designer, and weeks of setup. We built Seltra so that gap closes to one sentence.
@@ -1125,7 +1148,7 @@ function WhySeltra() {
             <div className="text-sm font-semibold text-white">William</div>
             <div className="text-[13px] text-white/45">Co-Founder @ Seltra</div>
           </div>
-          <div aria-hidden className="absolute inset-x-0 bottom-0 h-[3px] bg-[#3A745C]" />
+          <div aria-hidden className="absolute inset-x-0 bottom-0 h-[3px] bg-[#3A745C] shadow-[0_0_22px_rgba(58,153,109,0.85)]" />
         </div>
       </div>
     </section>
@@ -1152,13 +1175,14 @@ function Testimonials() {
   return (
     <section
       id="testimonials"
-      className="relative overflow-hidden bg-[#f7fbf7] pb-16 pt-6 sm:pb-24 sm:pt-8 [--gutter:max(1.25rem,calc((100%-72rem)/2+1.25rem))] sm:[--gutter:max(2rem,calc((100%-72rem)/2+2rem))]"
+      className="landing-band relative overflow-hidden pb-16 pt-6 sm:pb-24 sm:pt-8 [--gutter:max(1.25rem,calc((100%-72rem)/2+1.25rem))] sm:[--gutter:max(2rem,calc((100%-72rem)/2+2rem))]"
     >
+      <Aurora tone="light" />
       <img
         src="/seltra/hero/section-diamond.png"
         alt=""
         aria-hidden
-        className="pointer-events-none absolute right-0 top-0 h-[160px] w-auto max-w-none select-none object-contain object-right sm:h-[240px] lg:h-[276px]"
+        className="landing-diamond pointer-events-none absolute right-0 top-0 z-10 h-[160px] w-auto max-w-none select-none object-contain object-right sm:h-[240px] lg:h-[276px]"
       />
 
       <div className="relative z-10 px-[var(--gutter)]">
@@ -1175,7 +1199,7 @@ function Testimonials() {
           <article
             key={`${item.name}-${index}`}
             data-quote-card
-            className="w-[min(86vw,420px)] flex-shrink-0 rounded-[1.5rem] border border-black/[0.05] bg-white p-6 shadow-[0_18px_40px_-28px_rgba(15,23,15,0.28)] sm:w-[460px] sm:p-7"
+            className="landing-glass-card w-[min(86vw,420px)] flex-shrink-0 rounded-[1.5rem] p-6 sm:w-[460px] sm:p-7"
           >
             <div className="flex gap-0.5 text-[#16a34a]">
               {Array.from({ length: 5 }).map((_, star) => (
@@ -1220,10 +1244,12 @@ function Stats() {
   return (
     <section
       id="stats"
-      className="bg-[#f7fbf7] pb-12 sm:pb-16 [--gutter:max(1.25rem,calc((100%-72rem)/2+1.25rem))] sm:[--gutter:max(2rem,calc((100%-72rem)/2+2rem))]"
+      className="landing-band relative pb-12 sm:pb-16 [--gutter:max(1.25rem,calc((100%-72rem)/2+1.25rem))] sm:[--gutter:max(2rem,calc((100%-72rem)/2+2rem))]"
     >
       <div className="px-[var(--gutter)]">
-        <div className="rounded-[2rem] bg-[#0d0f0e] px-6 py-12 sm:px-12 sm:py-16 lg:px-16">
+        <div className="landing-stats-panel rounded-[2rem] px-6 py-12 sm:px-12 sm:py-16 lg:px-16">
+          <Aurora tone="dark" />
+          <div className="relative z-10">
           <h2 className="text-center text-[1.65rem] font-semibold tracking-[-0.03em] text-white sm:text-[2rem]">
             How far Seltra has come
           </h2>
@@ -1235,6 +1261,7 @@ function Stats() {
               </div>
             ))}
           </div>
+          </div>
         </div>
       </div>
     </section>
@@ -1244,20 +1271,16 @@ function Stats() {
 // ─── Features ─────────────────────────────────────────────────────────────────
 function Features() {
   return (
-    <section id="features" className="bg-[#f7fbf7] px-3 py-4 sm:px-4 sm:py-5 lg:px-5">
-      <div
-        className="rounded-[1.75rem] px-6 py-8 sm:rounded-[2rem] sm:px-10 sm:py-12 lg:px-12 lg:py-14"
-        style={{
-          background:
-            'linear-gradient(180deg, #3c4a3c 0%, #354636 38%, #2c3f2c 68%, #38423c 100%)',
-        }}
-      >
+    <section id="features" className="landing-band px-3 py-4 sm:px-4 sm:py-5 lg:px-5">
+      <div className="landing-feature-panel rounded-[1.75rem] px-6 py-8 sm:rounded-[2rem] sm:px-10 sm:py-12 lg:px-12 lg:py-14">
+        <Aurora tone="dark" />
+        <div className="relative z-10">
         <h2 className="mb-10 max-w-3xl text-[1.65rem] font-semibold tracking-[-0.03em] text-white sm:mb-12 sm:text-[2rem]">
           Specialized agents that <span className="text-[#3A996D]">run your store.</span>
         </h2>
 
           <div className="flex flex-col gap-10 sm:gap-12">
-            {features.map((feature) => (
+            {features.map((feature, index) => (
               <article key={feature.title}>
                 <h3 className="text-[1.05rem] font-semibold tracking-tight text-white sm:text-[1.15rem]">
                   {feature.title}
@@ -1265,10 +1288,14 @@ function Features() {
                 <p className="mt-2 max-w-2xl text-[13px] font-medium leading-relaxed text-white/80 sm:text-sm">
                   {feature.desc}
                 </p>
-                <div className="mt-5 min-h-[168px] rounded-[1.35rem] bg-[#d9d9d9] sm:min-h-[210px]" />
+                <div
+                  className="landing-feature-well mt-5 min-h-[168px] sm:min-h-[210px]"
+                  style={{ ['--sheen-delay' as string]: `${index * 1.6}s` }}
+                />
               </article>
             ))}
           </div>
+        </div>
       </div>
     </section>
   )
@@ -1301,8 +1328,9 @@ function CTA({ onNeedAuth }: { onNeedAuth: () => void }) {
   }
 
   return (
-    <section id="cta" className="bg-gradient-to-b from-[#f7fbf7] to-[#e7f6ea] px-5 py-20 sm:py-28">
-      <div className="mx-auto max-w-2xl text-center">
+    <section id="cta" className="landing-band relative overflow-hidden px-5 py-20 sm:py-28">
+      <Aurora tone="cta" />
+      <div className="relative z-10 mx-auto max-w-2xl text-center">
         <h2 className="text-[2rem] font-semibold tracking-[-0.035em] text-neutral-950 sm:text-[2.75rem]">
           Your store is one prompt away
         </h2>
@@ -1310,7 +1338,9 @@ function CTA({ onNeedAuth }: { onNeedAuth: () => void }) {
           No code. No designers. No manual setup. Just describe what you are building.
         </p>
 
-        <div className="mx-auto mt-8 flex max-w-xl items-center gap-3 rounded-full border border-black/[0.06] bg-white px-3 py-2 shadow-[0_18px_40px_-28px_rgba(15,23,15,0.28)] sm:px-4 sm:py-2.5">
+        <div className="landing-composer-halo mx-auto mt-8 max-w-xl rounded-full">
+          <span className="landing-sheen" aria-hidden />
+        <div className="landing-composer flex items-center gap-3 rounded-full px-3 py-2 sm:px-4 sm:py-2.5">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-black/[0.08] text-neutral-400">
             <Plus className="h-4 w-4" />
           </span>
@@ -1341,6 +1371,7 @@ function CTA({ onNeedAuth }: { onNeedAuth: () => void }) {
             )}
           </button>
         </div>
+        </div>
       </div>
     </section>
   )
@@ -1349,8 +1380,10 @@ function CTA({ onNeedAuth }: { onNeedAuth: () => void }) {
 // ─── Footer ───────────────────────────────────────────────────────────────────
 function Footer() {
   return (
-    <footer className="bg-[#f7fbf7] px-5 pb-8 sm:px-8">
-      <div className="rounded-[2rem] bg-[#111814] px-6 py-12 text-center text-white sm:px-10 sm:py-14">
+    <footer className="landing-band px-5 pb-8 sm:px-8">
+      <div className="landing-footer-panel rounded-[2rem] px-6 py-12 text-center text-white sm:px-10 sm:py-14">
+        <Aurora tone="dark" />
+        <div className="relative z-10">
         <Link href="/" className="inline-flex items-center justify-center">
           <img src="/seltra/hero/seltra-logo.png" alt="seltra" className="h-6 w-auto brightness-0 invert sm:h-7" />
         </Link>
@@ -1368,6 +1401,7 @@ function Footer() {
           </a>
         </div>
         <p className="mt-8 text-[11px] text-white/40">Copyright 2026 Seltra Inc. All rights reserved.</p>
+        </div>
       </div>
     </footer>
   )
@@ -1386,7 +1420,7 @@ export default function LandingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f7fbf7]">
+    <div className="landing-page min-h-screen">
       <Header onLogin={() => openAuth('/dashboard')} />
       <Hero onNeedAuth={() => openAuth('/onboarding')} />
       <HowItWorks />

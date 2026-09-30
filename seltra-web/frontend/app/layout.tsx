@@ -3,12 +3,19 @@ import type { Metadata } from 'next'
 import Script from 'next/script'
 import { GeistSans } from 'geist/font/sans'
 import { GeistMono } from 'geist/font/mono'
-import { Fraunces } from 'next/font/google'
+import { Fraunces, Poppins } from 'next/font/google'
 import { ThemeProvider } from 'next-themes'
 import { Toaster } from 'sonner'
 import { StoreProvider } from '@/context/StoreContext'
 import { SessionGuard } from '@/components/auth/SessionGuard'
 import './globals.css'
+
+const menuFont = Poppins({
+  subsets: ['latin'],
+  weight: ['400', '500'],
+  display: 'swap',
+  variable: '--font-menu',
+})
 
 const displayFont = Fraunces({
   variable: '--font-display',
@@ -128,8 +135,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${GeistSans.variable} ${GeistMono.variable} ${displayFont.variable}`}
+      className={`${GeistSans.variable} ${GeistMono.variable} ${displayFont.variable} ${menuFont.variable}`}
     >
+      <head>
+        <link rel="preload" href="/seltra/hero/seltra-logo.png" as="image" />
+      </head>
       <body suppressHydrationWarning>
         <ThemeProvider
           attribute="class"
