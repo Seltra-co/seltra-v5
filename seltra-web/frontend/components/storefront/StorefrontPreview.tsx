@@ -19,6 +19,9 @@ export type StoreData = {
   manifest?: StoreManifest | null
   heroSource?: string | null
   navSource?: string | null
+  status?: string | null
+  createdAt?: string
+  updatedAt?: string
   storefrontCode?: string | null; storefrontVersion?: number
   fulfillmentMode?: 'delivery' | 'pickup' | 'both' | null
   contactPhone?: string | null

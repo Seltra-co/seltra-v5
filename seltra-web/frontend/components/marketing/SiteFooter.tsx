@@ -1,49 +1,59 @@
 import Link from 'next/link'
-import Image from 'next/image'
-import { Github, Twitter } from 'lucide-react'
-import { Linkedin } from "lucide-react";
-import { SiX } from "@icons-pack/react-simple-icons";
+import { Instagram, Linkedin } from 'lucide-react'
+import { SiX } from '@icons-pack/react-simple-icons'
+import { Aurora } from '@/components/marketing/Aurora'
+import { SlashDivider } from '@/components/marketing/SlashDivider'
+
+const socials = [
+  { href: 'https://x.com/seltra_co', label: 'X', icon: <SiX size={15} /> },
+  { href: 'https://www.linkedin.com/company/seltra-inc/', label: 'LinkedIn', icon: <Linkedin className="h-[17px] w-[17px]" /> },
+  { href: 'https://www.instagram.com/seltra.co/', label: 'Instagram', icon: <Instagram className="h-[17px] w-[17px]" /> },
+]
+
+const footerLinks = [
+  { href: '/#showcase', label: 'Showcase' },
+  { href: '/features', label: 'Features' },
+  { href: '/careers', label: 'Careers' },
+  { href: '/terms', label: 'Terms of Service' },
+  { href: '/privacy', label: 'Privacy Policy' },
+]
 
 export function SiteFooter() {
   return (
-    <footer className="border-t border-border bg-background py-10">
-      <div className="container mx-auto px-4 sm:px-6">
-        <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
-          <div>
-            <Link href="/" className="mb-2 flex items-center gap-2">
-          <img src="https://res.cloudinary.com/dfmsaarli/image/upload/v1782364695/ICON_large_ngiv41.png" alt="Seltra" className="h-7 w-7 rounded-xl" />
-              <span className="font-mono font-semibold">seltra</span>
-            </Link>
-            <p className="max-w-md text-sm text-muted-foreground">Commerce that runs itself.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-4 font-mono text-xs text-muted-foreground sm:gap-6">
-            <Link href="/careers" className="transition-colors hover:text-primary">careers</Link>
-            <Link href="/terms" className="transition-colors hover:text-primary">terms</Link>
-            <Link href="/privacy" className="transition-colors hover:text-primary">privacy</Link>
-          <a
-            href="https://x.com/seltra_co"
-            target="_blank"
-            rel="noreferrer"
-            className="transition-colors hover:text-primary"
-            aria-label="X"
-          >
-            <SiX size={16} />
-          </a>
+    <footer className="relative px-5 pb-8 sm:px-8">
+      <div className="site-footer-panel mx-auto max-w-[1264px] rounded-[2rem] px-6 py-12 text-center text-white sm:px-10 sm:py-14">
+        <Aurora tone="dark" />
+        <div className="relative z-10">
+          <Link href="/" className="inline-flex items-center justify-center">
+            <img src="/seltra/hero/seltra-logo.png" alt="seltra" className="h-7 w-auto sm:h-8" />
+          </Link>
 
-          <a
-            href="https://www.linkedin.com/company/seltra-inc/"
-            target="_blank"
-            rel="noreferrer"
-            className="transition-colors hover:text-primary"
-            aria-label="LinkedIn"
-          >
-            <Linkedin className="h-4 w-4" />
-          </a>
+          <nav className="landing-menu mt-8 flex flex-wrap items-center justify-center gap-x-7 gap-y-3 text-[14px] text-white/75 sm:gap-x-10">
+            {footerLinks.map((item) => (
+              <Link key={item.href} href={item.href} className="transition-colors hover:text-white">
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+
+          <SlashDivider className="mt-8" />
+
+          <div className="mt-7 flex items-center justify-center gap-2 text-white/85">
+            {socials.map(({ href, label, icon }) => (
+              <a
+                key={label}
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={label}
+                className="flex h-9 w-9 items-center justify-center rounded-full transition-colors hover:bg-white/[0.08] hover:text-[#4ade80]"
+              >
+                {icon}
+              </a>
+            ))}
           </div>
-        </div>
-        <div className="mt-8 flex flex-col justify-between gap-2 border-t border-border pt-6 font-mono text-[11px] text-muted-foreground sm:flex-row">
-          <div>Copyright 2026 Seltra Inc. All rights reserved.</div>
-          <div>seltra.co / v0.1.0 / all systems <span className="text-primary">online</span></div>
+
+          <p className="landing-menu mt-5 text-[12px] text-white/60">© Copyright 2026, All Rights Reserved</p>
         </div>
       </div>
     </footer>

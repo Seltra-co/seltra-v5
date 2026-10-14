@@ -8,26 +8,87 @@ import {
   Store as StoreIcon, ShoppingBag, Users, Mail,
   ChevronLeft, ChevronRight,
   TrendingUp, Wallet, Menu, X, Trash2, Copy,
-  MessageSquare, Sparkles, ArrowRight, Palette, Megaphone,
-  Zap, ShoppingCart, Bell, CreditCard, ShieldCheck, CheckCheck,
-  FileText, Bot, UserCircle, HelpCircle, Globe2, Building2, LockKeyhole,
-  Eye, Pencil,
+  Sparkles, ArrowRight, Megaphone,
+  Bell, CreditCard, ShieldCheck, CheckCheck,
+  FileText, UserCircle, HelpCircle, Globe2, Building2, LockKeyhole,
+  Eye, Pencil, Mic, ChevronDown, PanelLeft, Search, UserRound,
+  MoreHorizontal, Expand, MessageSquare, Monitor, Smartphone, Asterisk,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { motion, AnimatePresence } from 'framer-motion'
+import { Aurora } from '@/components/marketing/Aurora'
+import { TypewriterPlaceholder } from '@/components/marketing/TypewriterPlaceholder'
+import { cn } from '@/lib/utils'
 import { ThinkingOrb } from 'thinking-orbs'
 import { Button } from '@/components/ui/button'
 import StorefrontPreview, { type StoreData } from '@/components/storefront/StorefrontPreview'
 import { StorefrontShell } from '@/components/storefront/StorefrontShell'
-import { AgentBuildStream } from '@/components/storefront/AgentBuildStream'
+import { AgentBuildStream, type BuildProgress } from '@/components/storefront/AgentBuildStream'
 import { useStore } from '@/context/StoreContext'
 import { CURRENT_ANNOUNCEMENT_VERSION, WHATS_NEW } from './config/whats-new'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001'
 const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? 'seltra.co'
 
+const DEV_PREVIEW = process.env.NODE_ENV === 'development'
+
+const DEV_PREVIEW_STORES: StoreData[] = [
+  { id: 'preview-pay-mirror', name: 'Seltra Pay Mirror', slug: 'seltra-pay-mirror', heroSource: '/seltra/dashboard-storefront.png' },
+  { id: 'preview-deyogo', name: 'De-Yogo Bar Boost', slug: 'de-yogo-bar-boost', heroSource: '/seltra/deyogo-bar.jpg' },
+  { id: 'preview-deyogo-2', name: 'De-Yogo Bar Boost', slug: 'de-yogo-bar', heroSource: '/seltra/deyogo-bar.jpg' },
+]
+
 function getToken()  { return typeof window !== 'undefined' ? localStorage.getItem('seltra:token') : null }
 function getUser()   { try { const r = localStorage.getItem('seltra:user'); return r ? JSON.parse(r) : null } catch { return null } }
+
+function rememberRecentStore(store: StoreData) {
+  if (typeof window === 'undefined') return
+  const id = store.id ?? store.slug
+  const current = readRecentStoreIds().filter((item) => item !== id)
+  localStorage.setItem('seltra:recent_store_ids', JSON.stringify([id, ...current].slice(0, 12)))
+}
+
+function readRecentStoreIds() {
+  if (typeof window === 'undefined') return [] as string[]
+  try {
+    const parsed = JSON.parse(localStorage.getItem('seltra:recent_store_ids') ?? '[]')
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : []
+  } catch {
+    return [] as string[]
+  }
+}
+
+function imageUrl(value?: string | null) {
+  if (!value) return ''
+  return /^https?:\/\//.test(value) || value.startsWith('/') ? value : ''
+}
+
+function editedLabel(iso?: string) {
+  if (!iso) return ''
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return ''
+  const days = Math.floor((Date.now() - then) / 86_400_000)
+  if (days <= 0) return 'Edited today'
+  if (days === 1) return 'Edited yesterday'
+  if (days < 30) return `Edited ${days} days ago`
+  return `Edited ${new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
+}
+
+function ensureDevPreview() {
+  if (!DEV_PREVIEW || typeof window === 'undefined' || getToken()) return
+  const previewUser = {
+    id: 'dev-preview',
+    email: 'william@seltra.co',
+    plan: 'free',
+    user_metadata: {
+      full_name: 'William Ofosu-Parwar',
+      avatar_url: '/seltra/william.png',
+    },
+  }
+  localStorage.setItem('seltra:token', 'dev-preview')
+  localStorage.setItem('seltra:user', JSON.stringify(previewUser))
+  localStorage.setItem(announcementStorageKey(previewUser), JSON.stringify([CURRENT_ANNOUNCEMENT_VERSION]))
+}
 function clearAuth() {
   ['seltra:token','seltra:user','seltra:active_store'].forEach((k) => localStorage.removeItem(k))
   window.dispatchEvent(new Event('seltra:auth-expired'))
@@ -45,7 +106,7 @@ function hasDismissedAnnouncement(user: { id?: string; email?: string }, version
   }
 }
 
-async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<{ data: T | null; error: string | null }> {
+async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<{ data: T | null; error: string | null; aborted?: boolean }> {
   const token = getToken()
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as Record<string, string> ?? {}) }
   if (token) headers['Authorization'] = `Bearer ${token}`
@@ -54,7 +115,10 @@ async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<{ data
     const json = await res.json().catch(() => ({}))
     if (!res.ok) { if (res.status === 401) clearAuth(); return { data: null, error: json?.message ?? `HTTP ${res.status}` } }
     return { data: json as T, error: null }
-  } catch (e) { return { data: null, error: e instanceof Error ? e.message : 'Network error' } }
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') return { data: null, error: null, aborted: true }
+    return { data: null, error: e instanceof Error ? e.message : 'Network error' }
+  }
 }
 
 function storefrontUrl(store: StoreData | null): string {
@@ -88,12 +152,13 @@ const ORDER_STATUSES = ['pending', 'processing', 'shipped', 'delivered', 'cancel
 const hasConfirmedPayment = (order: OrderRecord) => order.merchantAmount !== null && order.merchantAmount !== undefined
 const storeIdOf = (store: StoreData | null) => store?.id ?? store?.slug
 
-async function createConversation(title: string, userId?: string) {
-  const { data, error } = await apiFetch<Conversation>('/api/v1/conversations', {
+async function createConversation(title: string, userId?: string, signal?: AbortSignal) {
+  const { data, error, aborted } = await apiFetch<Conversation>('/api/v1/conversations', {
     method: 'POST',
     body: JSON.stringify({ user_id: userId ?? 'merchant', title: title.slice(0, 60) || 'New store' }),
+    signal,
   })
-  return { data, error }
+  return { data, error, aborted }
 }
 
 async function saveMessage(conversationId: string | undefined, role: 'user' | 'assistant', content: string, userId?: string) {
@@ -173,6 +238,7 @@ async function uploadImageToCloudinary(file: File, storeId: string): Promise<str
 }
 
 const NAV_TABS = [
+  { id: 'home',      label: 'Agent',     icon: UserRound  },
   { id: 'mission',   label: 'Home',      icon: Home       },
   { id: 'store',     label: 'Store',     icon: StoreIcon  },
   { id: 'orders',    label: 'Orders',    icon: ShoppingBag },
@@ -183,7 +249,6 @@ const NAV_TABS = [
   { id: 'customers', label: 'Customers', icon: Users      },
   { id: 'analytics', label: 'Analytics', icon: BarChart3  },
   { id: 'marketing', label: 'Marketing', icon: Megaphone  },
-  { id: 'home',      label: 'Agent',     icon: Bot        },
 ]
 
 type OrbState = 'working' | 'searching' | 'solving' | 'listening' | 'composing' | 'shaping'
@@ -274,67 +339,294 @@ function merchantFacingAgentReply(reply: string): string {
 
 // Msg now supports an inline 'planner-question' role so clarifying questions
 // render as part of the normal chat thread instead of a blocking modal.
-type Msg = { role: 'user' | 'assistant' | 'planner-question'; content: string; question?: PlannerQuestion; attachments?: MessageAttachment[] }
+type Msg = { role: 'user' | 'assistant' | 'planner-question' | 'stopped'; content: string; question?: PlannerQuestion; attachments?: MessageAttachment[]; createdAt?: string; dismissed?: boolean }
 
-function UserPromptBubble({ content, attachments }: { content: string; attachments?: MessageAttachment[] }) {
-  const [expanded, setExpanded] = useState(false)
-  const isLong = content.length > 240 || content.split('\n').length > 4
+function formatChatTime(iso?: string) {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  const today = new Date()
+  const sameDay = date.toDateString() === today.toDateString()
+  return sameDay ? `Today at ${time}` : `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} at ${time}`
+}
+
+function UserPromptBubble({ content, attachments, createdAt, onEdit }: { content: string; attachments?: MessageAttachment[]; createdAt?: string; onEdit?: (value: string) => void }) {
+  const time = formatChatTime(createdAt)
 
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-2xl rounded-tr-md border border-border/60 bg-card/60 px-4 py-3">
+      <div className="max-w-[min(100%,520px)]">
         {attachments?.length ? (
-          <div className={content ? 'mb-2 flex flex-wrap justify-end gap-2' : 'flex flex-wrap justify-end gap-2'}>
+          <div className="mb-2 flex flex-wrap justify-end gap-2">
             {attachments.map((attachment, index) => (
-              <div key={`${attachment.url}-${index}`} className="overflow-hidden rounded-xl border border-border bg-muted/40">
-                <img src={attachment.url} alt={attachment.name ?? 'Attached image'} className="h-24 w-24 object-cover" />
-              </div>
+              <img key={`${attachment.url}-${index}`} src={attachment.url} alt={attachment.name ?? 'Attached image'} className="h-20 w-20 rounded-xl object-cover" />
             ))}
           </div>
         ) : null}
         {content && (
-          <div className={`whitespace-pre-wrap text-[13px] leading-relaxed text-foreground/90 ${isLong && !expanded ? 'line-clamp-6' : ''}`}>
+          <div className="rounded-2xl border border-white/15 bg-white/[0.03] px-4 py-2.5 text-[14.5px] leading-relaxed text-white">
             {content}
           </div>
         )}
-        {isLong && (
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="mt-1.5 text-[11px] font-medium text-primary hover:underline"
-          >
-            {expanded ? 'Show less' : 'Show more'}
+        <div className="mt-1.5 flex items-center justify-end gap-2 text-[12px] text-white/40">
+          <button type="button" className="grid h-6 w-6 place-items-center rounded-md hover:bg-white/5 hover:text-white" aria-label="Copy message" onClick={() => void navigator.clipboard.writeText(content)}>
+            <Copy className="h-3.5 w-3.5" />
           </button>
-        )}
+          {onEdit && (
+            <button type="button" className="grid h-6 w-6 place-items-center rounded-md hover:bg-white/5 hover:text-white" aria-label="Edit message" onClick={() => onEdit(content)}>
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {time && <span>{time}</span>}
+        </div>
       </div>
     </div>
   )
 }
 
-function AgentReply({ content, stage }: { content: string; stage?: ActivityStage }) {
-  const [expanded, setExpanded] = useState(false)
-  const isLong = content.length > 500 || content.split('\n').length > 6
+function AgentReply({ content, thoughtSeconds, waiting }: { content: string; thoughtSeconds?: number | null; waiting?: boolean }) {
+  return (
+    <div className="max-w-[640px] text-[15px] leading-relaxed text-white/90">
+      {thoughtSeconds ? <div className="mb-2 text-[13px] text-white/40">Thought for {thoughtSeconds}s</div> : null}
+      {content ? <div className="whitespace-pre-wrap">{content}</div> : null}
+      {waiting ? null : null}
+    </div>
+  )
+}
+
+function PlannerQuestionCard({
+  question,
+  index,
+  total,
+  onSubmit,
+  onSkip,
+}: {
+  question: PlannerQuestion
+  index: number
+  total: number
+  onSubmit: (value: string) => void
+  onSkip: () => void
+}) {
+  const [open, setOpen] = useState(true)
+  const [selected, setSelected] = useState(question.options?.[0] ?? '')
+  const [custom, setCustom] = useState('')
+
+  useEffect(() => {
+    setSelected(question.options?.[0] ?? '')
+    setCustom('')
+    setOpen(true)
+  }, [question.id])
 
   return (
-    <div className="max-w-[92%] rounded-2xl border border-border/60 bg-card/20 px-4 py-3 text-[13px] leading-relaxed text-foreground/90">
-      {stage && (
-        <div className="mb-2 flex items-center gap-2 rounded-full border border-border/60 bg-card/10 px-3 py-1 text-[11px] text-muted-foreground">
-          <ThinkingOrb state={stage.orbState} size={20} aria-label={stage.label} />
-          <span>{stage.label}</span>
+    <div className="max-w-[640px]">
+      <button type="button" onClick={() => setOpen((current) => !current)} className="mb-3 inline-flex items-center gap-1 text-[14px] text-white/55 hover:text-white">
+        Waiting for answers
+        <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-90')} />
+      </button>
+      {open && (
+        <div className="rounded-2xl border border-white/10 bg-[#1a1c1b] px-4 py-3.5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-[15px] font-semibold text-white">{question.question}</div>
+              <p className="mt-1 text-[13px] text-white/45">{question.why}</p>
+            </div>
+            <button type="button" onClick={() => setOpen(false)} className="text-white/35 hover:text-white" aria-label="Collapse question">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {question.options && question.options.length > 0 ? (
+            <div className="mt-3 space-y-1.5">
+              {question.options.map((option) => {
+                const active = selected === option
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => setSelected(option)}
+                    className={cn('flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[14px] text-white/85', active ? 'bg-white/10' : 'hover:bg-white/5')}
+                  >
+                    <span className={cn('grid h-4 w-4 place-items-center rounded-full border', active ? 'border-[#3ddc84]' : 'border-white/25')}>
+                      {active && <span className="h-2 w-2 rounded-full bg-[#3ddc84]" />}
+                    </span>
+                    {option}
+                  </button>
+                )
+              })}
+            </div>
+          ) : (
+            <input
+              value={custom}
+              onChange={(event) => setCustom(event.target.value)}
+              placeholder={/phone/i.test(question.question) ? 'Phone number' : 'Type your answer…'}
+              className="mt-3 w-full rounded-xl border border-white/10 bg-transparent px-3 py-2 text-sm text-white outline-none"
+            />
+          )}
+          <div className="mt-3 flex items-center justify-between">
+            <div className="flex items-center gap-1 text-white/35">
+              <span className="grid h-7 w-7 place-items-center rounded-lg"><ChevronLeft className="h-4 w-4" /></span>
+              <span className="grid h-7 w-7 place-items-center rounded-lg"><ChevronRight className="h-4 w-4" /></span>
+              {total > 1 && <span className="ml-1 text-[11px]">{index + 1}/{total}</span>}
+            </div>
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={onSkip} className="text-[13px] text-white/55 hover:text-white">Skip</button>
+              <button
+                type="button"
+                onClick={() => onSubmit((question.options?.length ? selected : custom).trim())}
+                disabled={!(question.options?.length ? selected : custom).trim()}
+                className="rounded-full bg-[#22c55e] px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-[#16a34a] disabled:opacity-40"
+              >
+                Submit
+              </button>
+            </div>
+          </div>
         </div>
       )}
-      <div className={`whitespace-pre-wrap ${isLong && !expanded ? 'line-clamp-6' : ''}`}>
-        {content}
-      </div>
-      {isLong && (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="mt-1.5 text-[11px] font-medium text-primary hover:underline"
-        >
-          {expanded ? 'Show less' : 'Show more'}
-        </button>
+    </div>
+  )
+}
+
+function BuildFlow({ progress, onOpenPreview, onRetry }: { progress: BuildProgress; onOpenPreview: () => void; onRetry?: () => void }) {
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [cardOpen, setCardOpen] = useState(true)
+  const failed = progress.phase === 'error'
+  return (
+    <div className="max-w-[640px] space-y-4">
+      {cardOpen && (
+        <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[#1a1c1b] px-4 py-3 shadow-[inset_3px_0_0_#22c55e]">
+          <div className="flex items-start justify-between gap-3 pl-2">
+            <div className={cn('text-[15px] font-medium', failed ? 'text-[#f07178]' : 'text-white')}>{progress.cardTitle}</div>
+            <button type="button" onClick={() => setCardOpen(false)} className="text-white/35 hover:text-white" aria-label="Dismiss status"><X className="h-4 w-4" /></button>
+          </div>
+          <div className={cn('mt-3 flex items-center pl-2', failed ? 'justify-end' : 'justify-between')}>
+            {!failed && (
+              <div className="flex items-center gap-1 text-white/30">
+                <ChevronLeft className="h-4 w-4" />
+                <ChevronRight className="h-4 w-4" />
+              </div>
+            )}
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={() => setDetailsOpen((current) => !current)} className="text-[13px] text-white/70 hover:text-white">View Details</button>
+              {failed ? (
+                <button type="button" onClick={onRetry} className="rounded-full bg-[#22c55e] px-3.5 py-1.5 text-[13px] font-semibold text-white">Retry</button>
+              ) : (
+                <button type="button" onClick={onOpenPreview} className="rounded-full bg-[#22c55e] px-3.5 py-1.5 text-[13px] font-semibold text-white">Preview</button>
+              )}
+            </div>
+          </div>
+          {detailsOpen && <p className="mt-2 pl-2 text-[13px] text-white/50">{failed ? (progress.detail || progress.cardTitle) : (progress.previewLabel || progress.cardTitle)}</p>}
+        </div>
       )}
+      {failed ? (
+        <p className="text-[15px] leading-relaxed text-white/85">The build failed. You can try again.</p>
+      ) : (
+        <p className="text-[15px] leading-relaxed text-white/85">Alright. I&apos;ll proceed build the storefront itself.</p>
+      )}
+      {progress.galleryTitle && progress.images.length > 0 && (
+        <div className="rounded-2xl border border-white/10 bg-[#1a1c1b] p-3">
+          <div className="px-1 text-[14px] font-medium text-white">{progress.galleryTitle}</div>
+          <div className="mt-2 overflow-hidden rounded-xl border border-black/10 bg-[#f6f4ef]">
+            <div className="flex items-center gap-2 border-b border-black/5 px-3 py-2">
+              <Search className="h-3.5 w-3.5 text-black/30" />
+              <div className="h-5 flex-1 rounded-md bg-white" />
+            </div>
+            <div className="flex gap-1.5 p-2">
+              {progress.images.slice(0, 4).map((url) => (
+                <img key={url} src={url} alt="" className="h-28 flex-1 rounded-md object-cover" />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function failureStoreName(name: string) {
+  const clean = name.trim()
+  if (!clean || clean === 'New chat' || clean === 'My Store') return 'store'
+  return clean.charAt(0).toLowerCase() + clean.slice(1)
+}
+
+function BuildFailedPreview({ storeName, onRetry }: { storeName: string; onRetry: () => void }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center px-8 text-center">
+      <div className="grid h-16 w-16 place-items-center rounded-full bg-[#ef4444] text-3xl font-semibold text-white shadow-[0_0_36px_rgba(239,68,68,0.45)]">!</div>
+      <h2 className="mt-6 text-[28px] font-semibold tracking-tight text-white">Build failed</h2>
+      <p className="mt-3 max-w-[320px] text-[14px] leading-relaxed text-white/55">
+        We couldn&apos;t build your {failureStoreName(storeName)}. Try again, or contact support if the problem continues.
+      </p>
+      <button type="button" onClick={onRetry} className="mt-6 rounded-xl border border-white/25 px-5 py-2 text-[14px] text-white hover:bg-white/5">
+        Retry build
+      </button>
+    </div>
+  )
+}
+
+function StoppedCard({ onDismiss, onOpenPreview }: { onDismiss: () => void; onOpenPreview: () => void }) {
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  return (
+    <div className="relative max-w-[640px] overflow-hidden rounded-2xl border border-white/10 bg-[#1a1c1b] px-4 py-3 shadow-[inset_3px_0_0_#22c55e]">
+      <div className="flex items-start justify-between gap-3 pl-2">
+        <div className="text-[15px] font-medium text-white">Stopped</div>
+        <button type="button" onClick={onDismiss} className="text-white/35 hover:text-white" aria-label="Dismiss stopped status">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="mt-3 flex items-center justify-end gap-3 pl-2">
+        <button type="button" onClick={() => setDetailsOpen((current) => !current)} className="text-[13px] text-white/70 hover:text-white">View Details</button>
+        <button type="button" onClick={onOpenPreview} className="rounded-full bg-[#22c55e] px-3.5 py-1.5 text-[13px] font-semibold text-white">Preview</button>
+      </div>
+      {detailsOpen && <p className="mt-2 pl-2 text-[13px] text-white/50">Seltra stopped before this step finished.</p>}
+    </div>
+  )
+}
+
+type LinkState = 'online' | 'reconnecting' | 'offline'
+
+function ConnectionPill({ state, onDismiss }: { state: Exclude<LinkState, 'online'>; onDismiss: () => void }) {
+  const offline = state === 'offline'
+  return (
+    <div className="pointer-events-none fixed inset-x-0 top-4 z-[90] flex justify-center">
+      <div className={cn(
+        'pointer-events-auto inline-flex items-center gap-2.5 rounded-full border bg-[#141615]/95 px-3.5 py-1.5 text-[13px] font-medium shadow-[0_10px_30px_rgba(0,0,0,0.45)]',
+        offline ? 'border-[#ef4444] text-[#f87171]' : 'border-[#f59e0b] text-[#fbbf24]',
+      )}>
+        <span>{offline ? 'No connection' : 'Reconnecting'}</span>
+        <button type="button" onClick={onDismiss} aria-label="Dismiss connection status" className="text-current">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function ConnectionCanvas() {
+  const bar = 'rounded-full bg-white/10'
+  return (
+    <div className="absolute inset-0 z-30 flex gap-3 bg-[#1c1e1d] p-3" aria-hidden>
+      <div className="flex min-w-0 flex-1 flex-col px-8 py-6">
+        <div className="ml-auto h-10 w-72 rounded-2xl bg-white/10" />
+        <div className="mt-8 h-3 w-28 rounded-full bg-white/[0.08]" />
+        <div className={`mt-4 h-3 w-[340px] max-w-full ${bar}`} />
+        <div className={`mt-2 h-3 w-56 ${bar}`} />
+        <div className={`mt-6 h-3 w-36 ${bar}`} />
+        <div className="mt-6 h-44 w-full max-w-[520px] rounded-2xl bg-white/[0.06]" />
+        <div className="mt-auto h-[72px] w-full max-w-[520px] rounded-[22px] bg-white/[0.06]" />
+      </div>
+      <div className="hidden min-h-0 w-[min(460px,44%)] flex-col rounded-[22px] border border-white/10 lg:flex">
+        <div className="flex items-center justify-between px-3 py-3">
+          <div className="h-4 w-4 rounded bg-white/10" />
+          <div className="flex gap-2">
+            <div className="h-7 w-16 rounded-lg bg-white/10" />
+            <div className="h-7 w-24 rounded-lg bg-white/10" />
+          </div>
+        </div>
+        <div className="flex flex-1 flex-col items-center justify-center gap-4">
+          <div className="h-16 w-16 rounded-2xl bg-white/10" />
+          <div className="h-3 w-40 rounded-full bg-white/10" />
+        </div>
+      </div>
     </div>
   )
 }
@@ -531,6 +823,29 @@ export default function DashboardPage() {
   const [convId, setConvId] = useState<string | undefined>()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [previewOpen, setPreviewOpen] = useState(true)
+  const [previewDevice, setPreviewDevice] = useState<'desktop' | 'mobile'>('desktop')
+  const [chatMenuOpen, setChatMenuOpen] = useState(false)
+  const [thoughtSeconds, setThoughtSeconds] = useState<number | null>(null)
+  const [buildProgress, setBuildProgress] = useState<BuildProgress | null>(null)
+  const [connection, setConnection] = useState<LinkState>('online')
+  const [pillDismissed, setPillDismissed] = useState(false)
+  const connectionRef = useRef<LinkState>('online')
+  const browserOffline = useRef(false)
+  const reconnectSource = useRef<'browser' | 'stream'>('browser')
+  const setLink = useCallback((next: LinkState) => {
+    if (connectionRef.current !== next) setPillDismissed(false)
+    connectionRef.current = next
+    setConnection(next)
+  }, [])
+  const reportConnection = useCallback((next: LinkState) => {
+    if (browserOffline.current) {
+      setLink('offline')
+      return
+    }
+    reconnectSource.current = 'stream'
+    setLink(next)
+  }, [setLink])
   const [mobileSidebar, setMobileSidebar] = useState(false)
   const [mobileView, setMobileView] = useState<'chat' | 'store'>('chat')
   const [stores, setStores] = useState<StoreData[]>([])
@@ -589,16 +904,19 @@ export default function DashboardPage() {
   // Asks the planner agent whether the prompt needs clarifying questions before build.
   // Returns null when nothing needs asking (ready to build immediately), or the
   // PlannerResult (with questions) when the merchant should be prompted first.
-  const runPlanner = useCallback(async (prompt: string): Promise<PlannerResult | null> => {
-    const { data } = await apiFetch<PlannerResult>('/api/v1/seltra/store/plan', {
+  const runPlanner = useCallback(async (prompt: string, signal?: AbortSignal): Promise<PlannerResult | null> => {
+    const { data, aborted } = await apiFetch<PlannerResult>('/api/v1/seltra/store/plan', {
       method: 'POST',
       body: JSON.stringify({ prompt }),
+      signal,
     })
+    if (aborted || signal?.aborted) return null
     if (!data || data.readyToBuild || data.questions.length === 0) return null
     return data
   }, [])
 
   useEffect(() => {
+    ensureDevPreview()
     if (!getToken()) { router.replace('/auth'); return }
 
     const u = getUser() as UserRecord | null
@@ -607,7 +925,7 @@ export default function DashboardPage() {
       const m = u.user_metadata ?? {}
       resolvedUser = {
         id: u.id, email: u.email,
-        name: m.full_name || m.name || u.email?.split('@')[0] || '',
+        name: m.full_name || m.name || u.name || u.email?.split('@')[0] || '',
         avatar: m.avatar_url || m.picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${u.email}`,
         joinedAt: u.created_at || u.createdAt,
         plan: (u.plan === 'premium' ? 'premium' : 'free') as 'free' | 'premium',
@@ -622,7 +940,9 @@ export default function DashboardPage() {
     const init = async () => {
       await loadConversations()
       const { data } = await apiFetch<StoreData[]>('/api/v1/seltra/store')
-      const existing = data ?? []
+      const fromApi = data ?? []
+      const showPreviewStores = DEV_PREVIEW && fromApi.length === 0 && new URLSearchParams(window.location.search).get('preview') === 'stores'
+      const existing = showPreviewStores ? DEV_PREVIEW_STORES : fromApi
       setStores(existing)
 
       if (existing.length > 0) {
@@ -632,7 +952,7 @@ export default function DashboardPage() {
         setSending(true)
         const { data: conv } = await createConversation(pending, resolvedUser?.id)
         if (conv) { setConvId(conv.id); setConversations((c) => [conv, ...c]) }
-        setMsgs([{ role: 'user', content: pending }])
+        setMsgs([{ role: 'user', content: pending, createdAt: new Date().toISOString() }])
         await saveMessage(conv?.id, 'user', pending, resolvedUser?.id)
 
         const plan = await runPlanner(pending)
@@ -707,17 +1027,50 @@ export default function DashboardPage() {
     )
     if (error) { toast.error(error); return }
     setConvId(conversation.id)
-    setMsgs((data ?? []).map((m) => ({ role: m.role, content: m.content })))
+    setMsgs((data ?? []).map((m) => ({ role: m.role, content: m.content, createdAt: m.created_at })))
     setTab('home')
   }
 
   // beginBuild now accepts an optional plannerAnswersSnapshot so structured
   // planner answers (fulfillment mode, delivery tiers, variants, etc.) reach the backend
   // as real fields on CreateStoreDto.plannerAnswers, not just folded into prose.
-  const beginBuild = useCallback(async (prompt: string, conversationId?: string, plannerAnswersSnapshot?: Record<string, string>) => {
+  const workAbortRef = useRef<AbortController | null>(null)
+  const stoppedRef = useRef(false)
+  const buildRequestRef = useRef<{ prompt: string; conversationId?: string; answers?: Record<string, string> } | null>(null)
+  const armWork = useCallback(() => {
+    workAbortRef.current?.abort()
+    stoppedRef.current = false
+    const controller = new AbortController()
+    workAbortRef.current = controller
+    return controller.signal
+  }, [])
+  const stopGeneration = useCallback(() => {
+    stoppedRef.current = true
+    workAbortRef.current?.abort()
+    workAbortRef.current = null
+    setSending(false)
+    setBuildId(null)
+    setBuildProgress(null)
+    setBuildLaunchStarted(false)
+    setBuildConversationId(undefined)
+    setMsgs((prev) => {
+      const next = [...prev]
+      const last = next[next.length - 1]
+      if (last?.role === 'assistant' && !last.content.trim()) next.pop()
+      next.push({ role: 'stopped', content: 'Stopped' })
+      return next
+    })
+  }, [])
+
+  // beginBuild now accepts an optional plannerAnswersSnapshot so structured
+  // planner answers (fulfillment mode, delivery tiers, variants, etc.) reach the backend
+  // as real fields on CreateStoreDto.plannerAnswers, not just folded into prose.
+  const beginBuild = useCallback(async (prompt: string, conversationId?: string, plannerAnswersSnapshot?: Record<string, string>, signal?: AbortSignal) => {
+    buildRequestRef.current = { prompt, conversationId, answers: plannerAnswersSnapshot }
+    setBuildProgress(null)
     setBuildId(null)
     setBuildConversationId(conversationId)
-    const { data, error } = await apiFetch<{ buildId: string }>('/api/v1/seltra/store/build', {
+    const { data, error, aborted } = await apiFetch<{ buildId: string }>('/api/v1/seltra/store/build', {
       method: 'POST',
       body: JSON.stringify({
         name: prompt.slice(0, 48),
@@ -729,11 +1082,24 @@ export default function DashboardPage() {
           product_variants: plannerAnswersSnapshot['product_variants'],
         } : undefined,
       }),
+      signal,
     })
-    if (error || !data?.buildId) {
-      toast.error(error || 'Could not start build')
+    if (aborted || signal?.aborted || stoppedRef.current) {
       setSending(false)
-      setTimeout(() => setSidebarOpen(true), 1200)
+      return
+    }
+    if (error || !data?.buildId) {
+      setSending(false)
+      setBuildId(null)
+      setBuildLaunchStarted(false)
+      setBuildProgress({
+        phase: 'error',
+        cardTitle: 'Application build failed',
+        previewLabel: 'Build failed',
+        images: [],
+        galleryTitle: '',
+        detail: error || 'Could not start the build.',
+      })
       return
     }
     setBuildId(data.buildId)
@@ -755,8 +1121,10 @@ export default function DashboardPage() {
     })
   }
 
-  const sendToAgent = useCallback(async (storeId: string, message: string, options?: { hasAttachments?: boolean; operation?: 'image-update' | 'generic' }) => {
+  const sendToAgent = useCallback(async (storeId: string, message: string, options?: { hasAttachments?: boolean; operation?: 'image-update' | 'generic'; signal?: AbortSignal }) => {
     const token = getToken()
+    const signal = options?.signal
+    if (signal?.aborted || stoppedRef.current) return ''
     setMsgs((prev) => [...prev, { role: 'assistant', content: '' }])
     let streamedReply = ''
     try {
@@ -764,10 +1132,16 @@ export default function DashboardPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ storeId, message, conversationId: convId, hasAttachments: options?.hasAttachments }),
+        signal,
       })
+      if (signal?.aborted || stoppedRef.current) return ''
       if (res.ok && res.body) {
         const reader = res.body.getReader(); const dec = new TextDecoder()
         while (true) {
+          if (signal?.aborted || stoppedRef.current) {
+            await reader.cancel()
+            return ''
+          }
           const { value, done } = await reader.read(); if (done) break
           for (const line of dec.decode(value, { stream: true }).split(/\r?\n/).filter(Boolean)) {
             const norm = line.startsWith('data:') ? line.slice(5).trim() : line
@@ -784,17 +1158,22 @@ export default function DashboardPage() {
             } catch { streamedReply += norm; appendChunk(norm) }
           }
         }
+        if (stoppedRef.current) return ''
         const safeReply = merchantFacingAgentReply(streamedReply)
         if (safeReply !== streamedReply) {
           setMsgs((prev) => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: safeReply } : m))
         }
         return safeReply
       }
-    } catch { /* fall through */ }
-    const { data } = await apiFetch<{ reply?: string; message?: string; conversationId?: string }>(
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') return ''
+    }
+    if (signal?.aborted || stoppedRef.current) return ''
+    const { data, aborted } = await apiFetch<{ reply?: string; message?: string; conversationId?: string }>(
       '/api/v1/seltra/agent/message',
-      { method: 'POST', body: JSON.stringify({ storeId, message, conversationId: convId, hasAttachments: options?.hasAttachments }) }
+      { method: 'POST', body: JSON.stringify({ storeId, message, conversationId: convId, hasAttachments: options?.hasAttachments }), signal }
     )
+    if (aborted || stoppedRef.current) return ''
    if (data?.conversationId) setConvId(data.conversationId)
     if ((data as { credits?: typeof credits })?.credits) setCredits((data as { credits?: typeof credits }).credits!)
     const reply = merchantFacingAgentReply(data?.reply ?? data?.message ?? '')
@@ -805,8 +1184,9 @@ export default function DashboardPage() {
   // ── Runs the planner before kicking off a fresh build. If the planner comes
   // back with questions, we start the inline planner thread and wait for the
   // merchant to answer (or skip) before calling beginBuild. ──
-  const startConv = async (prompt: string) => {
-    const limitCheck = await apiFetch<{ allowed: boolean; reason?: string }>('/api/v1/seltra/store/check-limit')
+  const startConv = async (prompt: string, signal?: AbortSignal) => {
+    const limitCheck = await apiFetch<{ allowed: boolean; reason?: string }>('/api/v1/seltra/store/check-limit', { signal })
+    if (limitCheck.aborted || signal?.aborted || stoppedRef.current) return
     if (!limitCheck.data?.allowed) {
       toast.error(limitCheck.data?.reason || 'Store limit reached for your plan')
       setSending(false)
@@ -814,17 +1194,20 @@ export default function DashboardPage() {
     }
 
     setSending(true)
-    const { data: conversation } = await createConversation(prompt, user?.id)
+    const { data: conversation, aborted } = await createConversation(prompt, user?.id, signal)
+    if (aborted || signal?.aborted || stoppedRef.current) return
     if (conversation) { setConvId(conversation.id); setConversations((c) => [conversation, ...c]) }
-    setMsgs([{ role: 'user', content: prompt }])
+    setMsgs([{ role: 'user', content: prompt, createdAt: new Date().toISOString() }])
     await saveMessage(conversation?.id, 'user', prompt, user?.id)
+    if (signal?.aborted || stoppedRef.current) return
 
-    const plan = await runPlanner(prompt)
+    const plan = await runPlanner(prompt, signal)
+    if (signal?.aborted || stoppedRef.current) return
     if (plan) {
       beginPlannerThread(prompt, plan)
       return
     }
-    await beginBuild(prompt, conversation?.id)
+    await beginBuild(prompt, conversation?.id, undefined, signal)
   }
 
   // ── Planner thread: pushes the summary + first question into the message
@@ -849,7 +1232,7 @@ export default function DashboardPage() {
     setPlannerAnswers(updatedAnswers)
     // Replace the just-answered question bubble with the merchant's answer,
     // exactly like a normal chat turn.
-    setMsgs((prev) => [...prev.slice(0, -1), { role: 'user', content: value }])
+    setMsgs((prev) => [...prev.slice(0, -1), { role: 'user', content: value, createdAt: new Date().toISOString() }])
 
     const nextIndex = plannerIndex + 1
     if (nextIndex < plannerQueue.length) {
@@ -859,8 +1242,9 @@ export default function DashboardPage() {
       setPlannerQueue([])
       setPlannerIndex(0)
       const enriched = mergeAnswersIntoPrompt(plannerPrompt, updatedAnswers)
+      const signal = armWork()
       setSending(true)
-      await beginBuild(enriched, convId, updatedAnswers)
+      await beginBuild(enriched, convId, updatedAnswers, signal)
     }
   }
 
@@ -868,8 +1252,9 @@ export default function DashboardPage() {
     if (!plannerPrompt) return
     setPlannerQueue([])
     setPlannerIndex(0)
+    const signal = armWork()
     setSending(true)
-    await beginBuild(plannerPrompt, convId)
+    await beginBuild(plannerPrompt, convId, undefined, signal)
   }
 
 const send = async () => {
@@ -892,19 +1277,22 @@ const send = async () => {
     ? `${text || 'Use this image for the requested change.'}\n[image: ${pendingAttachment.url}]`
     : text
   const imageOperation = Boolean(pendingAttachment?.url)
+  const signal = armWork()
 
   setInput('')
   clearPendingAttachment()
   setSending(true)
 
-  if (!activeStore) { await startConv(displayText || messageToSend); setSending(false); return }
+  if (!activeStore) { await startConv(displayText || messageToSend, signal); if (!stoppedRef.current) setSending(false); return }
 
   let activeConversationId = convId
   if (!activeConversationId) {
-    const { data: conversation } = await createConversation(
+    const { data: conversation, aborted } = await createConversation(
       displayText.slice(0, 60) || (attachments?.length ? 'Image update' : 'New conversation'),
       user?.id,
+      signal,
     )
+    if (aborted || signal.aborted || stoppedRef.current) return
     if (conversation) {
       activeConversationId = conversation.id
       setConvId(conversation.id)
@@ -912,12 +1300,15 @@ const send = async () => {
     }
   }
 
-  setMsgs((prev) => [...prev, { role: 'user', content: displayText, attachments }])
+  setMsgs((prev) => [...prev, { role: 'user', content: displayText, attachments, createdAt: new Date().toISOString() }])
   await saveMessage(activeConversationId, 'user', displayText, user?.id)
+  if (signal.aborted || stoppedRef.current) return
   const reply = await sendToAgent(activeStore.id ?? activeStore.slug, messageToSend, {
     hasAttachments: imageOperation,
     operation: imageOperation ? 'image-update' : 'generic',
+    signal,
   })
+  if (stoppedRef.current) return
   if (reply) await saveMessage(activeConversationId, 'assistant', reply, user?.id)
   setSending(false)
   setRev((v) => v + 1)
@@ -931,9 +1322,6 @@ const send = async () => {
 
   const signOut = () => { clearAuth(); setActiveStore(null); router.push('/auth') }
 
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => { setMounted(true) }, [])
-  const hasStore = mounted && (Boolean(activeStore) || msgs.length > 0)
   const storeTitle = activeStore?.name ?? msgs[0]?.content?.slice(0, 40) ?? 'My Store'
   const normalizeSlug = useCallback((value: string) =>
     value
@@ -963,6 +1351,7 @@ const send = async () => {
   }, [])
 
   const handleBuildDone = useCallback(async (store?: StoreData | null) => {
+    if (stoppedRef.current) return
     setBuildLaunchStarted(true)
     let confirmedStore = store ?? null
     const hasGeneratedAssets = (candidate?: StoreData | null) =>
@@ -983,6 +1372,8 @@ const send = async () => {
       }
     }
 
+    if (stoppedRef.current) return
+
     if (confirmedStore) {
       setActiveStore(confirmedStore)
       setStores((prev) => [confirmedStore!, ...prev.filter((item) => item.id !== confirmedStore!.id && item.slug !== confirmedStore!.slug)])
@@ -1001,13 +1392,28 @@ const send = async () => {
   }, [buildConversationId, convId, user?.id])
 
   const handleBuildError = useCallback((message: string) => {
-    toast.error(message)
+    if (stoppedRef.current) return
     setSending(false)
     setBuildId(null)
     setBuildLaunchStarted(false)
     setBuildConversationId(undefined)
-    setTimeout(() => setSidebarOpen(true), 1200)
+    setBuildProgress({
+      phase: 'error',
+      cardTitle: 'Application build failed',
+      previewLabel: 'Build failed',
+      images: [],
+      galleryTitle: '',
+      detail: message || 'The build failed before the storefront was ready.',
+    })
   }, [])
+
+  const retryBuild = useCallback(() => {
+    const request = buildRequestRef.current
+    if (!request) return
+    const signal = armWork()
+    setSending(true)
+    void beginBuild(request.prompt, request.conversationId, request.answers, signal)
+  }, [armWork, beginBuild])
 
   // ── Shared attach handler for the agent panel (with Cloudinary upload) ──
 const handleAgentAttach = async (f: File) => {
@@ -1049,14 +1455,108 @@ const handleAgentAttach = async (f: File) => {
     onDeleteConversation: deleteConversation,
   }
 
+  useEffect(() => {
+    if (!buildId) return
+    setBuildProgress({
+      phase: 'planning',
+      cardTitle: 'Planning your application...',
+      previewLabel: 'Planning your storefront',
+      images: [],
+      galleryTitle: '',
+    })
+  }, [buildId])
+  const showAgentHome = msgs.length === 0 && !sending && !buildId
+  const chatTitle = conversations.find((item) => item.id === convId)?.title
+    || msgs.find((item) => item.role === 'user')?.content?.slice(0, 48)
+    || activeStore?.name
+    || 'New chat'
+  const waitingOnPlanner = msgs.some((item) => item.role === 'planner-question')
+  const storeHref = activeStore ? storefrontUrl(activeStore) : ''
+
+  useEffect(() => {
+    if (DEV_PREVIEW) {
+      const preview = new URLSearchParams(window.location.search).get('connection')
+      if (preview === 'offline' || preview === 'reconnecting') {
+        reconnectSource.current = 'stream'
+        setLink(preview)
+      }
+    }
+    const goOffline = () => {
+      browserOffline.current = true
+      setLink('offline')
+    }
+    const goOnline = () => {
+      browserOffline.current = false
+      reconnectSource.current = 'browser'
+      setLink('reconnecting')
+    }
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      browserOffline.current = true
+      setLink('offline')
+    }
+    window.addEventListener('offline', goOffline)
+    window.addEventListener('online', goOnline)
+    return () => {
+      window.removeEventListener('offline', goOffline)
+      window.removeEventListener('online', goOnline)
+    }
+  }, [setLink])
+
+  useEffect(() => {
+    if (connection !== 'reconnecting' || reconnectSource.current !== 'browser') return
+    const timer = window.setTimeout(() => {
+      setLink(navigator.onLine ? 'online' : 'offline')
+    }, 1400)
+    return () => window.clearTimeout(timer)
+  }, [connection, setLink])
+
+  const dismissConnection = useCallback(() => {
+    if (!DEV_PREVIEW) {
+      setPillDismissed(true)
+      return
+    }
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('connection') === 'offline' || params.get('connection') === 'reconnecting') {
+      params.delete('connection')
+      const query = params.toString()
+      window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`)
+      setLink('online')
+      return
+    }
+    setPillDismissed(true)
+  }, [setLink])
+
+  useEffect(() => {
+    if (!sending && !buildId) {
+      setThoughtSeconds(null)
+      return
+    }
+    const started = Date.now()
+    const timer = window.setInterval(() => {
+      setThoughtSeconds(Math.max(1, Math.round((Date.now() - started) / 1000)))
+    }, 500)
+    return () => window.clearInterval(timer)
+  }, [sending, buildId])
+
   if (tab !== 'home') {
     return (
-      <div className="flex h-screen overflow-hidden bg-background text-foreground">
-        <SidebarDesktop {...sidebarProps} />
-        <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-          <MobileHeader storeName={activeStore?.name} onMenuOpen={() => setMobileSidebar(true)} onSignOut={signOut} />
-          <DashboardTopBar activeStore={activeStore} />   {/* ← was <DashboardNotifications .../> */}
-        <TabContent
+      <DashboardFrame
+        sidebarProps={sidebarProps}
+        mobileOpen={mobileSidebar}
+        setMobileOpen={setMobileSidebar}
+        connection={connection}
+        pillDismissed={pillDismissed}
+        onDismissConnection={dismissConnection}
+        chatSkeleton={false}
+      >
+        <main className="dash-canvas relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <DashboardTopBar
+            activeStore={activeStore}
+            sidebarOpen={sidebarOpen}
+            onToggleSidebar={() => setSidebarOpen((p) => !p)}
+            onMenu={() => setMobileSidebar(true)}
+          />
+          <TabContent
             tab={tab} activeStore={activeStore} stores={stores}
             onSelectStore={(s) => { setActiveStore(s); setTab('mission'); setRev((v) => v + 1) }}
             onStoreDeleted={(id) => { /* unchanged */ }}
@@ -1065,205 +1565,241 @@ const handleAgentAttach = async (f: File) => {
             credits={credits}
           />
         </main>
-        <MobileSidebarDrawer
-          open={mobileSidebar}
-          onClose={() => setMobileSidebar(false)}
-          user={sidebarProps.user}
-          tab={tab}
-          setTab={(t) => { setTab(t); setMobileSidebar(false) }}
-          onSignOut={signOut}
-          onNewStore={newStore}
-          conversations={conversations}
-          activeConversationId={convId}
-          onLoadConversation={(c) => { void loadConversationMessages(c); setMobileSidebar(false) }}
-          onDeleteConversation={deleteConversation}
-        />
-      </div>
+      </DashboardFrame>
     )
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      <SidebarDesktop {...sidebarProps} />
-      <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <MobileHeader storeName={activeStore?.name} onMenuOpen={() => setMobileSidebar(true)} onSignOut={signOut} />
-         <DashboardTopBar activeStore={activeStore} />  
-        {announcementVisible && <WhatsNewBanner onDismiss={dismissAnnouncement} />}
-        {!hasStore ? (
-          <EmptyState
-            input={input} setInput={setInput} send={send} sending={sending} name={user?.name ?? ''}
-            pendingAttachment={pendingAttachment}
-            onClearAttachment={clearPendingAttachment}
-            conversations={conversations}
-            onLoadConversation={loadConversationMessages}
-            stores={stores}
-            hasHistory={conversations.length > 0 || stores.length > 0}
-            onAttach={handleAgentAttach}
-          />
+    <DashboardFrame
+      sidebarProps={sidebarProps}
+      mobileOpen={mobileSidebar}
+      setMobileOpen={setMobileSidebar}
+      connection={connection}
+      pillDismissed={pillDismissed}
+      onDismissConnection={dismissConnection}
+      chatSkeleton={!showAgentHome}
+    >
+      <main className={cn('dash-canvas relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden', showAgentHome ? 'is-wash' : 'is-chat')}>
+        {showAgentHome ? (
+          <>
+            {announcementVisible && <WhatsNewBanner onDismiss={dismissAnnouncement} />}
+            <EmptyState
+              input={input} setInput={setInput} send={send} sending={sending} name={user?.name ?? ''}
+              pendingAttachment={pendingAttachment}
+              onClearAttachment={clearPendingAttachment}
+              stores={stores}
+              sidebarOpen={sidebarOpen}
+              onToggleSidebar={() => setSidebarOpen((p) => !p)}
+              onMenu={() => setMobileSidebar(true)}
+              onUpgrade={() => setTab('billing')}
+              showUpgrade={user?.plan !== 'premium'}
+              activeStore={activeStore}
+              onOpenStore={(store) => { rememberRecentStore(store); setActiveStore(store); setTab('store') }}
+              onSeeAllStores={() => setTab('store')}
+              onAttach={handleAgentAttach}
+            />
+          </>
         ) : (
-          <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[5fr_7fr]">
-            <div className="flex flex-shrink-0 border-b border-border lg:hidden">
-              <button
-                type="button"
-                onClick={() => setMobileView('chat')}
-                className={`flex-1 py-2.5 text-center text-xs font-mono uppercase tracking-wider transition-colors ${
-                  mobileView === 'chat' ? 'border-b-2 border-primary text-primary' : 'text-muted-foreground'
-                }`}
-              >
-                Agent
-              </button>
-              <button
-                type="button"
-                onClick={() => setMobileView('store')}
-                className={`flex-1 py-2.5 text-center text-xs font-mono uppercase tracking-wider transition-colors ${
-                  mobileView === 'store' ? 'border-b-2 border-primary text-primary' : 'text-muted-foreground'
-                }`}
-              >
-                Store preview
-              </button>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-5 sm:px-6 lg:px-7">
+              <div className="flex min-w-0 items-center gap-2">
+                <button type="button" onClick={() => setMobileSidebar(true)} className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 text-white lg:hidden" aria-label="Open menu">
+                  <Menu className="h-4 w-4" />
+                </button>
+                {!sidebarOpen && (
+                  <>
+                    <button type="button" onClick={() => setSidebarOpen(true)} className="hidden h-10 w-10 place-items-center rounded-xl border border-white/10 text-white lg:grid" aria-label="Open sidebar">
+                      <PanelLeft className="h-4 w-4" />
+                    </button>
+                    <div className="relative">
+                      <button type="button" onClick={() => setChatMenuOpen((current) => !current)} className="flex max-w-[240px] items-center gap-1.5 rounded-xl px-1 py-1 text-[14px] font-medium text-white">
+                        <span className="truncate">{chatTitle}</span>
+                        <ChevronDown className="h-4 w-4 flex-shrink-0 text-white/50" />
+                      </button>
+                      {chatMenuOpen && (
+                        <div className="absolute left-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-xl border border-white/10 bg-[#262826] py-1 shadow-2xl">
+                          {conversations.length === 0 ? (
+                            <p className="px-3 py-2 text-xs text-white/40">No conversations yet.</p>
+                          ) : conversations.slice(0, 8).map((conversation) => (
+                            <button
+                              key={conversation.id}
+                              type="button"
+                              onClick={() => { void loadConversationMessages(conversation); setChatMenuOpen(false) }}
+                              className="block w-full truncate px-3 py-2 text-left text-[13px] text-white/80 hover:bg-white/5"
+                            >
+                              {conversation.title || 'Conversation'}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <NotificationBell activeStore={activeStore} />
+                {!previewOpen && (
+                  <button type="button" onClick={() => setPreviewOpen(true)} className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 text-white/80 hover:text-white" aria-label="Open store preview">
+                    <Expand className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
             </div>
 
-            {/* ── Agent panel ── */}
-            <section className={`flex min-h-0 flex-col overflow-hidden border-r border-border bg-background ${
-              mobileView === 'store' ? 'hidden lg:flex' : 'flex'
-            }`}>
-              {/* Header */}
-              <div className="flex flex-shrink-0 items-center justify-between border-b border-border px-5 py-3.5">
-                <span className="font-mono text-xs text-primary">{`// agent${activeStore ? ` · ${activeStore.name}` : ''}`}</span>
-               <div className="flex items-center gap-2">
-                   {credits && (
-                     <span
-                       title={`Resets ${new Date(credits.resetsAt).toLocaleTimeString()}`}
-                       className={`rounded-full border px-2.5 py-1 font-mono text-[10px] ${credits.used >= credits.limit ? 'border-red-500/30 text-red-400' : 'border-border text-muted-foreground'}`}
-                     >
-                       {credits.used}/{credits.limit} credits
-                     </span>
-                   )}
-                 </div>
-              </div>
-
-              {/* Messages */}
-              <div ref={scrollRef} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5 text-[13px]">
-                {msgs.length === 0 && !sending && (
-                  <div className="rounded-2xl border border-border bg-card/30 p-4 text-sm text-muted-foreground">
-                    {activeStore
-                      ? `Tell me what to change in ${activeStore.name}. Products, colors, copy, or attach a logo.`
-                      : 'Describe your store and your agent will build it in seconds.'}
-                  </div>
-                )}
-                {msgs.map((m, i) => {
-                  if (m.role === 'planner-question' && m.question) {
-                    const isLatest = i === msgs.length - 1
-                    const q = m.question
+            <div className="flex min-h-0 flex-1 gap-4 px-3 pb-4 sm:gap-5 sm:px-5 sm:pb-5">
+              {buildId && (
+                <AgentBuildStream
+                  headless
+                  storeName={storeTitle}
+                  buildId={buildId}
+                  onPreview={handleBuildPreview}
+                  onLaunchStart={handleBuildLaunchStart}
+                  onDone={handleBuildDone}
+                  onError={handleBuildError}
+                  onProgress={setBuildProgress}
+                  onConnection={reportConnection}
+                />
+              )}
+              <section className={cn('flex min-h-0 min-w-0 flex-1 flex-col', mobileView === 'store' && 'hidden lg:flex')}>
+                <div ref={scrollRef} className="mx-auto flex min-h-0 w-full max-w-[760px] flex-1 flex-col gap-6 overflow-y-auto px-3 py-6 sm:px-4">
+                  {msgs.map((message, index) => {
+                    if (message.role === 'planner-question' && message.question) {
+                      const isLatest = index === msgs.length - 1
+                      if (!isLatest) return null
+                      return (
+                        <PlannerQuestionCard
+                          key={message.question.id}
+                          question={message.question}
+                          index={plannerIndex}
+                          total={plannerQueue.length}
+                          onSubmit={(value) => void answerPlannerQuestion(value)}
+                          onSkip={() => void skipPlannerThread()}
+                        />
+                      )
+                    }
+                    if (message.role === 'stopped') {
+                      if (message.dismissed) return <p key={`stopped-${index}`} className="text-[15px] text-white/80">Stopped</p>
+                      return (
+                        <StoppedCard
+                          key={`stopped-${index}`}
+                          onDismiss={() => setMsgs((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, dismissed: true } : item))}
+                          onOpenPreview={() => setPreviewOpen(true)}
+                        />
+                      )
+                    }
+                    if (message.role === 'user') {
+                      return (
+                        <UserPromptBubble
+                          key={`${message.createdAt ?? index}`}
+                          content={message.content}
+                          attachments={message.attachments}
+                          createdAt={message.createdAt}
+                          onEdit={setInput}
+                        />
+                      )
+                    }
+                    const isLatestAssistant = index === msgs.map((item) => item.role).lastIndexOf('assistant')
                     return (
-                      <div key={i} className="max-w-[92%] rounded-2xl border border-border/60 bg-card/20 p-4">
-                        <div className="text-[13px] font-medium text-foreground">{q.question}</div>
-                        <p className="mt-1 text-xs text-muted-foreground">{q.why}</p>
-                        {isLatest && (
-                          <>
-                            {q.options && q.options.length > 0 && (
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {q.options.map((opt) => (
-                                  <button
-                                    key={opt}
-                                    type="button"
-                                    onClick={() => void answerPlannerQuestion(opt)}
-                                    className="rounded-full border border-border bg-background/40 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-                                  >
-                                    {opt}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                            <div className="mt-2 flex items-center gap-2">
-                              <input
-                                className="flex-1 rounded-xl border border-border bg-background px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring"
-                                placeholder="Type your answer…"
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' && e.currentTarget.value.trim()) {
-                                    void answerPlannerQuestion(e.currentTarget.value.trim())
-                                  }
-                                }}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => void skipPlannerThread()}
-                                className="flex-shrink-0 text-xs text-muted-foreground hover:text-foreground"
-                              >
-                                Skip all
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
+                      <AgentReply
+                        key={`${message.createdAt ?? index}-assistant`}
+                        content={message.content}
+                        thoughtSeconds={isLatestAssistant ? thoughtSeconds : null}
+                      />
                     )
-                  }
-
-                  if (m.role === 'user') {
-                    return <UserPromptBubble key={i} content={m.content} attachments={m.attachments} />
-                  }
-
-                  const isActiveStreaming = sending && i === msgs.length - 1
-                  return (
-                    <AgentReply
-                      key={i}
-                      content={m.content}
-                      stage={isActiveStreaming ? activityStage ?? undefined : undefined}
+                  })}
+                  {(buildProgress && (buildId || buildProgress.phase === 'ready' || buildProgress.phase === 'error')) && (
+                    <BuildFlow
+                      key={buildProgress.phase === 'error' ? 'failed' : (buildId ?? 'done')}
+                      progress={buildProgress}
+                      onOpenPreview={() => setPreviewOpen(true)}
+                      onRetry={retryBuild}
                     />
-                  )
-                })}
-                {(buildId || (sending && msgs[msgs.length - 1]?.role === 'user')) && activityStage && (
-                  <div className="flex justify-start">
-                    <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-card/20 px-3 py-2 text-[13px] text-foreground/90">
-                      <ThinkingOrb state={activityStage.orbState} size={20} aria-label={activityStage.label} />
-                      <span>{activityStage.label}</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Input — pinned at bottom, uses Cloudinary upload handler */}
-              <div className="flex-shrink-0">
-               <ChatInput
-                    input={input} setInput={setInput} send={send} sending={sending} compact
+                  )}
+                  {(sending || buildId) && !buildProgress && (
+                    <p className="text-[15px] text-white/80">Thinking...</p>
+                  )}
+                </div>
+                <div className="mx-auto w-full max-w-[760px] px-3 pb-3 sm:px-4">
+                  <ChatInput
+                    input={input}
+                    setInput={setInput}
+                    send={send}
+                    sending={sending || Boolean(buildId)}
+                    busy={sending || Boolean(buildId)}
+                    onStop={stopGeneration}
+                    variant="chat"
+                    placeholder={waitingOnPlanner ? 'Ask seltra what to do instead...' : 'Ask seltra what to do next...'}
                     onAttach={handleAgentAttach}
                     pendingAttachment={pendingAttachment}
                     onClearAttachment={clearPendingAttachment}
                   />
-              </div>
-            </section>
+                </div>
+              </section>
 
-            <div className={mobileView === 'chat' ? 'hidden lg:block' : 'block'}>
-              <StorefrontShell slug={storeSlug} isStream={Boolean(buildId)}>
-                {buildId ? (
-                  <AgentBuildStream storeName={storeTitle} buildId={buildId} onPreview={handleBuildPreview} onLaunchStart={handleBuildLaunchStart} onDone={handleBuildDone} onError={handleBuildError} />
-                ) : (
-                  <StorefrontPreview key={previewKey} storeSlug={storeSlug} suppressFallback={!activeStore} rev={rev} />
-                )}
-              </StorefrontShell>
+              {previewOpen && (
+                <aside className={cn('min-h-0 w-full flex-col lg:flex lg:w-[min(520px,42%)]', mobileView === 'chat' ? 'hidden lg:flex' : 'flex')}>
+                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[22px] border border-white/10 bg-[#141615]">
+                    <div className="flex items-center justify-between gap-2 px-3 py-2.5">
+                      <button type="button" onClick={() => setPreviewOpen(false)} className="grid h-8 w-8 place-items-center rounded-lg text-white/50 hover:bg-white/5 hover:text-white" aria-label="Close preview">
+                        <X className="h-4 w-4" />
+                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button type="button" className="grid h-8 w-8 place-items-center rounded-lg bg-[#1b8a45] text-white" aria-label="Preview notes" onClick={() => setPreviewDevice('desktop')}>
+                          <MessageSquare className="h-3.5 w-3.5" />
+                        </button>
+                        <button type="button" onClick={() => setPreviewDevice('mobile')} className={cn('grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:text-white', previewDevice === 'mobile' && 'bg-white/10 text-white')} aria-label="Phone preview">
+                          <Smartphone className="h-3.5 w-3.5" />
+                        </button>
+                        <button type="button" onClick={() => setPreviewDevice('desktop')} className={cn('grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:text-white', previewDevice === 'desktop' && 'bg-white/10 text-white')} aria-label="Desktop preview">
+                          <Monitor className="h-3.5 w-3.5" />
+                        </button>
+                        {storeHref ? (
+                          <a href={storeHref} target="_blank" rel="noreferrer" className="ml-1 inline-flex items-center gap-1.5 rounded-lg bg-[#1b8a45] px-2.5 py-1.5 text-[12px] font-medium text-white">
+                            Open Store
+                          </a>
+                        ) : (
+                          <span className="ml-1 inline-flex items-center rounded-lg bg-white/5 px-2.5 py-1.5 text-[12px] text-white/35">Open Store</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="min-h-0 flex-1">
+                      {buildProgress?.phase === 'error' ? (
+                        <BuildFailedPreview storeName={chatTitle} onRetry={retryBuild} />
+                      ) : buildId && buildProgress?.phase !== 'ready' ? (
+                        <div className="flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
+                          <img src="/seltra/signup/logo-mark.png" alt="" className="h-16 w-16 object-contain" />
+                          <div className="flex items-center gap-2 text-[15px] text-white/80">
+                            <Asterisk className="h-4 w-4 text-white" strokeWidth={2.4} />
+                            <span>{buildProgress?.previewLabel || 'Planning your storefront'}</span>
+                          </div>
+                        </div>
+                      ) : activeStore ? (
+                        <StorefrontShell slug={storeSlug} isStream={false} showToolbar={false} device={previewDevice} onDeviceChange={setPreviewDevice}>
+                          <StorefrontPreview key={previewKey} storeSlug={storeSlug} suppressFallback={!activeStore} rev={rev} />
+                        </StorefrontShell>
+                      ) : (
+                        <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+                          <img src="/seltra/signup/logo-mark.png" alt="" className="h-16 w-16 object-contain" />
+                          <p className="text-[15px] text-white/70">Your store will appear here</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </aside>
+              )}
+            </div>
+            <div className="flex border-t border-white/10 lg:hidden">
+              <button type="button" onClick={() => setMobileView('chat')} className={cn('flex-1 py-2.5 text-xs', mobileView === 'chat' ? 'text-white' : 'text-white/40')}>Agent</button>
+              <button type="button" onClick={() => { setPreviewOpen(true); setMobileView('store') }} className={cn('flex-1 py-2.5 text-xs', mobileView === 'store' ? 'text-white' : 'text-white/40')}>Preview</button>
             </div>
           </div>
         )}
       </main>
-
-      <MobileSidebarDrawer
-        open={mobileSidebar}
-        onClose={() => setMobileSidebar(false)}
-        user={sidebarProps.user}
-        tab={tab}
-        setTab={(t) => { setTab(t); setMobileSidebar(false) }}
-        onSignOut={signOut}
-        onNewStore={newStore}
-        conversations={conversations}
-        activeConversationId={convId}
-        onLoadConversation={(c) => { void loadConversationMessages(c); setMobileSidebar(false) }}
-        onDeleteConversation={deleteConversation}
-      />
-    </div>
+    </DashboardFrame>
   )
 }
 
-function NotificationBell({ activeStore }: { activeStore: StoreData | null }) {
+function NotificationBell({ activeStore, tone = 'dark' }: { activeStore: StoreData | null; tone?: 'dark' | 'wash' }) {
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState<NotificationRecord[]>([])
   const [readIds, setReadIds] = useState<string[]>([])
@@ -1304,45 +1840,51 @@ function NotificationBell({ activeStore }: { activeStore: StoreData | null }) {
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className="relative grid h-10 w-10 place-items-center rounded-xl border border-border bg-background/90 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:text-foreground"
+        className={cn(
+          'relative grid h-10 w-10 place-items-center rounded-xl transition-colors',
+          tone === 'wash'
+            ? 'bg-[#1c1e1d] text-white shadow-[0_10px_24px_-14px_rgba(0,0,0,0.55)] hover:bg-[#111312]'
+            : 'border border-white/10 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white',
+        )}
         aria-label="Open notifications"
+        aria-expanded={open}
       >
         <Bell className="h-4 w-4" />
         {unreadCount > 0 && (
-          <span className="absolute -right-1 -top-1 grid min-h-5 min-w-5 place-items-center rounded-full bg-primary px-1 font-mono text-[10px] font-semibold text-primary-foreground">
+          <span className="absolute -right-1 -top-1 grid min-h-5 min-w-5 place-items-center rounded-full bg-[#22c55e] px-1 font-mono text-[10px] font-semibold text-white">
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
       </button>
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-[min(360px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
-          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div className="absolute right-0 z-50 mt-2 w-[min(340px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-white/10 bg-[#161817] text-left text-white shadow-[0_24px_60px_-24px_rgba(0,0,0,0.65)]">
+          <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
             <div>
-              <div className="text-sm font-semibold">Notifications</div>
-              <div className="font-mono text-[10px] text-muted-foreground">{unreadCount} unread</div>
+              <div className="text-sm font-semibold text-white">Notifications</div>
+              <div className="mt-0.5 text-[11px] text-white/50">{unreadCount} unread</div>
             </div>
-            <Button type="button" variant="ghost" size="sm" className="h-8 rounded-full text-xs" onClick={markAllRead}>
+            <button type="button" onClick={markAllRead} className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs text-white/70 transition-colors hover:bg-white/5 hover:text-white">
               <CheckCheck className="h-3.5 w-3.5" /> Read
-            </Button>
+            </button>
           </div>
-          <div className="max-h-[420px] divide-y divide-border overflow-y-auto">
+          <div className="max-h-[420px] divide-y divide-white/10 overflow-y-auto">
             {items.length === 0 ? (
-              <div className="p-6 text-sm text-muted-foreground">Orders, payments, logins, security alerts, and announcements will appear here.</div>
+              <div className="px-4 py-5 text-[13px] leading-relaxed text-white/65">Orders, payments, logins, security alerts, and announcements will appear here.</div>
             ) : items.map((item) => {
               const Icon = item.type === 'order' ? ShoppingBag : item.type === 'payment' ? CreditCard : item.type === 'security' ? ShieldCheck : Megaphone
               const unread = !readIds.includes(item.id)
               return (
-                <div key={item.id} className={`flex gap-3 px-4 py-3 text-sm ${unread ? 'bg-primary/5' : ''}`}>
-                  <div className="mt-0.5 grid h-8 w-8 flex-shrink-0 place-items-center rounded-xl border border-border bg-background text-primary">
+                <div key={item.id} className={cn('flex gap-3 px-4 py-3 text-sm', unread && 'bg-white/[0.04]')}>
+                  <div className="mt-0.5 grid h-8 w-8 flex-shrink-0 place-items-center rounded-xl bg-[#1b8a45]/20 text-[#4ade80]">
                     <Icon className="h-4 w-4" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <div className="truncate font-medium">{item.title}</div>
-                      {unread && <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />}
+                      <div className="truncate font-medium text-white">{item.title}</div>
+                      {unread && <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-[#4ade80]" />}
                     </div>
-                    <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{item.body}</p>
-                    <div className="mt-1 font-mono text-[10px] text-muted-foreground/70">{new Date(item.createdAt).toLocaleString()}</div>
+                    <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-white/60">{item.body}</p>
+                    <div className="mt-1 text-[10px] text-white/40">{new Date(item.createdAt).toLocaleString()}</div>
                   </div>
                 </div>
               )
@@ -1354,10 +1896,65 @@ function NotificationBell({ activeStore }: { activeStore: StoreData | null }) {
   )
 }
 
-function DashboardTopBar({ activeStore }: { activeStore: StoreData | null }) {
+function DashboardTopBar({
+  activeStore, sidebarOpen, onToggleSidebar, onMenu,
+}: {
+  activeStore: StoreData | null
+  sidebarOpen: boolean
+  onToggleSidebar: () => void
+  onMenu: () => void
+}) {
   return (
-    <div className="relative z-40 flex flex-shrink-0 items-center justify-end border-b border-border bg-background/80 px-4 py-2 backdrop-blur lg:px-6">
+    <div className="relative z-40 flex flex-shrink-0 items-center justify-between px-4 py-3">
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={onMenu} className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/5 text-white lg:hidden" aria-label="Open menu">
+          <Menu className="h-4 w-4" />
+        </button>
+        {!sidebarOpen && (
+          <button type="button" onClick={onToggleSidebar} className="hidden h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/5 text-white lg:grid" aria-label="Open sidebar">
+            <PanelLeft className="h-4 w-4" />
+          </button>
+        )}
+      </div>
       <NotificationBell activeStore={activeStore} />
+    </div>
+  )
+}
+
+function DashboardFrame({
+  sidebarProps, mobileOpen, setMobileOpen, children, connection, pillDismissed, onDismissConnection, chatSkeleton,
+}: {
+  sidebarProps: SidebarSharedProps
+  mobileOpen: boolean
+  setMobileOpen: (open: boolean) => void
+  children: React.ReactNode
+  connection: LinkState
+  pillDismissed: boolean
+  onDismissConnection: () => void
+  chatSkeleton: boolean
+}) {
+  const disconnected = connection !== 'online'
+  return (
+    <div className="dash-app flex h-screen overflow-hidden">
+      <SidebarDesktop {...sidebarProps} />
+      <div className="relative flex min-h-0 min-w-0 flex-1 p-1.5 sm:p-2">
+        {children}
+        {disconnected && (chatSkeleton ? <ConnectionCanvas /> : <div className="absolute inset-0 z-30 bg-[#141615]/80" />)}
+      </div>
+      {disconnected && !pillDismissed && <ConnectionPill state={connection} onDismiss={onDismissConnection} />}
+      <MobileSidebarDrawer
+        open={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+        user={sidebarProps.user}
+        tab={sidebarProps.tab}
+        setTab={(next) => { sidebarProps.setTab(next); setMobileOpen(false) }}
+        onSignOut={sidebarProps.onSignOut}
+        onNewStore={sidebarProps.onNewStore}
+        conversations={sidebarProps.conversations}
+        activeConversationId={sidebarProps.activeConversationId}
+        onLoadConversation={(conversation) => { sidebarProps.onLoadConversation(conversation); setMobileOpen(false) }}
+        onDeleteConversation={sidebarProps.onDeleteConversation}
+      />
     </div>
   )
 }
@@ -1368,6 +1965,8 @@ function SidebarDesktop({
   conversations, activeConversationId, onLoadConversation, onDeleteConversation,
 }: SidebarSharedProps) {
   const [profileOpen, setProfileOpen] = useState(false)
+  const [workspaceOpen, setWorkspaceOpen] = useState(true)
+  const [historyOpen, setHistoryOpen] = useState(true)
   const profileItems = [
     { id: 'account', label: 'Account', icon: UserCircle },
     { id: 'billing', label: 'Billing', icon: CreditCard },
@@ -1376,123 +1975,113 @@ function SidebarDesktop({
   ]
 
   return (
-    <motion.aside
-      animate={{ width: open ? 260 : 68 }}
-      transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-      className="hidden flex-col border-r border-border bg-card/50 lg:flex overflow-hidden flex-shrink-0"
-    >
-      <div className="flex h-[60px] flex-shrink-0 items-center justify-between border-b border-border px-4">
-        <AnimatePresence>
-          {open && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex items-center gap-2.5 overflow-hidden">
-              <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-primary/20">
-                <img src="https://res.cloudinary.com/dfmsaarli/image/upload/v1782364695/ICON_large_ngiv41.png" alt="Seltra" className="h-7 w-7 rounded-md" />
-              </div>
-              <span className="whitespace-nowrap font-mono text-[15px] font-semibold tracking-tight">seltra</span>
-              <span className="flex-shrink-0 rounded-full border border-border px-2 py-0.5 font-mono text-[9px] text-muted-foreground">beta</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-        <button onClick={onToggle} className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors">
-          {open ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+    <aside className={cn('dash-sidebar landing-menu hidden h-full flex-shrink-0 flex-col overflow-hidden transition-[width] duration-200 lg:flex', open ? 'w-[216px]' : 'w-0')}>
+      <div className="flex h-[60px] flex-shrink-0 items-center justify-between px-3.5">
+        <img src="/seltra/hero/seltra-logo.png" alt="seltra" className="h-7 w-auto" />
+        <button type="button" onClick={onToggle} className="grid h-8 w-8 place-items-center rounded-lg text-white/55 transition-colors hover:bg-white/5 hover:text-white" aria-label="Collapse sidebar">
+          <PanelLeft className="h-4 w-4" />
         </button>
       </div>
 
-      <div className="border-b border-border p-3">
+      <div className="px-3 pb-3">
         <button
+          type="button"
           onClick={onNewStore}
-          title={!open ? 'New store' : undefined}
-          className={`flex w-full items-center gap-2.5 rounded-full border border-border bg-muted/30 px-3.5 py-2.5 text-sm font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 ${!open ? 'justify-center' : ''}`}
+          className="flex w-full items-center justify-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-2.5 text-[13px] font-medium text-white transition-colors hover:bg-white/[0.06]"
         >
-          <Plus className="h-[15px] w-[15px] flex-shrink-0 text-primary" />
-          <AnimatePresence>
-            {open && (
-              <motion.span initial={{ opacity: 0, width: 0 }} animate={{ opacity: 1, width: 'auto' }} exit={{ opacity: 0, width: 0 }} className="overflow-hidden whitespace-nowrap text-[13px]">
-                New store
-              </motion.span>
-            )}
-          </AnimatePresence>
+          <Plus className="h-4 w-4 text-[#3ddc84]" />
+          New store
         </button>
       </div>
 
-      <nav className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-3 min-h-0">
-        {open && <div className="mb-2 px-2.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground/60">Workspace</div>}
-        <div className="space-y-0.5">
-          {NAV_TABS.map((t) => (
-            <button
-              key={t.id} onClick={() => setTab(t.id)} title={!open ? t.label : undefined}
-              className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-colors ${!open ? 'justify-center' : ''} ${
-                tab === t.id ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-              }`}
-            >
-              <t.icon className={`flex-shrink-0 ${open ? 'h-[17px] w-[17px]' : 'h-[18px] w-[18px]'}`} />
-              <AnimatePresence>
-                {open && (
-                  <motion.span initial={{ opacity: 0, width: 0 }} animate={{ opacity: 1, width: 'auto' }} exit={{ opacity: 0, width: 0 }} className="overflow-hidden whitespace-nowrap">
-                    {t.label}
-                  </motion.span>
-                )}
-              </AnimatePresence>
-            </button>
-          ))}
-        </div>
-      </nav>
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2.5 pb-2">
+        <button
+          type="button"
+          onClick={() => setWorkspaceOpen((current) => !current)}
+          className="flex w-full items-center justify-between px-2.5 py-2 text-[11px] font-medium uppercase tracking-[0.14em] text-white/40"
+        >
+          Workspace
+          <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', workspaceOpen ? '' : '-rotate-90')} />
+        </button>
+        {workspaceOpen && (
+          <div className="mt-1 space-y-1">
+            {NAV_TABS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setTab(item.id)}
+                className={cn('dash-nav-item flex w-full items-center gap-2.5 rounded-full px-3 py-2 text-[13px] font-medium transition-colors', tab === item.id && 'is-active')}
+              >
+                <item.icon className="h-[16px] w-[16px] flex-shrink-0" />
+                {item.label}
+              </button>
+            ))}
+          </div>
+        )}
 
-      <div className="border-t border-border px-3 py-3" style={{ maxHeight: 130, overflow: 'hidden' }}>
-        {open && <div className="mb-2 px-2.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground/60">History</div>}
-        <div className="space-y-0.5 overflow-y-auto" style={{ maxHeight: open ? 190 : 150 }}>
-          {conversations.length === 0
-            ? open && <p className="px-2.5 py-2 text-xs leading-relaxed text-muted-foreground/60">Your agent conversations will appear here.</p>
-            : conversations.slice(0, open ? 8 : 4).map((conv) => (
-              <div key={conv.id} className={`group flex items-center gap-1 rounded-xl ${activeConversationId === conv.id ? 'bg-primary/10' : 'hover:bg-muted/50'}`}>
-                <button type="button" onClick={() => onLoadConversation(conv)} title={conv.title}
-                  className={`min-w-0 flex-1 px-2.5 py-2 text-left text-xs ${activeConversationId === conv.id ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+        <button
+          type="button"
+          onClick={() => setHistoryOpen((current) => !current)}
+          className="mt-5 flex w-full items-center justify-between px-2.5 py-2 text-[11px] font-medium uppercase tracking-[0.14em] text-white/40"
+        >
+          History
+          <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', historyOpen ? '' : '-rotate-90')} />
+        </button>
+        {historyOpen && (
+          <div className="mt-1 space-y-0.5">
+            {conversations.length === 0 ? (
+              <p className="px-2.5 py-1.5 text-[13px] leading-relaxed text-white/35">Your conversations will appear here.</p>
+            ) : conversations.map((conv) => (
+              <div key={conv.id} className={cn('group relative flex items-center gap-1 rounded-xl px-1', activeConversationId === conv.id ? 'bg-white/10' : 'hover:bg-white/5')}>
+                <button
+                  type="button"
+                  onClick={() => onLoadConversation(conv)}
+                  className="min-w-0 flex-1 px-2 py-2 text-left"
                 >
-                  {open ? (
-                    <>
-                      <div className="truncate font-medium">{conv.title || 'Conversation'}</div>
-                      <div className="truncate font-mono text-[9px] opacity-50">{conv.updated_at ? new Date(conv.updated_at).toLocaleDateString() : 'agent chat'}</div>
-                    </>
-                  ) : <MessageSquare className="mx-auto h-4 w-4" />}
+                  <div className="truncate text-[13px] text-white/80">{conv.title || 'Conversation'}</div>
                 </button>
-                {open && (
-                  <button type="button" onClick={() => onDeleteConversation(conv.id)}
-                    className="mr-1 hidden h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive group-hover:flex"
-                    aria-label={`Delete ${conv.title}`}
+                <details className="relative">
+                  <summary className="grid h-7 w-7 cursor-pointer list-none place-items-center rounded-lg text-white/40 marker:content-none hover:bg-white/5 hover:text-white [&::-webkit-details-marker]:hidden" aria-label={`Conversation actions for ${conv.title}`}>
+                    <MoreHorizontal className="h-4 w-4" />
+                  </summary>
+                  <button
+                    type="button"
+                    onClick={() => onDeleteConversation(conv.id)}
+                    className="absolute right-0 top-8 z-20 whitespace-nowrap rounded-lg border border-white/10 bg-[#262826] px-3 py-2 text-left text-xs text-white/80 shadow-xl hover:text-red-300"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete
                   </button>
-                )}
+                </details>
               </div>
-            ))
-          }
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {profileOpen && user && (
-        <div className={`fixed bottom-[78px] z-50 w-[min(320px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-border bg-card shadow-2xl ${open ? 'left-4' : 'left-[78px]'}`}>
-          <div className="border-b border-border px-4 py-3">
-            <div className="truncate text-sm font-semibold">{user.name || 'Merchant'}</div>
-            <div className="truncate font-mono text-[11px] text-muted-foreground">{user.email}</div>
+        <div className="fixed bottom-[64px] left-2 z-50 w-[200px] overflow-hidden rounded-2xl border border-white/10 bg-[#262826] shadow-2xl">
+          <div className="border-b border-white/10 px-4 py-3">
+            <div className="truncate text-sm font-medium text-white">{user.name || 'Merchant'}</div>
+            <div className="truncate text-[11px] text-white/45">{user.email}</div>
           </div>
-          <div className="p-2">
+          <div className="p-1.5">
             {profileItems.map((item) => (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => { setTab(item.id); setProfileOpen(false) }}
-                className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-white/70 transition-colors hover:bg-white/5 hover:text-white"
               >
                 <item.icon className="h-4 w-4" />
                 <span>{item.label}</span>
               </button>
             ))}
           </div>
-          <div className="border-t border-border p-2">
+          <div className="border-t border-white/10 p-1.5">
             <button
               type="button"
               onClick={onSignOut}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-white/70 transition-colors hover:bg-red-500/10 hover:text-red-300"
             >
               <LogOut className="h-4 w-4" />
               <span>Sign Out</span>
@@ -1502,49 +2091,16 @@ function SidebarDesktop({
       )}
 
       {user && (
-        <div className={`flex flex-shrink-0 items-center gap-2.5 border-t border-border px-4 py-3.5 ${!open ? 'justify-center' : ''}`}>
-          <button type="button" onClick={() => setProfileOpen((current) => !current)} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-xl text-left outline-none transition-opacity hover:opacity-90">
-            <Image src={user.avatar} alt={user.name} width={32} height={32} className="flex-shrink-0 rounded-full border border-border" unoptimized />
-            <AnimatePresence>
-              {open && (
-                <motion.div initial={{ opacity: 0, width: 0 }} animate={{ opacity: 1, width: 'auto' }} exit={{ opacity: 0, width: 0 }} className="min-w-0 flex-1 overflow-hidden">
-                  {user.name && <div className="truncate text-xs font-medium">{user.name}</div>}
-                  <div className="truncate font-mono text-[10px] text-muted-foreground">{user.email}</div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </button>
-          <AnimatePresence>
-            {open && (
-              <motion.div initial={{ opacity: 0, width: 0 }} animate={{ opacity: 1, width: 'auto' }} exit={{ opacity: 0, width: 0 }} className="overflow-hidden">
-                <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0 rounded-xl" onClick={() => setProfileOpen((current) => !current)}>
-                  <ChevronRight className={`h-3.5 w-3.5 transition-transform ${profileOpen ? 'rotate-90' : ''}`} />
-                </Button>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+        <button
+          type="button"
+          onClick={() => setProfileOpen((current) => !current)}
+          className="flex flex-shrink-0 items-center gap-2.5 border-t border-white/10 px-3 py-3 text-left"
+        >
+          <Image src={user.avatar} alt={user.name} width={32} height={32} className="h-8 w-8 flex-shrink-0 rounded-full object-cover" unoptimized />
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-white">{user.name || 'Merchant'}</span>
+        </button>
       )}
-    </motion.aside>
-  )
-}
-
-// ── Mobile header ──────────────────────────────────────────────────────────────
-function MobileHeader({ storeName, onMenuOpen, onSignOut }: { storeName?: string; onMenuOpen: () => void; onSignOut: () => void }) {
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => { setMounted(true) }, [])
-  return (
-    <header className="flex h-14 flex-shrink-0 items-center justify-between border-b border-border bg-card/50 px-4 lg:hidden">
-      <button onClick={onMenuOpen} className="text-muted-foreground hover:text-foreground"><Menu className="h-5 w-5" /></button>
-      <div className="flex items-center gap-2">
-        <div className="flex h-7 w-7 items-center justify-center rounded-xl bg-primary/20">
-          <span className="font-mono text-[10px] font-bold text-primary">S</span>
-        </div>
-        <span className="font-mono text-sm font-semibold">seltra</span>
-        {mounted && storeName && <span className="text-xs text-muted-foreground">· {storeName}</span>}
-      </div>
-      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onSignOut}><LogOut className="h-4 w-4" /></Button>
-    </header>
+    </aside>
   )
 }
 
@@ -1583,37 +2139,32 @@ function MobileSidebarDrawer({
             className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm lg:hidden" onClick={onClose} />
           <motion.div initial={{ x: '-100%' }} animate={{ x: 0 }} exit={{ x: '-100%' }}
             transition={{ type: 'spring', damping: 28, stiffness: 280 }}
-            className="fixed left-0 top-0 z-50 flex h-full w-[272px] flex-col border-r border-border bg-card lg:hidden"
+            className="dash-sidebar landing-menu fixed left-0 top-0 z-50 flex h-full w-[272px] flex-col lg:hidden"
           >
-            <div className="flex h-[60px] items-center justify-between border-b border-border px-4">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/20">
-                  <img src="https://res.cloudinary.com/dfmsaarli/image/upload/v1782364695/ICON_large_ngiv41.png" alt="Seltra" className="h-7 w-7 rounded-md" />
-                </div>
-                <span className="font-mono text-[15px] font-semibold">seltra</span>
-              </div>
-              <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="h-5 w-5" /></button>
+            <div className="flex h-[72px] items-center justify-between px-4">
+              <img src="/seltra/hero/seltra-logo.png" alt="seltra" className="h-7 w-auto" />
+              <button onClick={onClose} className="text-white/55 hover:text-white" aria-label="Close menu"><X className="h-5 w-5" /></button>
             </div>
-            <div className="border-b border-border p-3">
+            <div className="px-3 pb-3">
               <button onClick={() => { onNewStore(); onClose() }}
-                className="flex w-full items-center gap-2.5 rounded-full border border-border bg-muted/30 px-3.5 py-2.5 text-[13px] font-medium text-foreground hover:bg-primary/5">
-                <Plus className="h-[15px] w-[15px] text-primary" /> New store
+                className="flex w-full items-center justify-center gap-2 rounded-full border border-white/10 px-4 py-2.5 text-[13.5px] font-medium text-white hover:bg-white/5">
+                <Plus className="h-4 w-4 text-[#3ddc84]" /> New store
               </button>
             </div>
-            <nav className="flex-1 overflow-y-auto px-3 py-3">
-              <div className="mb-2 px-2.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground/60">Workspace</div>
+            <nav className="flex-1 overflow-y-auto px-3 pb-3">
+              <div className="px-2.5 py-2 text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">Workspace</div>
               <div className="space-y-0.5">
                 {NAV_TABS.map((t) => (
                   <button key={t.id} onClick={() => setTab(t.id)}
-                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-colors ${tab === t.id ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'}`}>
-                    <t.icon className="h-[17px] w-[17px] flex-shrink-0" /> {t.label}
+                    className={cn('dash-nav-item flex w-full items-center gap-3 rounded-full px-3 py-2 text-[13.5px] font-medium', tab === t.id && 'is-active')}>
+                    <t.icon className="h-4 w-4 flex-shrink-0" /> {t.label}
                   </button>
                 ))}
               </div>
-              <div className="mt-4 border-t border-border pt-4">
-                <div className="mb-2 px-2.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground/60">History</div>
+              <div className="mt-5">
+                <div className="px-2.5 py-2 text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">History</div>
                 {conversations.length === 0
-                  ? <p className="px-2.5 py-2 text-xs text-muted-foreground/60">Your agent conversations will appear here.</p>
+                  ? <p className="px-2.5 py-1.5 text-[13px] leading-relaxed text-white/35">Your conversations will appear here.</p>
                   : conversations.slice(0, 8).map((conv) => (
                     <div key={conv.id} className={`group flex items-center gap-1 rounded-xl ${activeConversationId === conv.id ? 'bg-primary/10' : ''}`}>
                       <button type="button" onClick={() => onLoadConversation(conv)}
@@ -1684,230 +2235,256 @@ function MobileSidebarDrawer({
 }
 
 // ── Empty state ────────────────────────────────────────────────────────────────
-function EmptyState({ input, setInput, send, sending, name, onAttach, pendingAttachment, onClearAttachment, conversations, onLoadConversation, stores, hasHistory }: {
+function storeCover(store: StoreData) {
+  const productImage = store.products?.flatMap((product) => product.images ?? []).find((image) => imageUrl(image?.url))?.url
+  return imageUrl(store.canonical?.heroImageUrl) || imageUrl(productImage) || imageUrl(store.heroSource) || imageUrl(store.canonical?.logoUrl)
+}
+
+function storeStatusLabel(store: StoreData) {
+  const status = (store.status ?? 'active').toLowerCase()
+  if (status === 'active') return 'Published'
+  if (status === 'draft') return 'Draft'
+  return status.charAt(0).toUpperCase() + status.slice(1)
+}
+
+function EmptyState({
+  input, setInput, send, sending, name, onAttach, pendingAttachment, onClearAttachment,
+  stores, sidebarOpen, onToggleSidebar, onMenu, onUpgrade, showUpgrade, activeStore, onOpenStore, onSeeAllStores,
+}: {
   input: string; setInput: (v: string) => void; send: () => void
   sending: boolean; name: string; onAttach: (f: File) => void
   pendingAttachment?: PendingAttachment | null; onClearAttachment?: () => void
-  conversations: Conversation[]; onLoadConversation: (c: Conversation) => void
-  stores: StoreData[]; hasHistory: boolean
+  stores: StoreData[]
+  sidebarOpen: boolean
+  onToggleSidebar: () => void
+  onMenu: () => void
+  onUpgrade: () => void
+  showUpgrade: boolean
+  activeStore: StoreData | null
+  onOpenStore: (store: StoreData) => void
+  onSeeAllStores: () => void
 }) {
-  const GETTING_STARTED = [
-    {
-      icon: Sparkles,
-      title: 'Build a skincare brand',
-      desc: 'Generate a luxury store for young women in Accra and Lagos — complete with products and checkout.',
-      prompt: 'A luxury skincare brand for young women in Accra and Lagos',
-    },
-    {
-      icon: Palette,
-      title: 'Launch a streetwear label',
-      desc: 'AI builds your Afrocentric fashion store with Kente-inspired street silhouettes and Moolre checkout.',
-      prompt: 'A contemporary African streetwear brand blending Kente with street silhouettes',
-    },
-    {
-      icon: Zap,
-      title: 'Open a wellness store',
-      desc: 'Candles, self-care, and handmade goods — your agent sets everything up in seconds.',
-      prompt: 'A handmade candle and wellness store for urban professionals',
-    },
-  ]
-
-  const QUICK_ACTIONS = [
-    {
-      icon: ShoppingCart,
-      title: 'Sell digital products',
-      desc: 'Notion templates, e-books, courses',
-      prompt: 'A digital product store selling Notion templates for entrepreneurs',
-    },
-    {
-      icon: Megaphone,
-      title: 'Launch a food brand',
-      desc: 'Snacks, sauces, or meal kits with delivery',
-      prompt: 'An artisan food brand selling Ghanaian snacks and sauces online',
-    },
-    {
-      icon: Package,
-      title: 'Start a fashion line',
-      desc: 'Ready-to-wear, accessories, or custom pieces',
-      prompt: 'A contemporary African fashion brand selling ready-to-wear clothing',
-    },
-  ]
-
+  const [library, setLibrary] = useState<'recents' | 'stores'>('recents')
+  const [query, setQuery] = useState('')
+  const [recentIds, setRecentIds] = useState<string[]>([])
   const firstName = name?.split(' ')[0] || ''
-  const welcomeHeadline = firstName ? `Welcome back, ${firstName}.` : 'Welcome back.'
-  const welcomeSubline = stores.length === 0
-    ? 'Pick up a previous conversation, or describe a new store to get started.'
-    : stores.length === 1
-      ? `${stores[0]?.name || 'Your store'} is live with ${stores[0]?.products?.length ?? 0} products. What should we work on next?`
-      : `You have ${stores.length} stores live. Select one, or tell your agent what to build next.`
+  useEffect(() => { setRecentIds(readRecentStoreIds()) }, [stores])
+  const filtered = stores.filter((store) => store.name.toLowerCase().includes(query.trim().toLowerCase()))
+  const viewed = recentIds
+    .map((id) => filtered.find((store) => store.id === id || store.slug === id))
+    .filter((store): store is StoreData => Boolean(store))
+  const visibleStores = library === 'recents' ? (viewed.length > 0 ? viewed.slice(0, 3) : filtered.slice(0, 3)) : filtered
+  const libraryTitle = library === 'stores' ? 'My stores' : viewed.length > 0 ? 'Recently viewed' : 'Recent stores'
+  const starters = [
+    'Generate a luxury store for young women in Accra and Lagos — complete with products and checkout.',
+    'Generate a luxury store for young women in Accra and Lagos — complete with products and checkout.',
+    'Generate a luxury store for young women in Accra and Lagos — complete with products and checkout.',
+    'Generate a luxury store for young women in Accra and Lagos — complete with products and checkout.',
+  ]
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[900px] px-8 py-12">
-          <div className="mb-10">
-            <h1 className="text-[28px] font-bold tracking-tight">
-              {hasHistory ? welcomeHeadline : (firstName ? `Welcome to Seltra, ${firstName}.` : 'Welcome to Seltra.')}
-            </h1>
-            <p className="mt-1.5 text-[15px] text-muted-foreground">
-              {hasHistory ? welcomeSubline : 'Describe your business and your agent builds the store, products, and checkout in seconds.'}
-            </p>
-          </div>
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <Aurora tone="hero" />
 
-          {hasHistory ? (
-            <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-              <div className="rounded-2xl border border-border bg-card/40 p-5">
-                <div className="mb-4 text-[13px] font-semibold text-foreground">Pick up where you left off</div>
-                <div className="space-y-2.5">
-                  {stores.length > 0 ? stores.slice(0, 4).map((store) => (
-                    <div key={store.id ?? store.slug} className="rounded-2xl border border-border bg-background/60 p-3">
-                      <div className="text-sm font-semibold">{store.name}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">{store.slug}.seltra.co • {store.products?.length ?? 0} products</div>
-                    </div>
-                  )) : (
-                    <div className="rounded-2xl border border-dashed border-border bg-background/50 p-4 text-sm text-muted-foreground">
-                      You have conversations but no active store yet. Start a new build to create one.
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-border bg-card/40 p-5">
-                <div className="mb-4 text-[13px] font-semibold text-foreground">Recent chats</div>
-                {conversations.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-border bg-card/20 px-5 py-6 text-center">
-                    <p className="text-xs text-muted-foreground">Start a chat to brainstorm, draft, and build with your agent.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    {conversations.slice(0, 4).map((conv) => (
-                      <button
-                        key={conv.id}
-                        onClick={() => onLoadConversation(conv)}
-                        className="group flex w-full items-center gap-3 rounded-2xl border border-border bg-card/40 px-4 py-3 text-left transition-all hover:border-primary/40 hover:bg-card/70"
-                      >
-                        <MessageSquare className="h-4 w-4 flex-shrink-0 text-muted-foreground group-hover:text-primary" />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-[13px] font-medium">{conv.title || 'Conversation'}</div>
-                          <div className="font-mono text-[10px] text-muted-foreground opacity-60">
-                            {conv.updated_at ? new Date(conv.updated_at).toLocaleDateString() : 'agent chat'}
-                          </div>
-                        </div>
-                        <ArrowRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div className="grid gap-8 lg:grid-cols-[1fr_1fr]">
-              <div>
-                <div className="mb-4">
-                  <span className="text-[13px] font-semibold text-foreground">Getting started</span>
-                </div>
-                <div className="space-y-2.5">
-                  {GETTING_STARTED.map((item) => (
-                    <button
-                      key={item.title}
-                      onClick={() => setInput(item.prompt)}
-                      className="group flex w-full items-start gap-3.5 rounded-2xl border border-border bg-card/40 p-4 text-left transition-all hover:border-primary/40 hover:bg-card/70"
-                    >
-                      <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-border bg-background text-muted-foreground transition-colors group-hover:border-primary/30 group-hover:bg-primary/5 group-hover:text-primary">
-                        <item.icon className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[13px] font-semibold">{item.title}</span>
-                          <ArrowRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                        </div>
-                        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{item.desc}</p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <div className="mb-4">
-                  <span className="text-[13px] font-semibold text-foreground">Quick launches</span>
-                </div>
-                <div className="space-y-2.5">
-                  {QUICK_ACTIONS.map((item) => (
-                    <button
-                      key={item.title}
-                      onClick={() => setInput(item.prompt)}
-                      className="group flex w-full items-center gap-3.5 rounded-2xl border border-border bg-card/40 p-4 text-left transition-all hover:border-primary/40 hover:bg-card/70"
-                    >
-                      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-border bg-background text-muted-foreground transition-colors group-hover:border-primary/30 group-hover:bg-primary/5 group-hover:text-primary">
-                        <item.icon className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[13px] font-semibold">{item.title}</span>
-                          <ArrowRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                        </div>
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">{item.desc}</p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-
-                <div className="mt-6">
-                  <div className="mb-3 text-[13px] font-semibold">Recent chats</div>
-                  {conversations.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-border bg-card/20 px-5 py-6 text-center">
-                      <p className="text-xs text-muted-foreground">Start a chat to brainstorm, draft, and build with your agent.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {conversations.slice(0, 4).map((conv) => (
-                        <button
-                          key={conv.id}
-                          onClick={() => onLoadConversation(conv)}
-                          className="group flex w-full items-center gap-3 rounded-2xl border border-border bg-card/40 px-4 py-3 text-left transition-all hover:border-primary/40 hover:bg-card/70"
-                        >
-                          <MessageSquare className="h-4 w-4 flex-shrink-0 text-muted-foreground group-hover:text-primary" />
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[13px] font-medium">{conv.title || 'Conversation'}</div>
-                            <div className="font-mono text-[10px] text-muted-foreground opacity-60">
-                              {conv.updated_at ? new Date(conv.updated_at).toLocaleDateString() : 'agent chat'}
-                            </div>
-                          </div>
-                          <ArrowRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+      <div className="relative z-40 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 pt-5 sm:px-7 sm:pt-6 lg:px-8">
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={onMenu} className="grid h-10 w-10 place-items-center rounded-xl bg-[#1c1e1d] text-white lg:hidden" aria-label="Open menu">
+            <Menu className="h-4 w-4" />
+          </button>
+          {!sidebarOpen && (
+            <button type="button" onClick={onToggleSidebar} className="hidden h-10 w-10 place-items-center rounded-xl bg-[#1c1e1d] text-white lg:grid" aria-label="Open sidebar">
+              <PanelLeft className="h-4 w-4" />
+            </button>
           )}
         </div>
+        <div className="flex justify-center">
+          {showUpgrade && (
+            <button
+              type="button"
+              onClick={onUpgrade}
+              className="inline-flex items-center gap-2 rounded-full bg-[#141615] py-1.5 pl-3.5 pr-1.5 text-[12px] font-medium text-white shadow-[0_12px_30px_-16px_rgba(0,0,0,0.55)] sm:gap-2.5 sm:pl-4 sm:text-[13px]"
+            >
+              Upgrade to Pro
+              <span className="grid h-7 w-7 place-items-center rounded-full bg-[#22c55e]">
+                <ArrowRight className="h-3.5 w-3.5" />
+              </span>
+            </button>
+          )}
+        </div>
+        <NotificationBell activeStore={activeStore} tone="wash" />
       </div>
 
-      <div className="flex-shrink-0 border-t border-border bg-card/40 backdrop-blur">
-        <div className="mx-auto max-w-[900px] px-8 py-4">
-          <ChatInput
-            input={input}
-            setInput={setInput}
-            send={send}
-            sending={sending}
-            onAttach={onAttach}
-            pendingAttachment={pendingAttachment}
-            onClearAttachment={onClearAttachment}
-          />
+      <div className="relative z-10 mx-auto flex w-full max-w-[720px] flex-1 flex-col items-center justify-center px-5 py-10 sm:px-6">
+        <div className="flex flex-col items-center gap-3 sm:flex-row sm:gap-3.5">
+          <img src="/seltra/signup/logo-mark.png" alt="" className="h-9 w-9 object-contain sm:h-10 sm:w-10" />
+          <h1 className="text-center text-[1.75rem] font-semibold tracking-[-0.04em] text-neutral-950 sm:text-[2.15rem] lg:text-[2.35rem]">
+            What&apos;s the vision{firstName ? `, ${firstName}` : ''}?
+          </h1>
         </div>
+
+        <div className="landing-composer-halo mt-8 w-full sm:mt-9">
+          <div className="landing-prompt group relative flex min-h-[118px] w-full flex-col justify-between overflow-hidden text-left">
+            <span className="landing-sheen" aria-hidden />
+            {pendingAttachment && (
+              <div className="relative z-10 px-5 pt-3">
+                <div className="relative h-14 w-14 overflow-hidden rounded-xl border border-black/10">
+                  <img src={pendingAttachment.previewUrl} alt={pendingAttachment.name} className="h-full w-full object-cover" />
+                  <button type="button" onClick={onClearAttachment} className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-black/70 text-white" aria-label="Remove attachment">
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+            )}
+            <div className="relative z-10 px-5 pt-4 sm:px-6">
+              <TypewriterPlaceholder
+                prompts={[
+                  'Ask seltra to build a skincare brand...',
+                  'Ask seltra to launch a premium coffee brand...',
+                  'Ask seltra to open a fashion store selling...',
+                  'Ask seltra to start a handmade jewelry boutique...',
+                ]}
+                typingSpeed={35}
+                deleteSpeed={18}
+                pauseDuration={1600}
+                active={input.length === 0}
+                resumeDelay={200}
+                className="pointer-events-none absolute inset-x-5 top-4 text-[15px] leading-6 text-neutral-400 sm:inset-x-6 sm:text-base"
+              />
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+                rows={1}
+                wrap="off"
+                placeholder=""
+                aria-label="Describe the store you want to build"
+                className={cn(
+                  'composer-textarea composer-textarea-light relative z-10 h-6 w-full resize-none overflow-x-auto whitespace-pre bg-transparent text-[15px] leading-6 text-neutral-900 focus:outline-none sm:text-base',
+                  input.length === 0 && 'caret-transparent',
+                )}
+              />
+            </div>
+            <div className="relative z-10 flex items-center justify-between gap-3 px-4 pb-3.5 pt-2.5 sm:px-5 sm:pb-4">
+            <label className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-black/[0.08] bg-white text-neutral-400 transition-colors hover:border-black/15 hover:text-neutral-700 sm:h-9 sm:w-9" title="Attach files">
+              <Plus className="h-4 w-4" />
+              <input type="file" className="hidden" accept="image/*" onChange={(e) => { const file = e.target.files?.[0]; if (file) onAttach(file); e.target.value = '' }} />
+            </label>
+            <div className="flex items-center gap-1.5">
+              <span className="hidden items-center gap-1 rounded-full px-3 py-2 text-sm font-medium text-neutral-500 sm:inline-flex">
+                Build <ChevronDown className="h-4 w-4" />
+              </span>
+              <span className="flex h-8 w-8 items-center justify-center rounded-full text-neutral-400 sm:h-9 sm:w-9" title="Voice prompt">
+                <Mic className="h-4 w-4" />
+              </span>
+              <button
+                type="button"
+                onClick={send}
+                disabled={sending || pendingAttachment?.uploading || (!input.trim() && !pendingAttachment)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-[#22c55e] text-white transition-colors hover:bg-[#16a34a] disabled:opacity-40 sm:h-9 sm:w-9"
+                title="Build store"
+              >
+                {sending ? (
+                  <span className="block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                ) : (
+                  <img src="/seltra/icons/send.png" alt="" className="h-[18px] w-[18px] object-contain" />
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div>
+
+      <div className="relative z-10 mx-auto mt-auto w-full max-w-[1040px] px-4 pb-6 sm:px-8 sm:pb-8 lg:px-12 lg:pb-10">
+        {stores.length === 0 ? (
+          <section className="rounded-[28px] bg-[#161817] px-4 py-5 text-white sm:px-6 sm:py-6">
+            <h2 className="px-1 text-base font-semibold">Getting started</h2>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 md:gap-4">
+              {starters.map((desc, index) => (
+                <button
+                  key={index}
+                  type="button"
+                  onClick={() => setInput('A luxury skincare brand for young women in Accra and Lagos — complete with products and checkout.')}
+                  className="rounded-2xl bg-[#242624] px-4 py-4 text-left transition-colors hover:bg-[#2c2e2c]"
+                >
+                  <div className="flex items-start gap-3.5">
+                    <span className="mt-0.5 grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl bg-black/35 text-white">
+                      <Sparkles className="h-4 w-4" />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-semibold">Build a skincare brand</span>
+                      <span className="mt-1 block text-[13px] leading-relaxed text-white/55">{desc}</span>
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : (
+          <section className="rounded-[28px] bg-[#161817] px-4 py-5 text-white sm:px-6 sm:py-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-1 rounded-full bg-black/25 p-1">
+                <button type="button" onClick={() => setLibrary('recents')} className={cn('rounded-full px-3.5 py-1.5 text-[13px] font-medium', library === 'recents' ? 'bg-[#2c2e2c] text-white' : 'text-white/55')}>Recents</button>
+                <button type="button" onClick={() => setLibrary('stores')} className={cn('rounded-full px-3.5 py-1.5 text-[13px] font-medium', library === 'stores' ? 'bg-[#2c2e2c] text-white' : 'text-white/55')}>My stores</button>
+              </div>
+              <label className="flex h-10 w-full items-center gap-2 rounded-full border border-white/10 px-3 text-white/45 sm:w-auto sm:min-w-[200px]">
+                <Search className="h-4 w-4" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search"
+                  className="w-full bg-transparent text-sm text-white outline-none placeholder:text-white/35"
+                />
+              </label>
+            </div>
+            <div className="mt-4 flex items-center justify-between px-1">
+              <h2 className="text-[15px] font-semibold">{libraryTitle}</h2>
+              <button type="button" onClick={onSeeAllStores} className="rounded-xl border border-white/10 px-3 py-1.5 text-[13px] text-white/80 transition-colors hover:bg-white/5">See all</button>
+            </div>
+            {visibleStores.length === 0 ? (
+              <p className="px-1 py-8 text-sm text-white/45">No stores match that search.</p>
+            ) : (
+              <div className={cn('mt-4 grid gap-4', library === 'recents' ? 'md:grid-cols-2 xl:grid-cols-3' : 'sm:grid-cols-2 xl:grid-cols-3')}>
+                {visibleStores.map((store) => {
+                  const cover = storeCover(store)
+                  return (
+                    <button key={store.id ?? store.slug} type="button" onClick={() => onOpenStore(store)} className="overflow-hidden rounded-2xl bg-[#242624] text-left transition-colors hover:bg-[#2c2e2c]">
+                      <div className="relative h-36 bg-[#101211] sm:h-[168px]">
+                        {cover ? (
+                          <img src={cover} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full items-end bg-[radial-gradient(circle_at_30%_20%,rgba(74,222,128,0.35),transparent_55%),linear-gradient(160deg,#10241a,#1a1c1b)] p-4">
+                            <span className="text-sm font-medium text-white/80">{store.name}</span>
+                          </div>
+                        )}
+                        <span className="absolute bottom-3 left-3 rounded-md bg-[#123024] px-2 py-1 text-[11px] font-medium text-[#b7f7cf]">{storeStatusLabel(store)}</span>
+                      </div>
+                      <div className="px-3.5 py-3">
+                        <div className="truncate text-[14px] font-semibold">{store.name}</div>
+                        <div className="mt-0.5 truncate text-[12px] text-white/45">{editedLabel(store.updatedAt) || `${store.slug}.seltra.co`}</div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </div>
   )
 }
 
 // ── Chat input ─────────────────────────────────────────────────────────────────
-function ChatInput({ input, setInput, send, sending, onAttach, compact = false, pendingAttachment, onClearAttachment }: {
+function ChatInput({ input, setInput, send, sending, onAttach, compact = false, pendingAttachment, onClearAttachment, variant = 'default', placeholder, busy = false, onStop }: {
   input: string; setInput: (v: string) => void; send: () => void
   sending: boolean; onAttach: (f: File) => void; compact?: boolean
   pendingAttachment?: PendingAttachment | null
   onClearAttachment?: () => void
+  variant?: 'default' | 'chat'
+  placeholder?: string
+  busy?: boolean
+  onStop?: () => void
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -1944,8 +2521,13 @@ function ChatInput({ input, setInput, send, sending, onAttach, compact = false, 
           </div>
         </div>
       )}
-      <div className="flex items-center gap-2 rounded-[28px] border border-border bg-card/60 px-3 py-2 shadow-sm transition-all focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10">
-        <label className="flex h-9 w-9 flex-shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/60 hover:text-primary">
+      <div className={cn(
+        'flex items-end gap-2 px-3 py-2',
+        variant === 'chat'
+          ? 'min-h-[92px] rounded-[22px] border border-white/10 bg-[#161817]'
+          : 'rounded-[28px] border border-border bg-card/60 shadow-sm transition-all focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10',
+      )}>
+        <label className={cn('flex h-9 w-9 flex-shrink-0 cursor-pointer items-center justify-center rounded-full', variant === 'chat' ? 'border border-white/10 text-white/45 hover:text-white' : 'text-muted-foreground transition-colors hover:bg-muted/60 hover:text-primary')}>
           <Plus className="h-[18px] w-[18px]" />
           <input type="file" className="hidden" accept="image/*"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) onAttach(f); e.target.value = '' }} />
@@ -1957,15 +2539,28 @@ function ChatInput({ input, setInput, send, sending, onAttach, compact = false, 
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
           rows={1}
           wrap="off"
-          placeholder={pendingAttachment ? 'Describe what to do with this image...' : 'Message your agent...'}
-          className="flex-1 resize-none bg-transparent py-1.5 px-1 text-sm outline-none placeholder:text-muted-foreground leading-[1.5] overflow-x-auto whitespace-pre composer-textarea"
-          style={{ minHeight: 36, maxHeight: compact ? 120 : 160, overflowY: 'auto' }}
+          placeholder={placeholder ?? (pendingAttachment ? 'Describe what to do with this image...' : 'Message your agent...')}
+          className={cn('flex-1 resize-none bg-transparent py-1.5 px-1 text-sm outline-none leading-[1.5] overflow-x-auto whitespace-pre composer-textarea', variant === 'chat' ? 'text-white placeholder:text-white/35' : 'placeholder:text-muted-foreground')}
+          style={{ minHeight: 36, maxHeight: compact || variant === 'chat' ? 120 : 160, overflowY: 'auto' }}
         />
+        {variant === 'chat' && (
+          <span className="mb-1 hidden items-center gap-1 px-2 text-sm text-white/45 sm:inline-flex">
+            Build <ChevronDown className="h-4 w-4" />
+          </span>
+        )}
+        {variant === 'chat' && (
+          <span className="mb-1 grid h-9 w-9 place-items-center text-white/40" title="Voice prompt">
+            <Mic className="h-4 w-4" />
+          </span>
+        )}
         <button
-          onClick={send} disabled={sending || pendingAttachment?.uploading || (!input.trim() && !pendingAttachment)}
-          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-35"
+          type="button"
+          onClick={() => { if (busy) { onStop?.(); return } send() }}
+          disabled={!busy && (sending || pendingAttachment?.uploading || (!input.trim() && !pendingAttachment))}
+          aria-label={busy ? 'Stop' : 'Send'}
+          className="mb-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[#22c55e] text-white transition-opacity hover:opacity-90 disabled:opacity-35"
         >
-          <Send className="h-4 w-4" />
+          {busy ? <span className="block h-3 w-3 rounded-[3px] bg-white" /> : variant === 'chat' ? <img src="/seltra/icons/send.png" alt="" className="h-[18px] w-[18px] object-contain" /> : <Send className="h-4 w-4" />}
         </button>
       </div>
     </div>

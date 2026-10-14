@@ -146,7 +146,7 @@ export default function RoleApplyPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <SiteHeader />
+      <SiteHeader dark />
       <main className="flex-1 pb-16 pt-24 sm:pt-28">
         <div className="container mx-auto max-w-2xl px-4 sm:px-6">
           <Link href={job ? `/careers/${job.slug}` : '/careers'} className="mb-6 inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-primary">

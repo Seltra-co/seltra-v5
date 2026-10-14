@@ -15,6 +15,7 @@ export interface RoleAssessment {
 export interface Job {
   slug: string
   team: string
+  department: string
   title: string
   location: string
   type: string
@@ -34,6 +35,7 @@ export const JOBS: Job[] = [
   {
     slug: 'founding-gtm-operations-partner',
     team: 'Founding team',
+    department: 'Operations',
     title: 'Founding GTM & Operations Partner',
     location: 'Accra, Ghana - Remote-friendly',
     type: 'Full-time or part-time',
@@ -70,6 +72,7 @@ export const JOBS: Job[] = [
   {
     slug: 'founding-software-engineer',
     team: 'Founding team',
+    department: 'Engineering',
     title: 'Founding Software Engineer',
     location: 'Remote — global',
     type: 'Full-time',

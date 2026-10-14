@@ -35,12 +35,20 @@ export function StorefrontShell({
   slug,
   children,
   isStream = false,
+  showToolbar = true,
+  device: deviceProp,
+  onDeviceChange,
 }: {
   slug: string
   children: ReactNode
   isStream?: boolean
+  showToolbar?: boolean
+  device?: 'desktop' | 'mobile'
+  onDeviceChange?: (device: 'desktop' | 'mobile') => void
 }) {
-  const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop')
+  const [deviceState, setDeviceState] = useState<'desktop' | 'mobile'>('desktop')
+  const device = deviceProp ?? deviceState
+  const setDevice = onDeviceChange ?? setDeviceState
   const outerRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
@@ -79,7 +87,7 @@ export function StorefrontShell({
   return (
     <div className="flex h-full min-h-0 flex-col bg-card/20">
       {/* ── Toolbar ── */}
-      <div className="flex flex-shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-card/40 px-3 py-2">
+      <div className={`flex flex-shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-card/40 px-3 py-2 ${showToolbar ? '' : 'hidden'}`}>
         {isStream ? (
           <div className="min-w-0">
             <div className="truncate text-[13px] font-medium text-foreground">Building your store…</div>

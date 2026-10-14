@@ -1,122 +1,137 @@
 //seltra-web/frontend/app/careers/[slug]/page.tsx
-'use client'
-
+import type { ReactNode } from 'react'
 import Link from 'next/link'
-import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, ArrowRight, Briefcase, Coins, Lock, MapPin, Sparkles } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { SiteHeader } from '@/components/marketing/SiteHeader'
 import { SiteFooter } from '@/components/marketing/SiteFooter'
-import { getJob } from '@/lib/jobs'
+import { JOBS, getJob } from '@/lib/jobs'
 
-export default function CareerDetailPage() {
-  const router = useRouter()
-  const params = useParams<{ slug: string }>()
-  const job = getJob(params.slug)
+export function generateStaticParams() {
+  return JOBS.map((job) => ({ slug: job.slug }))
+}
 
-  if (!job) {
-    return (
-      <div className="flex min-h-screen flex-col bg-background">
-        <SiteHeader />
-        <main className="container mx-auto flex-1 px-4 pb-16 pt-28 text-center">
-          <p className="mb-3 font-mono text-xs text-primary">{'// 404'}</p>
-          <h1 className="mb-4 text-2xl font-bold">Role not found</h1>
-          <Button onClick={() => router.push('/careers')} className="rounded-md">Back to careers</Button>
-        </main>
-        <SiteFooter />
-      </div>
-    )
-  }
+const primaryButton = 'btn btn-lg btn-primary'
+const outlineButton = 'btn btn-lg btn-glass-dark'
 
-  const isClosed = job.status === 'closed'
-
+function DarkShell({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <SiteHeader />
-      <main className="flex-1 pb-16 pt-24 sm:pt-28">
-        <div className="container mx-auto max-w-3xl px-4 sm:px-6">
-          <Link href="/careers" className="mb-6 inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-primary">
-            <ArrowLeft className="h-3 w-3" /> all roles
-          </Link>
-
-          <p className="mb-3 font-mono text-xs text-primary">{`// ${job.team}`}</p>
-          <h1 className="mb-4 text-3xl font-bold tracking-tight sm:text-4xl">{job.title}</h1>
-
-          <div className="mb-6 flex flex-wrap gap-x-5 gap-y-2 font-mono text-xs text-muted-foreground">
-            <span className="flex items-center gap-1.5"><MapPin className="h-3 w-3" /> {job.location}</span>
-            <span className="flex items-center gap-1.5"><Briefcase className="h-3 w-3" /> {job.type}</span>
-            <span className="flex items-center gap-1.5"><Coins className="h-3 w-3" /> {job.compensation}</span>
-          </div>
-
-          <p className="mb-8 text-base text-muted-foreground sm:text-lg">{job.summary}</p>
-
-          {isClosed ? (
-            <div className="mb-10 flex gap-3 rounded-xl border border-border bg-card/40 p-5 sm:p-6">
-              <Lock className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
-              <div>
-                <p className="mb-1 font-mono text-xs text-muted-foreground">{'// this role is closed'}</p>
-                <p className="text-sm text-foreground">{job.closedNote}</p>
-                <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-                  <Button variant="outline" size="lg" className="rounded-md font-mono text-xs" onClick={() => router.push('/careers')}>
-                    See open roles
-                  </Button>
-                  <a href="mailto:williamofosu677@gmail.com?subject=Seltra%20General%20interest" className="inline-flex">
-                    <Button size="lg" className="w-full rounded-md font-mono text-xs sm:w-auto">Register interest</Button>
-                  </a>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="mb-12 flex flex-col gap-3 sm:flex-row">
-              <Button size="lg" className="rounded-md font-mono text-xs" onClick={() => router.push(`/careers/${job.slug}/apply`)}>
-                Apply for this role <ArrowRight className="h-4 w-4" />
-              </Button>
-              <a href="mailto:williamofosu677@gmail.com" className="inline-flex">
-                <Button size="lg" variant="outline" className="w-full rounded-md font-mono text-xs sm:w-auto">Ask a question</Button>
-              </a>
-            </div>
-          )}
-
-          <Section title="The mission"><p>{job.mission}</p></Section>
-          <Section title="What you will own"><List items={job.responsibilities} /></Section>
-          <Section title="You probably look like"><List items={job.youAre} /></Section>
-          <Section title="Nice to have"><List items={job.niceToHave} /></Section>
-
-          <div className="mt-10 flex gap-3 rounded-xl border border-primary/30 bg-primary/5 p-5 sm:p-6">
-            <Sparkles className="mt-1 h-4 w-4 shrink-0 text-primary" />
-            <div>
-              <p className="mb-1 font-mono text-xs text-primary">{'// stage'}</p>
-              <p className="text-sm text-muted-foreground">{job.stage}</p>
-            </div>
-          </div>
-
-          {!isClosed && (
-            <div className="mt-12">
-              <Button size="lg" className="rounded-md font-mono text-xs" onClick={() => router.push(`/careers/${job.slug}/apply`)}>
-                Apply for this role <ArrowRight className="h-4 w-4" />
-              </Button>
-            </div>
-          )}
-        </div>
-      </main>
+    <div className="site-dark relative min-h-screen overflow-hidden">
+      <SiteHeader dark />
+      <img src="/seltra/mark-left.png" alt="" aria-hidden className="pointer-events-none absolute left-0 top-28 w-24 select-none sm:w-36 lg:w-44" />
+      <img src="/seltra/careers/mark-right.png" alt="" aria-hidden className="pointer-events-none absolute right-0 top-[64%] w-24 select-none sm:w-36 lg:w-48" />
+      {children}
       <SiteFooter />
     </div>
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+export default async function CareerDetailPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params
+  const job = getJob(slug)
+
+  if (!job) {
+    return (
+      <DarkShell>
+        <main className="relative z-10 mx-auto max-w-3xl px-5 pb-24 pt-40 text-center">
+          <h1 className="text-3xl font-semibold tracking-tight">
+            Role <span className="text-[#4ade80]">not found.</span>
+          </h1>
+          <Link href="/careers" className={`${primaryButton} mt-8`}>Back to careers</Link>
+        </main>
+      </DarkShell>
+    )
+  }
+
+  const isClosed = job.status === 'closed'
+  const [firstWord, ...rest] = job.title.split(' ')
+
   return (
-    <section className="mb-8">
-      <h2 className="mb-3 text-lg font-semibold sm:text-xl">{title}</h2>
-      <div className="text-sm leading-relaxed text-muted-foreground sm:text-base">{children}</div>
+    <DarkShell>
+      <main className="relative z-10 mx-auto max-w-3xl px-5 pb-20 pt-32 sm:px-6 sm:pt-40">
+        <Link href="/careers" className="landing-menu inline-flex items-center gap-1.5 text-[13px] text-white/55 transition-colors hover:text-[#4ade80]">
+          <ArrowLeft className="h-3.5 w-3.5" /> All roles
+        </Link>
+
+        <h1 className="mt-6 text-balance text-[2.1rem] font-semibold leading-[1.08] tracking-[-0.04em] sm:text-[2.75rem]">
+          {firstWord} <span className="text-[#4ade80]">{rest.join(' ')}</span>
+        </h1>
+
+        <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-[14px] text-white/60">
+          <span className="flex items-center gap-1.5"><MapPin className="h-4 w-4 text-[#4ade80]" /> {job.location}</span>
+          <span className="flex items-center gap-1.5"><Briefcase className="h-4 w-4 text-[#4ade80]" /> {job.type}</span>
+          <span className="flex items-center gap-1.5"><Coins className="h-4 w-4 text-[#4ade80]" /> {job.compensation}</span>
+        </div>
+
+        <p className="mt-8 text-[16px] leading-relaxed text-white/75 sm:text-lg">{job.summary}</p>
+
+        {isClosed ? (
+          <div className="site-dark-card mt-10 flex gap-4 rounded-[1.5rem] p-6 sm:p-7">
+            <Lock className="mt-1 h-5 w-5 shrink-0 text-white/50" />
+            <div>
+              <p className="font-semibold">This role is closed.</p>
+              <p className="mt-1.5 text-sm leading-relaxed text-white/65">{job.closedNote}</p>
+              <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                <Link href="/careers#roles" className={outlineButton}>See open roles</Link>
+                <a href="mailto:williamofosu677@gmail.com?subject=Seltra%20General%20interest" className={primaryButton}>
+                  Register interest
+                </a>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-10 flex flex-col gap-3 sm:flex-row">
+            <Link href={`/careers/${job.slug}/apply`} className={primaryButton}>
+              Apply for this role <ArrowRight className="h-4 w-4" />
+            </Link>
+            <a href="mailto:williamofosu677@gmail.com" className={outlineButton}>Ask a question</a>
+          </div>
+        )}
+
+        <div className="mt-14 space-y-10">
+          <Section title="The mission"><p>{job.mission}</p></Section>
+          <Section title="What you will own"><List items={job.responsibilities} /></Section>
+          <Section title="You probably look like"><List items={job.youAre} /></Section>
+          <Section title="Nice to have"><List items={job.niceToHave} /></Section>
+        </div>
+
+        <div className="site-dark-card mt-12 flex gap-4 rounded-[1.5rem] p-6 sm:p-7">
+          <Sparkles className="mt-1 h-5 w-5 shrink-0 text-[#4ade80]" />
+          <div>
+            <p className="font-semibold text-[#4ade80]">Note</p>
+            <p className="mt-1.5 text-sm leading-relaxed text-white/70 sm:text-[15px]">{job.stage}</p>
+          </div>
+        </div>
+
+        {!isClosed && (
+          <div className="mt-12">
+            <Link href={`/careers/${job.slug}/apply`} className={primaryButton}>
+              Apply for this role <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
+        )}
+      </main>
+    </DarkShell>
+  )
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section>
+      <h2 className="text-xl font-semibold tracking-tight sm:text-2xl">{title}</h2>
+      <div className="mt-4 text-[15px] leading-relaxed text-white/70 sm:text-base">{children}</div>
     </section>
   )
 }
 
 function List({ items }: { items: string[] }) {
   return (
-    <ul className="list-disc space-y-2 pl-5">
-      {items.map((item) => <li key={item}>{item}</li>)}
+    <ul className="space-y-3">
+      {items.map((item) => (
+        <li key={item} className="flex gap-3">
+          <span className="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#4ade80]" />
+          <span>{item}</span>
+        </li>
+      ))}
     </ul>
   )
 }

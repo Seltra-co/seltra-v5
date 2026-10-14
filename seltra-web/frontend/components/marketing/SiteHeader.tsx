@@ -2,61 +2,194 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import Image from 'next/image'
-import { Menu, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { ChevronDown, Menu, X } from 'lucide-react'
+import { AuthFlowModal } from '@/components/marketing/AuthFlowModal'
+import { cn } from '@/lib/utils'
 
-function getToken() {
-  return typeof window !== 'undefined' ? localStorage.getItem('seltra:token') : null
-}
+const featureLinks = [
+  { href: '/features', label: 'All features' },
+  { href: '/#pipeline', label: 'How it works' },
+  { href: '/#features', label: 'Specialized agents' },
+]
 
-export function SiteHeader() {
+export function SiteHeader({ transparentTop = false, dark = false }: { transparentTop?: boolean; dark?: boolean }) {
   const [open, setOpen] = useState(false)
-  const [authed, setAuthed] = useState(false)
+  const [featuresOpen, setFeaturesOpen] = useState(false)
+  const [scrolled, setScrolled] = useState(false)
+  const [brandReady, setBrandReady] = useState(false)
+  const [authOpen, setAuthOpen] = useState(false)
+  const [authSession, setAuthSession] = useState(0)
 
-  useEffect(() => setAuthed(Boolean(getToken())), [])
+  const bindLogo = (node: HTMLImageElement | null) => {
+    if (!node) return
+    const ready = () => setBrandReady(true)
+    if (node.complete && node.naturalWidth > 0) ready()
+    else node.addEventListener('load', ready, { once: true })
+  }
+
+  const openLogin = () => {
+    setAuthSession((session) => session + 1)
+    setAuthOpen(true)
+  }
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 4)
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+
+  useEffect(() => {
+    if (!featuresOpen) return
+    const close = () => setFeaturesOpen(false)
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [featuresOpen])
+
+  const linkTone = dark ? 'text-white/85 hover:text-white' : 'text-neutral-800 hover:text-neutral-950'
 
   return (
-    <header className="fixed left-0 right-0 top-0 z-50 border-b border-border bg-background/70 backdrop-blur-xl">
-      <div className="container mx-auto px-4 sm:px-6">
-        <div className="flex h-16 items-center justify-between">
-          <div className="flex min-w-0 items-center gap-6 lg:gap-10">
-            <Link href="/" className="flex min-w-0 items-center gap-2">
-              <img src="https://res.cloudinary.com/dfmsaarli/image/upload/v1782364695/ICON_large_ngiv41.png" alt="Seltra" className="h-9 w-9 rounded-md" />
-              <span className="font-mono font-semibold tracking-tight text-foreground">seltra</span>
-              <span className="hidden rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline">beta</span>
-            </Link>
-            <nav className="hidden items-center gap-7 font-mono text-xs text-muted-foreground lg:flex">
-              <Link href="/#showcase" className="transition-colors hover:text-primary">/showcase</Link>
-              <Link href="/careers" className="transition-colors hover:text-primary">/careers</Link>
-              <Link href="/apply" className="transition-colors hover:text-primary">/apply</Link>
+    <>
+      <header
+        className={cn(
+          'landing-header fixed left-0 right-0 top-0 z-50',
+          (!transparentTop || scrolled || open) && 'is-scrolled',
+          dark && 'is-dark',
+        )}
+      >
+        <div className="mx-auto max-w-[1328px] px-5 sm:px-8">
+          <div className="flex h-16 items-center justify-between sm:h-[76px]">
+            <div
+              className={cn(
+                'flex min-w-0 items-center gap-6 transition-opacity duration-300 lg:gap-14',
+                brandReady ? 'opacity-100' : 'opacity-0',
+              )}
+            >
+              <Link href="/" className="flex min-w-0 items-center">
+                <img
+                  ref={bindLogo}
+                  src="/seltra/hero/seltra-logo.png"
+                  alt="seltra"
+                  onLoad={() => setBrandReady(true)}
+                  onError={() => setBrandReady(true)}
+                  className="h-[22px] w-auto shrink-0 object-contain sm:h-6"
+                />
+              </Link>
+
+              <nav className="landing-menu hidden items-center gap-1 text-[15px] md:flex">
+                <Link href="/#showcase" className={cn('nav-link', linkTone)}>Showcase</Link>
+                <div className="relative">
+                  <button
+                    type="button"
+                    className={cn('nav-link inline-flex items-center gap-1', linkTone)}
+                    aria-expanded={featuresOpen}
+                    aria-haspopup="true"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setFeaturesOpen((value) => !value)
+                    }}
+                  >
+                    Features
+                    <ChevronDown className={cn('h-3.5 w-3.5 transition-transform duration-200', featuresOpen && 'rotate-180')} />
+                  </button>
+                  {featuresOpen && (
+                    <div className="landing-menu-glass absolute left-0 top-full z-20 mt-2 min-w-[12.5rem] overflow-hidden rounded-2xl p-1.5">
+                      {featureLinks.map((item) => (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          className="block rounded-xl px-3 py-2 text-[14px] text-neutral-700 transition-colors hover:bg-black/[0.04] hover:text-neutral-950"
+                          onClick={() => setFeaturesOpen(false)}
+                        >
+                          {item.label}
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <Link href="/careers" className={cn('nav-link', linkTone)}>Careers</Link>
+              </nav>
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={openLogin}
+                className={cn('btn hidden md:inline-flex', dark ? 'btn-glass-dark' : 'btn-secondary')}
+              >
+                Log in
+              </button>
+              <Link href="/apply" className="btn btn-primary">
+                Get started
+              </Link>
+              <button
+                type="button"
+                className={cn(
+                  'inline-flex h-10 w-10 items-center justify-center rounded-full transition-colors md:hidden',
+                  dark ? 'text-white hover:bg-white/10' : 'text-neutral-800 hover:bg-black/5',
+                )}
+                onClick={() => setOpen((v) => !v)}
+                aria-label="Toggle menu"
+              >
+                {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+              </button>
+              <Link
+                href="/dashboard"
+                aria-label="Preview dashboard"
+                title="Preview dashboard"
+                className={cn(
+                  'grid h-9 w-9 place-items-center rounded-full text-[13px] font-semibold',
+                  dark ? 'bg-white text-neutral-950' : 'bg-neutral-950 text-white',
+                )}
+              >
+                D
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        {open && (
+          <div className="md:hidden">
+            <nav
+              className={cn(
+                'landing-menu mx-auto flex max-w-6xl flex-col gap-0.5 px-3 pb-4 pt-1 text-[15px]',
+                dark ? 'text-white/80' : 'text-neutral-700',
+              )}
+            >
+              {[
+                { href: '/#showcase', label: 'Showcase' },
+                { href: '/features', label: 'Features' },
+                { href: '/careers', label: 'Careers' },
+              ].map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn('rounded-xl px-3 py-2.5', dark ? 'hover:bg-white/[0.06]' : 'hover:bg-black/[0.04]')}
+                  onClick={() => setOpen(false)}
+                >
+                  {item.label}
+                </Link>
+              ))}
+              <div className="mt-2 grid grid-cols-2 gap-2 px-1">
+                <button
+                  type="button"
+                  className={cn('btn', dark ? 'btn-glass-dark' : 'btn-secondary')}
+                  onClick={() => {
+                    setOpen(false)
+                    openLogin()
+                  }}
+                >
+                  Log in
+                </button>
+                <Link href="/apply" className="btn btn-primary" onClick={() => setOpen(false)}>
+                  Get started
+                </Link>
+              </div>
             </nav>
           </div>
-
-          <div className="flex items-center gap-2">
-            <Button asChild size="sm" variant={authed ? 'default' : 'ghost'} className="hidden rounded-md font-mono text-xs sm:inline-flex">
-              <Link href={authed ? '/dashboard' : '/auth?next=/dashboard'}>Merchant login</Link>
-            </Button>
-            <Button asChild size="sm" className="rounded-md font-mono text-xs">
-              <Link href="/apply">Apply to sell on Seltra</Link>
-            </Button>
-            <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setOpen((value) => !value)} aria-label="Toggle menu">
-              {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {open && (
-        <div className="border-t border-border bg-background lg:hidden">
-          <nav className="container mx-auto flex flex-col gap-3 px-4 py-4 font-mono text-sm">
-            <Link href="/#showcase" className="py-2 text-muted-foreground hover:text-primary" onClick={() => setOpen(false)}>/showcase</Link>
-            <Link href="/careers" className="py-2 text-muted-foreground hover:text-primary" onClick={() => setOpen(false)}>/careers</Link>
-            <Link href="/apply" className="py-2 text-muted-foreground hover:text-primary" onClick={() => setOpen(false)}>/apply</Link>
-            <Link href="/auth?next=/dashboard" className="py-2 text-muted-foreground hover:text-primary sm:hidden" onClick={() => setOpen(false)}>/merchant-login</Link>
-          </nav>
-        </div>
-      )}
-    </header>
+        )}
+      </header>
+      <AuthFlowModal key={authSession} open={authOpen} nextPath="/dashboard" onClose={() => setAuthOpen(false)} />
+    </>
   )
 }

@@ -8,11 +8,13 @@ import { ThemeProvider } from 'next-themes'
 import { Toaster } from 'sonner'
 import { StoreProvider } from '@/context/StoreContext'
 import { SessionGuard } from '@/components/auth/SessionGuard'
+import { ScrollReveal } from '@/components/marketing/ScrollReveal'
+import { ScrollToTop } from '@/components/marketing/ScrollToTop'
 import './globals.css'
 
 const menuFont = Poppins({
   subsets: ['latin'],
-  weight: ['400', '500'],
+  weight: ['400', '500', '600', '700'],
   display: 'swap',
   variable: '--font-menu',
 })
@@ -92,11 +94,9 @@ export const metadata: Metadata = {
   },
 
   icons: {
-    icon: [
-      { url: siteImage, type: 'image/png' },
-    ],
-    shortcut: siteImage,
-    apple: siteImage,
+    icon: [{ url: '/seltra/favicon-48x48.png', type: 'image/png' }],
+    shortcut: '/seltra/favicon-48x48.png',
+    apple: '/seltra/favicon-48x48.png',
   },
 
   openGraph: {
@@ -173,6 +173,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
           <StoreProvider>
             <SessionGuard>{children}</SessionGuard>
+            <ScrollReveal />
+            <ScrollToTop />
           </StoreProvider>
           <Toaster
             position="bottom-left"

@@ -37,6 +37,40 @@ const STEP_LABELS: Record<string, { active: string; done: string }> = {
   deploy: { active: 'Publishing your store', done: 'Store published' },
 }
 
+export type BuildPhase = 'planning' | 'building' | 'designing' | 'finishing' | 'ready' | 'error'
+
+export type BuildProgress = {
+  phase: BuildPhase
+  cardTitle: string
+  previewLabel: string
+  images: string[]
+  galleryTitle: string
+  detail?: string
+}
+
+function describeProgress(step: string | null, images: string[], storeName: string, done = false): BuildProgress {
+  if (done) {
+    return {
+      phase: 'ready',
+      cardTitle: `${storeName} storefront`,
+      previewLabel: '',
+      images,
+      galleryTitle: images.length ? 'Finished building' : '',
+    }
+  }
+  const key = (step ?? '').toLowerCase()
+  if (!step || /blueprint|dna|plan/.test(key)) {
+    return { phase: 'planning', cardTitle: 'Planning your application...', previewLabel: 'Planning your storefront', images, galleryTitle: '' }
+  }
+  if (/compile|deploy/.test(key)) {
+    return { phase: 'finishing', cardTitle: 'Building your application...', previewLabel: 'Almost done building...', images, galleryTitle: images.length ? 'Adding finishing touches' : '' }
+  }
+  if (images.length) {
+    return { phase: 'designing', cardTitle: 'Building your application...', previewLabel: 'Designing the experience', images, galleryTitle: 'Designing the experience' }
+  }
+  return { phase: 'building', cardTitle: 'Building your application...', previewLabel: 'Now loading preview...', images, galleryTitle: '' }
+}
+
 function eventSourceUrl(buildId: string) {
   return `${API_BASE}/api/v1/seltra/store/build/${encodeURIComponent(buildId)}/events`
 }
@@ -90,6 +124,9 @@ export function AgentBuildStream({
   onPreview,
   onLaunchStart,
   onError,
+  onProgress,
+  onConnection,
+  headless = false,
 }: {
   storeName: string
   buildId?: string | null
@@ -97,6 +134,9 @@ export function AgentBuildStream({
   onPreview?: (store?: StoreData | null) => void
   onLaunchStart?: () => void
   onError?: (message: string) => void
+  onProgress?: (progress: BuildProgress) => void
+  onConnection?: (state: 'online' | 'reconnecting' | 'offline') => void
+  headless?: boolean
 }) {
   const [priorThought, setPriorThought] = useState<string | null>(null)
   const [current, setCurrent] = useState<CurrentMoment | null>(null)
@@ -121,6 +161,12 @@ export function AgentBuildStream({
     lastEventAt.current = Date.now()
     finishedRef.current = false
     reconnectAttempts.current = 0
+    productImageGalleryRef.current = []
+    const stepRef = { current: null as string | null }
+    const publish = (step: string | null, done = false) => {
+      onProgress?.(describeProgress(step, productImageGalleryRef.current, storeName, done))
+    }
+    publish(null)
 
     let source: EventSource | null = null
     const MAX_RECONNECTS = 6
@@ -146,10 +192,12 @@ export function AgentBuildStream({
         const disconnected = { kind: 'error' as const, text: 'Build stream disconnected and could not reconnect.' }
         setCurrent(disconnected)
         currentRef.current = disconnected
+        onConnection?.('offline')
         onError?.('Build stream disconnected and could not reconnect.')
         return
       }
 
+      onConnection?.('reconnecting')
       reconnectAttempts.current += 1
       const reconnecting = {
         kind: 'action' as const,
@@ -190,6 +238,7 @@ export function AgentBuildStream({
     const handle = (event: MessageEvent<string>) => {
       try {
         const parsed = JSON.parse(event.data) as BuildEvent
+        if (parsed.type !== 'error') onConnection?.('online')
 
         if (parsed.type === 'log') {
           const rawMessage = typeof parsed.message === 'string' ? parsed.message.trim() : ''
@@ -224,6 +273,8 @@ export function AgentBuildStream({
           }
 
           if (parsed.status === 'started') {
+            stepRef.current = parsed.step
+            publish(parsed.step)
             const next = {
               kind: 'action' as const,
               title: deriveActionTitle(parsed.step, label),
@@ -258,11 +309,12 @@ export function AgentBuildStream({
         }
 
         if (parsed.type === 'image') {
+          const nextGallery = [...productImageGalleryRef.current, parsed.url]
+            .filter((url, index, arr) => arr.indexOf(url) === index)
+            .slice(-5)
+          productImageGalleryRef.current = nextGallery
+          publish(stepRef.current)
           if (parsed.role === 'product') {
-            const nextGallery = [...productImageGalleryRef.current, parsed.url]
-              .filter((url, index, arr) => arr.indexOf(url) === index)
-              .slice(-5)
-            productImageGalleryRef.current = nextGallery
             const next = {
               kind: 'image' as const,
               title: 'Product previews',
@@ -302,6 +354,7 @@ export function AgentBuildStream({
           currentRef.current = next
           onLaunchStart?.()
           onPreview?.(previewStore)
+          publish(stepRef.current)
           lastEventAt.current = Date.now()
           resetTimeout()
           return
@@ -338,6 +391,7 @@ export function AgentBuildStream({
           currentRef.current = { kind: 'done' }
           setPriorThought((prev) => prev ?? null)
           source?.close()
+          publish(stepRef.current, true)
           const nextStore = parsed.store && typeof parsed.store === 'object' ? (parsed.store as StoreData) : undefined
           onDone?.(nextStore)
           return
@@ -393,7 +447,9 @@ export function AgentBuildStream({
       clearReconnect()
       source?.close()
     }
-  }, [buildId, onDone, onPreview, onError])
+  }, [buildId, onDone, onPreview, onError, onProgress, onConnection, storeName])
+
+  if (headless) return null
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden p-6">
