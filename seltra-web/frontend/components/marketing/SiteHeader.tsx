@@ -120,7 +120,7 @@ export function SiteHeader({ transparentTop = false, dark = false }: { transpare
                 Log in
               </button>
               <Link href="/apply" className="btn btn-primary">
-                Get started
+                Try it for free
               </Link>
               <button
                 type="button"
@@ -171,7 +171,7 @@ export function SiteHeader({ transparentTop = false, dark = false }: { transpare
                   Log in
                 </button>
                 <Link href="/apply" className="btn btn-primary" onClick={() => setOpen(false)}>
-                  Get started
+                  Try it for free
                 </Link>
               </div>
             </nav>
