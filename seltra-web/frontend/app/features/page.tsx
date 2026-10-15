@@ -7,12 +7,14 @@ import { PromptCTA } from '@/components/marketing/PromptCTA'
 import { SiteFooter } from '@/components/marketing/SiteFooter'
 import { SiteHeader } from '@/components/marketing/SiteHeader'
 import { publicPhoto } from '@/lib/public-asset'
+import { pageMeta } from '@/lib/seo'
 import { cn } from '@/lib/utils'
 
-export const metadata: Metadata = {
-  title: 'Features | Seltra',
+export const metadata: Metadata = pageMeta({
+  title: 'Features',
   description: 'Payments, orders, insights, invoices, domains and edits by prompt — one platform, not six tabs.',
-}
+  path: '/features',
+})
 
 type Chip = { icon: ReactNode; label: string; value: string }
 
@@ -77,7 +79,7 @@ function PhotoVisual({ feature }: { feature: Feature }) {
           <img src={src} alt="" className="absolute inset-0 h-full w-full object-cover" />
         ) : (
           <div className="photo-placeholder absolute inset-0">
-            <img src="/seltra/hero/section-diamond.png" alt="" className="absolute -bottom-6 -right-6 w-2/3 opacity-60" />
+            <img src="/assets/brand/mark.png" alt="" className="page-mark page-mark-light absolute bottom-0 right-0 w-[42%]" />
           </div>
         )}
       </div>
@@ -97,8 +99,8 @@ function PhotoVisual({ feature }: { feature: Feature }) {
 function PromptVisual() {
   return (
     <div className="feature-glow relative flex aspect-[13/8] items-center justify-center overflow-hidden rounded-[1.25rem] px-6">
-      <img src="/seltra/hero/section-diamond.png" alt="" className="absolute -bottom-6 left-[4%] w-[22%] opacity-20 mix-blend-screen" />
-      <img src="/seltra/hero/section-diamond.png" alt="" className="absolute right-[4%] top-[8%] w-[18%] rotate-180 opacity-15 mix-blend-screen" />
+      <img src="/assets/brand/mark.png" alt="" className="page-mark page-mark-light absolute bottom-0 left-0 w-[28%]" />
+      <img src="/assets/brand/mark.png" alt="" className="page-mark page-mark-light absolute right-0 top-0 w-[24%] rotate-180" />
       <div className="relative w-full max-w-[340px] rounded-2xl border border-[#4ade80]/40 bg-[#0b1f16]/80 p-3.5 shadow-[0_0_40px_-8px_rgba(74,222,128,0.55)] backdrop-blur">
         <p className="text-[12px] text-white/55">Ask Seltra to add a Black Friday banner...</p>
         <div className="mt-4 flex items-center gap-2 text-white/50">

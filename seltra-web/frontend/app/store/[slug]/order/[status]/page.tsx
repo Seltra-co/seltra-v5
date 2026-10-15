@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { motion } from 'framer-motion'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001'
-const SELTRA_LOGO = 'https://res.cloudinary.com/dfmsaarli/image/upload/seltra_logo_1_wdtlfv.png'
+const SELTRA_LOGO = '/assets/brand/logo.png'
 
 type VerificationState = 'idle' | 'checking' | 'confirmed' | 'pending' | 'failed'
 

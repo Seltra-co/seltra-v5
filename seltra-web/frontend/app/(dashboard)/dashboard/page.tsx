@@ -1767,7 +1767,7 @@ const handleAgentAttach = async (f: File) => {
                         <BuildFailedPreview storeName={chatTitle} onRetry={retryBuild} />
                       ) : buildId && buildProgress?.phase !== 'ready' ? (
                         <div className="flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
-                          <img src="/seltra/signup/logo-mark.png" alt="" className="h-16 w-16 object-contain" />
+                          <img src="/assets/brand/mark.png" alt="" className="h-16 w-16 object-contain" />
                           <div className="flex items-center gap-2 text-[15px] text-white/80">
                             <Asterisk className="h-4 w-4 text-white" strokeWidth={2.4} />
                             <span>{buildProgress?.previewLabel || 'Planning your storefront'}</span>
@@ -1779,7 +1779,7 @@ const handleAgentAttach = async (f: File) => {
                         </StorefrontShell>
                       ) : (
                         <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
-                          <img src="/seltra/signup/logo-mark.png" alt="" className="h-16 w-16 object-contain" />
+                          <img src="/assets/brand/mark.png" alt="" className="h-16 w-16 object-contain" />
                           <p className="text-[15px] text-white/70">Your store will appear here</p>
                         </div>
                       )}
@@ -1977,7 +1977,7 @@ function SidebarDesktop({
   return (
     <aside className={cn('dash-sidebar landing-menu hidden h-full flex-shrink-0 flex-col overflow-hidden transition-[width] duration-200 lg:flex', open ? 'w-[216px]' : 'w-0')}>
       <div className="flex h-[60px] flex-shrink-0 items-center justify-between px-3.5">
-        <img src="/seltra/hero/seltra-logo.png" alt="seltra" className="h-7 w-auto" />
+        <img src="/assets/brand/logo.png" alt="seltra" className="h-7 w-auto" />
         <button type="button" onClick={onToggle} className="grid h-8 w-8 place-items-center rounded-lg text-white/55 transition-colors hover:bg-white/5 hover:text-white" aria-label="Collapse sidebar">
           <PanelLeft className="h-4 w-4" />
         </button>
@@ -2142,7 +2142,7 @@ function MobileSidebarDrawer({
             className="dash-sidebar landing-menu fixed left-0 top-0 z-50 flex h-full w-[272px] flex-col lg:hidden"
           >
             <div className="flex h-[72px] items-center justify-between px-4">
-              <img src="/seltra/hero/seltra-logo.png" alt="seltra" className="h-7 w-auto" />
+              <img src="/assets/brand/logo.png" alt="seltra" className="h-7 w-auto" />
               <button onClick={onClose} className="text-white/55 hover:text-white" aria-label="Close menu"><X className="h-5 w-5" /></button>
             </div>
             <div className="px-3 pb-3">
@@ -2316,7 +2316,7 @@ function EmptyState({
 
       <div className="relative z-10 mx-auto flex w-full max-w-[720px] flex-1 flex-col items-center justify-center px-5 py-10 sm:px-6">
         <div className="flex flex-col items-center gap-3 sm:flex-row sm:gap-3.5">
-          <img src="/seltra/signup/logo-mark.png" alt="" className="h-9 w-9 object-contain sm:h-10 sm:w-10" />
+          <img src="/assets/brand/mark.png" alt="" className="h-9 w-9 object-contain sm:h-10 sm:w-10" />
           <h1 className="text-center text-[1.75rem] font-semibold tracking-[-0.04em] text-neutral-950 sm:text-[2.15rem] lg:text-[2.35rem]">
             What&apos;s the vision{firstName ? `, ${firstName}` : ''}?
           </h1>

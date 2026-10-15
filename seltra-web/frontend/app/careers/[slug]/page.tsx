@@ -1,13 +1,35 @@
 //seltra-web/frontend/app/careers/[slug]/page.tsx
+import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, ArrowRight, Briefcase, Coins, Lock, MapPin, Sparkles } from 'lucide-react'
+import { BackgroundMark } from '@/components/marketing/BackgroundMark'
 import { SiteHeader } from '@/components/marketing/SiteHeader'
 import { SiteFooter } from '@/components/marketing/SiteFooter'
 import { JOBS, getJob } from '@/lib/jobs'
+import { pageMeta } from '@/lib/seo'
 
 export function generateStaticParams() {
   return JOBS.map((job) => ({ slug: job.slug }))
+}
+
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  const { slug } = await params
+  const job = getJob(slug)
+  if (!job) {
+    return pageMeta({
+      title: 'Role not found',
+      description: 'This Seltra role is not available.',
+      path: `/careers/${slug}`,
+      index: false,
+    })
+  }
+  return pageMeta({
+    title: job.title,
+    description: job.summary,
+    path: `/careers/${job.slug}`,
+    index: job.status === 'open',
+  })
 }
 
 const primaryButton = 'btn btn-lg btn-primary'
@@ -17,8 +39,8 @@ function DarkShell({ children }: { children: ReactNode }) {
   return (
     <div className="site-dark relative min-h-screen overflow-hidden">
       <SiteHeader dark />
-      <img src="/seltra/mark-left.png" alt="" aria-hidden className="pointer-events-none absolute left-0 top-28 w-24 select-none sm:w-36 lg:w-44" />
-      <img src="/seltra/careers/mark-right.png" alt="" aria-hidden className="pointer-events-none absolute right-0 top-[64%] w-24 select-none sm:w-36 lg:w-48" />
+      <BackgroundMark tone="dark" className="left-0 top-28 w-[240px] sm:w-[340px] lg:w-[460px]" />
+      <BackgroundMark tone="dark" className="right-0 top-[58%] w-[220px] sm:w-[300px] lg:w-[400px]" />
       {children}
       <SiteFooter />
     </div>

@@ -10,6 +10,7 @@ import { StoreProvider } from '@/context/StoreContext'
 import { SessionGuard } from '@/components/auth/SessionGuard'
 import { ScrollReveal } from '@/components/marketing/ScrollReveal'
 import { ScrollToTop } from '@/components/marketing/ScrollToTop'
+import { defaultDescription, ogImage, siteName, siteUrl } from '@/lib/seo'
 import './globals.css'
 
 const menuFont = Poppins({
@@ -27,10 +28,6 @@ const displayFont = Fraunces({
   style: ['normal', 'italic'],
 })
 
-const siteUrl = 'https://www.seltra.co'
-const siteImage ='https://res.cloudinary.com/dfmsaarli/image/upload/favicon-48x48_rtftsi.png'
-const siteImageGraph = 'https://www.seltra.co/og-image.png'
-
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
 
@@ -39,8 +36,7 @@ export const metadata: Metadata = {
     template: '%s | Seltra',
   },
 
-  description:
-    'Launch an AI-powered online business in minutes. Seltra deploys autonomous AI agents to manage your storefront, inventory, payments, customer support, marketing, and fulfillment—all from a single platform.',
+  description: defaultDescription,
 
   applicationName: 'Seltra',
 
@@ -76,10 +72,6 @@ export const metadata: Metadata = {
 
   referrer: 'origin-when-cross-origin',
 
-  alternates: {
-    canonical: siteUrl,
-  },
-
   robots: {
     index: true,
     follow: true,
@@ -94,9 +86,9 @@ export const metadata: Metadata = {
   },
 
   icons: {
-    icon: [{ url: '/seltra/favicon-48x48.png', type: 'image/png' }],
-    shortcut: '/seltra/favicon-48x48.png',
-    apple: '/seltra/favicon-48x48.png',
+    icon: [{ url: '/assets/brand/favicon.png', type: 'image/png' }],
+    shortcut: '/assets/brand/favicon.png',
+    apple: '/assets/brand/favicon.png',
   },
 
   openGraph: {
@@ -104,16 +96,14 @@ export const metadata: Metadata = {
     locale: 'en_US',
     url: siteUrl,
     siteName: 'Seltra',
-    title: 'Seltra — AI Commerce Platform',
-    description:
-      'Autonomous AI agents that launch and operate your online business—from storefront creation to payments, fulfillment, customer support, and growth.',
-
+    title: 'Seltra | AI Commerce Platform for Modern Businesses',
+    description: defaultDescription,
     images: [
       {
-        url: siteImageGraph,
+        url: ogImage,
         width: 1200,
         height: 630,
-        alt: "Seltra — AI Commerce Platform",
+        alt: 'Seltra — AI Commerce Platform',
       },
     ],
   },
@@ -122,11 +112,9 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     site: '@seltra_co',
     creator: '@seltra_co',
-    title: 'Seltra — AI Commerce Platform',
-    description:
-      'Launch an AI-powered business in minutes with autonomous AI agents.',
-
-    images: [siteImage],
+    title: 'Seltra | AI Commerce Platform for Modern Businesses',
+    description: defaultDescription,
+    images: [ogImage],
   },
 }
 
@@ -138,7 +126,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${GeistSans.variable} ${GeistMono.variable} ${displayFont.variable} ${menuFont.variable}`}
     >
       <head>
-        <link rel="preload" href="/seltra/hero/seltra-logo.png" as="image" />
+        <link rel="preload" href="/assets/brand/logo.png" as="image" />
       </head>
       <body suppressHydrationWarning>
         <ThemeProvider
@@ -150,26 +138,39 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         >
           <Script
             id="seltra-jsonld"
-  type="application/ld+json"
-  dangerouslySetInnerHTML={{
-    __html: JSON.stringify({
-      '@context': 'https://schema.org',
-      '@type': 'SoftwareApplication',
-      name: 'Seltra',
-      applicationCategory: 'BusinessApplication',
-      operatingSystem: 'Web',
-      url: 'https://www.seltra.co',
-      logo: siteImage,
-      image: siteImage,
-      description:
-        'AI-native commerce platform that launches and operates online businesses using autonomous AI agents.',
-      creator: {
-        '@type': 'Organization',
-        name: 'Seltra',
-      },
-    }),
-  }}
-/>
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{
+              __html: JSON.stringify({
+                '@context': 'https://schema.org',
+                '@graph': [
+                  {
+                    '@type': 'Organization',
+                    '@id': `${siteUrl}/#organization`,
+                    name: siteName,
+                    url: siteUrl,
+                    logo: `${siteUrl}/assets/brand/mark.png`,
+                  },
+                  {
+                    '@type': 'WebSite',
+                    '@id': `${siteUrl}/#website`,
+                    name: siteName,
+                    url: siteUrl,
+                    description: defaultDescription,
+                    publisher: { '@id': `${siteUrl}/#organization` },
+                  },
+                  {
+                    '@type': 'SoftwareApplication',
+                    name: siteName,
+                    applicationCategory: 'BusinessApplication',
+                    operatingSystem: 'Web',
+                    url: siteUrl,
+                    description: defaultDescription,
+                    provider: { '@id': `${siteUrl}/#organization` },
+                  },
+                ],
+              }),
+            }}
+          />
 
           <StoreProvider>
             <SessionGuard>{children}</SessionGuard>

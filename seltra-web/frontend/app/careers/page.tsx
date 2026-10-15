@@ -1,5 +1,6 @@
 //seltra-web/frontend/app/careers/page.tsx
 import type { Metadata } from 'next'
+import { BackgroundMark } from '@/components/marketing/BackgroundMark'
 import { RolesBoard } from '@/components/marketing/RolesBoard'
 import { SiteFooter } from '@/components/marketing/SiteFooter'
 import { SiteHeader } from '@/components/marketing/SiteHeader'
@@ -7,12 +8,14 @@ import { SlashDivider } from '@/components/marketing/SlashDivider'
 import { SpinningGlobe } from '@/components/marketing/spinningGlobe'
 import { JOBS } from '@/lib/jobs'
 import { publicImages, publicPhoto } from '@/lib/public-asset'
+import { pageMeta } from '@/lib/seo'
 import { cn } from '@/lib/utils'
 
-export const metadata: Metadata = {
-  title: 'Careers | Seltra',
-  description: 'Join the founding team building commerce that runs itself.',
-}
+export const metadata: Metadata = pageMeta({
+  title: 'Careers',
+  description: 'Join the founding team building commerce that runs itself. Remote roles across engineering, operations, and go-to-market.',
+  path: '/careers',
+})
 
 const STATS = [
   { value: '02', label: 'Launch markets — Ghana & Nigeria' },
@@ -63,46 +66,46 @@ export default function CareersPage() {
         </div>
       </section>
 
-      <main className="relative overflow-hidden px-5 sm:px-8">
-        <img
-          src="/seltra/careers/mark.png"
-          alt=""
-          aria-hidden
-          className="pointer-events-none absolute -left-8 top-[360px] w-28 sm:w-36 lg:-left-8 lg:top-[230px] lg:w-52"
-        />
-
-        <section data-reveal className="relative mx-auto grid max-w-[1264px] items-center gap-10 pb-14 pt-16 sm:pt-20 lg:grid-cols-2 lg:gap-20">
-          <div>
-            <h2 className="text-[2rem] font-semibold tracking-[-0.035em] text-[#16a34a] sm:text-[2.4rem]">Who we are.</h2>
-            <p className="mt-4 max-w-md text-[15px] leading-relaxed text-neutral-700">
-              We are a tiny founding team shipping AI-native e-commerce infrastructure for the next million merchants.
-              If you want real ownership at the earliest stage, come build with us.
-            </p>
-            <p className="mt-4 max-w-md text-[15px] leading-relaxed text-neutral-700">
-              We are looking for people who are excited to ship products used by thousands of merchants and millions of
-              customers — a globally remote, distributed team, moving fast.
-            </p>
+      <main className="relative overflow-hidden">
+        <section data-reveal className="pb-14 pt-16 sm:pt-20">
+          <div className="grid items-center gap-10 lg:grid-cols-2 lg:gap-0">
+            <div>
+              <div className="mx-auto w-full max-w-[1264px] px-5 sm:px-8 lg:ml-auto lg:mr-0 lg:max-w-[632px] lg:px-10">
+                <h2 className="text-[2rem] font-semibold tracking-[-0.035em] text-[#16a34a] sm:text-[2.4rem]">Who we are.</h2>
+                <p className="mt-4 max-w-md text-[15px] leading-relaxed text-neutral-700">
+                  We are a tiny founding team shipping AI-native e-commerce infrastructure for the next million merchants.
+                  If you want real ownership at the earliest stage, come build with us.
+                </p>
+                <p className="mt-4 max-w-md text-[15px] leading-relaxed text-neutral-700">
+                  We are looking for people who are excited to ship products used by thousands of merchants and millions of
+                  customers — a globally remote, distributed team, moving fast.
+                </p>
+              </div>
+              <img
+                src="/assets/brand/mark.png"
+                alt=""
+                aria-hidden
+                className="page-mark-light pointer-events-none mt-8 ml-0 block h-auto w-[240px] max-w-none select-none sm:mt-10 sm:w-[360px] lg:w-[460px]"
+              />
+            </div>
+            <div className="mx-auto w-full max-w-[1264px] px-5 sm:px-8 lg:mr-auto lg:max-w-[632px] lg:px-10">
+              <Photo
+                src={teamPhoto}
+                alt="The Seltra team"
+                className="aspect-[3/2] rounded-[1.5rem] shadow-[0_30px_70px_-40px_rgba(0,0,0,0.55)]"
+              />
+            </div>
           </div>
-          <Photo
-            src={teamPhoto}
-            alt="The Seltra team"
-            className="aspect-[3/2] rounded-[1.5rem] shadow-[0_30px_70px_-40px_rgba(0,0,0,0.55)]"
-          />
         </section>
 
-        <section data-reveal className="mx-auto grid max-w-[1264px] grid-cols-2 gap-3 pb-20 sm:grid-cols-4 sm:gap-4 sm:pb-24">
+        <section data-reveal className="mx-auto grid max-w-[1264px] grid-cols-2 gap-3 px-5 pb-20 sm:grid-cols-4 sm:gap-4 sm:px-8 sm:pb-24">
           {gallerySlots.map((src, index) => (
             <Photo key={src ?? index} src={src} alt="" className="aspect-[4/3] rounded-[1rem] transition-[transform,box-shadow] duration-300 ease-out hover:z-10 hover:-translate-y-1.5 hover:scale-[1.06] hover:shadow-[0_24px_50px_-18px_rgba(0,0,0,0.45)] motion-reduce:transition-none motion-reduce:hover:transform-none" />
           ))}
         </section>
 
-        <section data-reveal className="site-dark-card relative mx-auto grid max-w-[1264px] items-center gap-8 rounded-[1.75rem] p-5 text-white sm:p-8 lg:grid-cols-2 lg:gap-14 lg:p-10">
-          <img
-            src="/seltra/careers/mark.png"
-            alt=""
-            aria-hidden
-            className="pointer-events-none absolute right-0 top-1/2 hidden w-28 -translate-y-1/2 lg:block"
-          />
+        <section data-reveal className="site-dark-card relative mx-auto grid w-[min(1264px,calc(100%-2.5rem))] items-center gap-8 rounded-[1.75rem] p-5 text-white sm:w-[min(1264px,calc(100%-4rem))] sm:p-8 lg:grid-cols-2 lg:gap-14 lg:p-10">
+          <BackgroundMark tone="dark" className="right-0 top-1/2 hidden w-[280px] -translate-y-1/2 lg:block" />
           <Photo src={perksPhoto} alt="The Seltra team at work" className="aspect-[16/10] rounded-[1.25rem]" />
           <div className="relative">
             <h2 className="text-[2rem] font-semibold tracking-[-0.035em] sm:text-[2.4rem]">
@@ -122,7 +125,7 @@ export default function CareersPage() {
           </div>
         </section>
 
-        <section data-reveal className="mx-auto max-w-[1264px] py-16 sm:py-20">
+        <section data-reveal className="mx-auto max-w-[1264px] px-5 py-16 sm:px-8 sm:py-20">
           <div className="grid grid-cols-2 gap-y-8 rounded-[1.5rem] border border-white/80 bg-white/85 px-4 py-8 shadow-[0_30px_70px_-40px_rgba(22,120,60,0.45)] sm:py-10 md:grid-cols-4 md:divide-x md:divide-neutral-200">
             {STATS.map((stat) => (
               <div key={stat.label} className="px-2 text-center sm:px-4">
@@ -135,7 +138,7 @@ export default function CareersPage() {
           </div>
         </section>
 
-        <section data-reveal className="site-dark-card mx-auto mb-20 grid max-w-[1264px] items-center gap-8 rounded-[1.75rem] px-6 py-12 text-white sm:mb-24 sm:px-12 sm:py-14 lg:grid-cols-2">
+        <section data-reveal className="site-dark-card mx-auto mb-20 grid w-[min(1264px,calc(100%-2.5rem))] items-center gap-8 rounded-[1.75rem] px-6 py-12 text-white sm:mb-24 sm:w-[min(1264px,calc(100%-4rem))] sm:px-12 sm:py-14 lg:grid-cols-2">
           <div>
             <h2 className="text-[2rem] font-semibold leading-tight tracking-[-0.035em] sm:text-[2.4rem]">
               We work together,

@@ -858,8 +858,8 @@ html {
 .signup-deco {
   aspect-ratio: 259 / 194;
   background: linear-gradient(135deg, #4ade80 0%, #22c55e 45%, #15803d 100%);
-  -webkit-mask: url('/seltra/signup/logo-mark.png') center / contain no-repeat;
-  mask: url('/seltra/signup/logo-mark.png') center / contain no-repeat;
+  -webkit-mask: url('/assets/brand/mark.png') center / contain no-repeat;
+  mask: url('/assets/brand/mark.png') center / contain no-repeat;
   filter: drop-shadow(0 0 28px rgba(74, 222, 128, 0.35));
   pointer-events: none;
   animation: signup-float 9s ease-in-out infinite;
@@ -1064,7 +1064,24 @@ html {
 
 .landing-diamond {
   animation: diamond-float 8s ease-in-out infinite;
-  filter: drop-shadow(0 22px 28px rgba(34, 197, 94, 0.22));
+  opacity: 0.9;
+}
+
+.page-mark {
+  position: absolute;
+  z-index: 0;
+  height: auto;
+  pointer-events: none;
+  user-select: none;
+  object-fit: contain;
+}
+
+.page-mark-dark {
+  opacity: 0.85;
+}
+
+.page-mark-light {
+  opacity: 0.95;
 }
 
 .landing-menu-glass {

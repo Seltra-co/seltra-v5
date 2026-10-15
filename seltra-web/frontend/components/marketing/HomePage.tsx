@@ -1,0 +1,1204 @@
+//seltra-web/frontend/app/page.tsx
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CreditCard,
+  Github,
+  ImageIcon,
+  Menu,
+  Mic,
+  Plus,
+  Sparkles,
+  Twitter,
+  X,
+  ArrowUpRight,
+  Star,
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { MessageSquare } from 'lucide-react'
+import { Linkedin } from "lucide-react";
+import { SiX } from "@icons-pack/react-simple-icons";
+import { Input } from '@/components/ui/input'
+import { toast } from '@/hooks/use-toast'
+import { PromptCTA } from '@/components/marketing/PromptCTA'
+import { TypewriterPlaceholder } from '@/components/marketing/TypewriterPlaceholder'
+import { AuthFlowModal } from '@/components/marketing/AuthFlowModal'
+import { Aurora } from '@/components/marketing/Aurora'
+import { SiteHeader } from '@/components/marketing/SiteHeader'
+import { SiteFooter } from '@/components/marketing/SiteFooter'
+import { SlashDivider } from '@/components/marketing/SlashDivider'
+import { RefreshCw, Globe } from 'lucide-react'
+import { cn } from '@/lib/utils'
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001'
+
+function getToken() {
+  return typeof window !== 'undefined' ? localStorage.getItem('seltra:token') : null
+}
+
+async function listStores() {
+  const token = getToken()
+  if (!token) return []
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/seltra/store`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    const json = await res.json().catch(() => [])
+    return Array.isArray(json) ? json : []
+  } catch {
+    return []
+  }
+}
+
+const composerPrompts = [
+  'Ask Seltra to launch a premium coffee brand for...',
+  'Ask Seltra to open a bakery selling artisan pastries that...',
+  'Ask Seltra to start an organic grocery delivery store...',
+  'Ask Seltra to launch a luxury streetwear brand for...',
+  'Ask Seltra to start a handmade jewelry boutique selling...',
+  'Ask Seltra to open a fashion store selling...',
+  'Ask Seltra to launch a skincare brand that...',
+  'Ask Seltra to create a premium haircare store for...',
+  'Ask Seltra to sell natural cosmetics across...',
+  'Ask Seltra to build an online gadget store...',
+  'Ask Seltra to sell authentic Ghanaian products worldwide...',
+  'Ask Seltra to start a fresh farm produce storefront that...',
+  'Ask Seltra to launch a digital agency storefront that...',
+]
+
+// ─── Merchant logos ────────────────────────────────────────────────────────
+// Supabase-style trust strip: grayscale by default, full color/visible on
+// hover. Real merchant logos for Kem's Outlet and De-Yogo Bar; the rest are
+// styled text wordmarks treated the same way.
+type BrandLogo = {
+  name: string
+  img?: string
+  font?: string
+}
+
+const logos: BrandLogo[] = [
+  { name: 'Glow Circle Beauty', img: '/seltra/Glow_Circle_Beauty.jpg' },
+  { name: 'Amy Beats',  img: '/seltra/Amy_Beats.jpg' },
+  { name: 'Colossals', font: 'font-sans font-bold uppercase tracking-tight' },
+  { name: "Kem's Outlet", img: '/seltra/kems-outlet.jpg' },
+  { name: "Jay's Collection", font: 'font-sans font-medium tracking-wide' },
+  { name: 'Waffles & Co.', font: 'font-serif font-light tracking-widest uppercase' },
+  { name: 'De-Yogo Bar', img: '/seltra/deyogo-bar.jpg' },
+  { name: 'Favera', img: '/seltra/favera.jpeg' },
+  { name: 'I&R Kicks', img: '/seltra/i&R.jpeg' },
+  { name: 'Stacey’s Ts', img: '/seltra/stacey_ts.jpg'},
+]
+
+const showcaseStores = [
+  {
+    name: 'Dwomohs',
+    category: 'Footwear - Traditional',
+    desc: 'Handcrafted Ghanaian sandals with a heritage-first storefront.',
+    image: '/seltra/store-dwomohs.png',
+    url: 'https://dwomohs-vogue.seltra.co/',
+  },
+  {
+    name: 'Trendy Wear',
+    category: 'Apparel - Fashion',
+    desc: 'Streetedge fashion with everyday versatility, live in minutes.',
+    image: '/seltra/store-trendywear.png',
+    url: 'https://fast-fashion-retail-store.seltra.co/',
+  },
+  {
+    name: 'TechHub',
+    category: 'Electronics - Gadgets',
+    desc: 'Smartphones, laptops, and accessories, thoughtfully catalogued.',
+    image: '/seltra/techgadgets.png',
+    url: 'https://cheap-laptops.seltra.co/',
+  },
+]
+
+const features = [
+  {
+    image: '/assets/home/hero.png',
+    title: 'AI Store Generation',
+    desc: 'Describe your business, get a full storefront with branded products, copy, and images. No templates. No drag-and-drop.',
+  },
+  {
+    image: '/assets/home/Designing the experience (1).png',
+    title: 'Payments, built in',
+    desc: 'Cards, mobile money, and bank transfers wired up from day one. Ghana and Nigeria-ready.',
+  },
+  {
+    image: '/assets/home/Designing the experience.png',
+    title: 'Product Image AI',
+    desc: 'Upload a photo or describe your product. Seltra generates studio-quality images automatically.',
+  },
+  {
+    image: '/assets/home/Chat agent 1.png',
+    title: 'Agent-run operations',
+    desc: 'Your store restocks, reprices, and updates itself. You focus on traffic. The agent handles the rest.',
+  },
+]
+
+const customerQuotes = [
+  {
+    quote: 'I described the brand and had a live storefront the same afternoon. Payments were already on.',
+    name: "Kem's Outlet",
+    role: 'Fashion merchant',
+    avatar: '/seltra/kems-outlet.jpg',
+  },
+  {
+    quote: 'The catalog and images came together without a designer. I just kept selling.',
+    name: 'Glow Circle Beauty',
+    role: 'Beauty brand',
+    avatar: '/seltra/Glow_Circle_Beauty.jpg',
+  },
+  {
+    quote: 'We went from WhatsApp orders to a real checkout without rebuilding anything ourselves.',
+    name: 'De-Yogo Bar',
+    role: 'Food & drink',
+    avatar: '/seltra/deyogo-bar.jpg',
+  },
+  {
+    quote: 'Seltra keeps the store updated. I focus on customers, not the admin work.',
+    name: 'Favera',
+    role: 'Retail merchant',
+    avatar: '/seltra/favera.jpeg',
+  },
+]
+
+const seltraStats = [
+  { value: '150+', label: 'Merchants' },
+  { value: '15 min', label: 'Average time from prompt to live store' },
+  { value: '100%', label: 'Storefronts generated with zero manual design' },
+]
+
+// ─── Dashboard proof-of-work showcases ──────────────────────────────────────
+type ShowcaseBullet = { lead: string; rest: string }
+
+type ShowcaseUI = {
+  eyebrow: string
+  title: React.ReactNode
+  desc: string
+  bullets: ShowcaseBullet[]
+  image: string
+  alt: string
+  url: string
+}
+
+const dashboardShowcases: ShowcaseUI[] = [
+{
+    eyebrow: '// live build',
+    title: (
+      <>
+        It doesn't pick a template. <span className="text-primary">It writes one, live.</span>
+      </>
+    ),
+    desc: 'Type one sentence and the agent starts working in front of you — parsing intent, generating a brand system, writing a catalog, streaming every decision to a visible blueprint as it happens.',
+    bullets: [
+      { lead: 'No developer required.', rest: 'The agent writes the brand, prices the products, and sets up your store while you watch it happen.' },
+      { lead: 'You actually see it working.', rest: "It's not a loading bar. You can read exactly what the agent is doing, step by step, as it does it." },
+      { lead: 'A store, priced and ready to sell.', rest: "By the time it's done there's a full catalog with real prices behind it, ready to sell." },
+    ],
+    image: '/seltra/dashboard-build-stream.png',
+    alt: 'Seltra agent live build stream generating a skincare brand storefront',
+    url: 'app.seltra.co/agent · building',
+  },
+  {
+    eyebrow: '// generated storefront',
+    title: (
+      <>
+        One sentence in. <span className="text-primary">A live store out.</span>
+      </>
+    ),
+    desc: '"A luxury skincare brand for young women, call it Deluxe" became Deluxe Skin — a fully priced, checkout-ready collection on its own subdomain, in the time it takes to read this sentence.',
+    bullets: [
+      { lead: 'Priced and photographed.', rest: 'Product names, descriptions, and imagery generated per catalog.' },
+      { lead: 'Checkout from minute one.', rest: 'Payments are wired the moment the store goes live, not bolted on after.' },
+      { lead: 'Still yours to shape.', rest: 'Keep chatting with the agent to push colors, copy, or the catalog in a new direction.' },
+    ],
+    image: '/seltra/dashboard-storefront.png',
+    alt: 'Deluxe Skin storefront generated by Seltra showing a live product collection',
+    url: 'deluxe-skin-care.seltra.co',
+  },
+{
+    eyebrow: '// merchant control',
+    title: (
+      <>
+        It runs the store. <span className="text-primary">You still hold the keys.</span>
+      </>
+    ),
+    desc: "Restocking, repricing, catalog updates — the agent keeps moving without waiting on you. But you're never locked out: everything it touches lives in a real dashboard you can override, or redirect with a single prompt.",
+    bullets: [
+      { lead: 'Step in anytime.', rest: 'Edit a price, swap an image, or delete a product directly — no need to ask the agent first.' },
+      { lead: 'Or let it keep going.', rest: 'Leave it alone and the agent restocks, prices, and updates the catalog on its own.' },
+      { lead: 'One source of truth.', rest: 'Whatever you change by hand or by prompt, chat and dashboard stay in sync automatically.' },
+    ],
+    image: '/seltra/dashboard-products.png',
+    alt: 'Seltra merchant dashboard showing the agent-generated product catalog',
+    url: 'app.seltra.co/products',
+  },
+]
+
+
+
+// ─── Everything on one platform (image carousel) ───────────────────────────
+
+// ─── One platform, not six tabs ────────────────────────────────────────────
+type PlatformCard = {
+  icon: React.ComponentType<{ className?: string }>
+  title: string
+  highlight: string
+  desc: string
+  prompt: string
+}
+
+const platformCards: PlatformCard[] = [
+  {
+    icon: Sparkles,
+    title: 'Describe it,',
+    highlight: 'watch it build.',
+    desc: "No theme picker, no drag-and-drop. Tell the agent what you're selling and it writes the brand, the copy, and the catalog itself.",
+    prompt: 'Launch a luxury skincare brand for young women, call it Deluxe.',
+  },
+  {
+    icon: ImageIcon,
+    title: 'Product photos,',
+    highlight: 'without a camera.',
+    desc: 'Upload one reference or just describe the product. The agent generates studio-quality shots that match your brand.',
+    prompt: 'Generate packshots for my new Vitamin C serum.',
+  },
+  {
+    icon: CreditCard,
+    title: 'Get paid,',
+    highlight: 'however they pay.',
+    desc: 'Cards, mobile money, and bank transfer — wired up the moment your store goes live. No separate integration to chase.',
+    prompt: 'Turn on MTN Mobile Money for checkout.',
+  },
+  {
+    icon: RefreshCw,
+    title: 'Restocks,',
+    highlight: 'before you run out.',
+    desc: "The agent watches inventory and flags what's running low, so you're not finding out from an angry DM.",
+    prompt: 'My Daily Essential moisturizer is almost out — reorder 50 units.',
+  },
+  {
+    icon: Globe,
+    title: 'Live on your domain,',
+    highlight: 'same day.',
+    desc: 'Your store ships on a real subdomain immediately, and moves to your own domain whenever you\'re ready.',
+    prompt: 'Point deluxeskincare.com at my store.',
+  },
+  {
+    icon: MessageSquare,
+    title: 'Change anything,',
+    highlight: 'just by asking.',
+    desc: 'Reorder your bestsellers, rewrite your homepage, adjust a price. No developer, no ticket, no waiting.',
+    prompt: 'Move the Starter Set to the top and darken the homepage.',
+  },
+]
+
+
+// ─── Simple modal that avoids all radix/forwardRef JSX issues ────────────────
+function SimpleModal({
+  open,
+  onClose,
+  children,
+}: {
+  open: boolean
+  onClose: () => void
+  children: React.ReactNode
+}) {
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [open, onClose])
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0 bg-black/80"
+        onClick={onClose}
+      />
+      <div className="relative z-10 w-full max-w-lg rounded-lg border border-border bg-card p-6 shadow-lg">
+        <button
+          onClick={onClose}
+          className="absolute right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100"
+          aria-label="Close"
+        >
+          <X className="h-4 w-4" />
+        </button>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+const sectionTitle = 'text-balance text-[1.9rem] font-semibold leading-[1.08] tracking-[-0.035em] sm:text-[2.6rem]'
+
+// ─── Hero ─────────────────────────────────────────────────────────────────────
+function Hero({ onNeedAuth }: { onNeedAuth: () => void }) {
+  const [chatInput, setChatInput] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
+  const router = useRouter()
+
+  const handleRun = async () => {
+    setIsLoading(true)
+    const prompt = chatInput.trim()
+    if (prompt) sessionStorage.setItem('seltra:pending_prompt', prompt)
+
+    if (!getToken()) {
+      setIsLoading(false)
+      onNeedAuth()
+      return
+    }
+
+    if (prompt) {
+      router.push('/dashboard')
+      return
+    }
+
+    const existing = await listStores()
+    router.push(existing.length > 0 ? '/dashboard' : '/onboarding')
+  }
+
+  return (
+    <section className="landing-hero-wash relative flex min-h-[66svh] justify-center overflow-hidden px-5 pb-16 pt-[max(7rem,20svh)] sm:min-h-[78svh] sm:px-6 sm:pb-20 sm:pt-[max(8rem,26svh)] lg:min-h-[100svh] lg:pb-24 lg:pt-[max(9rem,33vh)]">
+      <Aurora tone="hero" />
+      <div className="relative z-10 mx-auto w-full max-w-3xl text-center">
+        <div className="fade-in w-full">
+          <h1 className="text-balance text-[2.35rem] font-semibold leading-[1.08] tracking-[-0.04em] text-neutral-900 sm:text-5xl md:text-[3.5rem]">
+            Build your online store
+          </h1>
+
+          <p className="text-balance mx-auto mt-2 max-w-xl text-[16px] font-normal leading-relaxed text-neutral-600 sm:text-lg">
+            Create a storefront by describing what you need.
+          </p>
+
+          <div className="mx-auto mt-8 w-full max-w-[686px] sm:mt-[38px]">
+            <div className="landing-prompt group flex min-h-[111px] flex-col justify-between overflow-hidden text-left">
+              <div className="relative px-5 pt-4 sm:px-6">
+                <TypewriterPlaceholder
+                  prompts={composerPrompts}
+                  typingSpeed={35}
+                  deleteSpeed={18}
+                  pauseDuration={1600}
+                  active={chatInput.length === 0}
+                  resumeDelay={200}
+                  className="pointer-events-none absolute inset-x-5 top-4 text-[15px] leading-6 text-neutral-400 sm:inset-x-6 sm:text-base"
+                />
+                <textarea
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      void handleRun()
+                    }
+                  }}
+                  aria-label="Describe your business and what you want to sell"
+                  placeholder=""
+                  wrap="off"
+                  rows={1}
+                  className={cn(
+                    'composer-textarea composer-textarea-light relative z-10 h-6 w-full resize-none overflow-x-auto whitespace-pre bg-transparent text-[15px] leading-6 text-neutral-900 focus:outline-none sm:text-base',
+                    chatInput.length === 0 && 'caret-transparent',
+                  )}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3 px-4 pb-3.5 pt-2.5 sm:px-5 sm:pb-4 sm:pt-3">
+                <button type="button" className="flex h-8 w-8 items-center justify-center rounded-full border border-black/[0.08] bg-white text-neutral-400 transition-colors hover:border-black/15 hover:text-neutral-700 sm:h-9 sm:w-9" title="Attach files">
+                  <Plus className="h-4 w-4" />
+                </button>
+
+                <div className="flex items-center gap-1.5">
+                  <button type="button" className="hidden items-center gap-1 rounded-full px-3 py-2 text-sm font-medium text-neutral-500 transition-colors hover:bg-neutral-50 hover:text-neutral-800 sm:inline-flex">
+                    Build <ChevronDown className="h-4 w-4" />
+                  </button>
+                  <button type="button" className="flex h-8 w-8 items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-neutral-50 hover:text-neutral-700 sm:h-9 sm:w-9" title="Voice prompt">
+                    <Mic className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleRun()}
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-[#16a34a] text-white transition-colors hover:bg-[#15803d] disabled:pointer-events-none disabled:opacity-100 sm:h-9 sm:w-9"
+                    disabled={!chatInput.trim() || isLoading}
+                    title="Build store"
+                  >
+                    {isLoading ? (
+                      <span className="block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                    ) : (
+                      <img src="/seltra/icons/send.png" alt="" className="h-[18px] w-[18px] object-contain" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── Trust Logos ──────────────────────────────────────────────────────────────
+function TrustLogos() {
+  const repeated = [...logos, ...logos]
+
+  return (
+    <section className="border-y border-border bg-card/30 py-12 sm:py-16">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6">
+        <div className="mx-auto mb-10 max-w-3xl text-center">
+          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-primary">merchant trust</p>
+          <h2 className="mt-4 text-2xl font-semibold tracking-tight text-foreground sm:text-4xl">
+            Seltra powers merchants everywhere, from first sale to scaling brand
+          </h2>
+        </div>
+
+        <div className="relative overflow-hidden">
+          <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-20 bg-gradient-to-r from-card/95 to-transparent" />
+          <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-20 bg-gradient-to-l from-card/95 to-transparent" />
+          <div className="trust-logo-track flex w-max items-center gap-6">
+            {repeated.map((brand, index) => (
+              <div
+                key={`${brand.name}-${index}`}
+                className="logo-fade group flex h-16 w-44 flex-shrink-0 items-center justify-center gap-2 rounded-md border border-border bg-background/70 px-5 text-center shadow-sm"
+                style={{ animationDelay: `${(index % logos.length) * 0.45}s` }}
+              >
+                {brand.img ? (
+                  <img
+                    src={brand.img}
+                    alt={brand.name}
+                    className="h-9 w-9 rounded-full object-cover grayscale transition-all duration-300 group-hover:grayscale-0"
+                  />
+                ) : null}
+                <span
+                  className={`truncate text-muted-foreground transition-colors duration-300 group-hover:text-foreground ${brand.font ?? 'font-sans font-medium'}`}
+                >
+                  {brand.name}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <style jsx>{`
+        @keyframes logo-fade {
+          0%, 100% { opacity: 0.35; }
+          50% { opacity: 1; }
+        }
+        .logo-fade {
+          animation: logo-fade 4.5s ease-in-out infinite;
+        }
+      `}</style>
+    </section>
+  )
+}
+
+// ─── Showcase ─────────────────────────────────────────────────────────────────
+function Showcase() {
+  const scroller = useRef<HTMLDivElement>(null)
+  const hoverSlow = useRef(false)
+  const go = useRef<(direction: number) => void>(() => {})
+  const stores = [...showcaseStores, ...showcaseStores]
+
+  useEffect(() => {
+    const node = scroller.current
+    if (!node) return
+
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const canHover = window.matchMedia('(hover: hover)').matches
+
+    const SPEED = 90
+    const HOVER_FACTOR = 0.18
+
+    let running = true
+    let touching = false
+    let last = performance.now()
+    let raf = 0
+    let pos = node.scrollLeft
+    let applied = pos
+    let velocity = 0
+    let nudge = 0
+
+    const cardStep = () => {
+      const card = node.querySelector<HTMLElement>('[data-store-card]')
+      const gap = parseFloat(getComputedStyle(node).columnGap || getComputedStyle(node).gap) || 32
+      return (card?.offsetWidth ?? 387) + gap
+    }
+
+    const loopWidth = () => cardStep() * showcaseStores.length
+
+    go.current = (direction: number) => {
+      nudge += direction * cardStep()
+    }
+
+    const tick = (now: number) => {
+      if (!running) return
+      const dt = Math.min(48, now - last) / 1000
+      last = now
+
+      // The user scrolled by hand (trackpad, wheel, swipe): continue from where they left it.
+      if (Math.abs(node.scrollLeft - applied) > 2) pos = node.scrollLeft
+
+      const target = reduced || touching ? 0 : SPEED * (hoverSlow.current ? HOVER_FACTOR : 1)
+      velocity += (target - velocity) * Math.min(1, dt * 3)
+
+      let delta = velocity * dt
+      if (nudge !== 0) {
+        const step = nudge * Math.min(1, dt * 6)
+        if (Math.abs(nudge - step) < 0.5) {
+          delta += nudge
+          nudge = 0
+        } else {
+          delta += step
+          nudge -= step
+        }
+      }
+
+      if (!touching) {
+        pos += delta
+        const loop = loopWidth()
+        if (loop > 0) {
+          if (pos >= loop) pos -= loop
+          if (pos < 0) pos += loop
+        }
+        node.scrollLeft = pos
+        applied = node.scrollLeft
+      }
+
+      raf = window.requestAnimationFrame(tick)
+    }
+
+    const onEnter = () => {
+      if (canHover) hoverSlow.current = true
+    }
+    const onLeave = () => {
+      hoverSlow.current = false
+    }
+    const onTouchStart = () => {
+      touching = true
+    }
+    const onTouchEnd = () => {
+      touching = false
+      pos = node.scrollLeft
+      applied = pos
+    }
+
+    node.addEventListener('mouseenter', onEnter)
+    node.addEventListener('mouseleave', onLeave)
+    node.addEventListener('touchstart', onTouchStart, { passive: true })
+    node.addEventListener('touchend', onTouchEnd)
+    node.addEventListener('touchcancel', onTouchEnd)
+    raf = window.requestAnimationFrame(tick)
+
+    return () => {
+      running = false
+      window.cancelAnimationFrame(raf)
+      node.removeEventListener('mouseenter', onEnter)
+      node.removeEventListener('mouseleave', onLeave)
+      node.removeEventListener('touchstart', onTouchStart)
+      node.removeEventListener('touchend', onTouchEnd)
+      node.removeEventListener('touchcancel', onTouchEnd)
+      go.current = () => {}
+    }
+  }, [])
+
+  return (
+    <section
+      id="showcase"
+      className="relative overflow-hidden pb-20 pt-4 sm:pb-28 [--gutter:max(1.25rem,calc((100%-83rem)/2+1.25rem))] sm:[--gutter:max(2rem,calc((100%-83rem)/2+2rem))]"
+    >
+      <Aurora tone="light" />
+      <div className="relative z-10 px-[var(--gutter)]">
+        <h2 data-reveal className={cn(sectionTitle, 'text-[#15803d]')}>
+          Live stores built with Seltra.
+        </h2>
+      </div>
+
+      <div
+        ref={scroller}
+        data-reveal
+        className="relative z-10 mt-2 flex gap-6 overflow-x-auto pb-10 pl-[var(--gutter)] pr-5 pt-8 scroll-pl-[var(--gutter)] scrollbar-none sm:mt-4 sm:gap-8 sm:pr-8"
+      >
+        {stores.map((store, index) => (
+          <a
+            key={`${store.name}-${index}`}
+            data-store-card
+            href={store.url}
+            target="_blank"
+            rel="noreferrer"
+            className="landing-store-card group relative flex w-[min(86vw,318px)] flex-shrink-0 flex-col rounded-[2rem] p-3 sm:w-[387px]"
+          >
+            <div className="overflow-hidden rounded-[1.4rem] border border-black/[0.06] bg-white">
+              <div className="flex items-center gap-2 border-b border-black/[0.05] bg-[#f6faf7] px-3 py-2">
+                <span className="flex gap-1">
+                  <span className="h-2 w-2 rounded-full bg-[#ff5f57]" />
+                  <span className="h-2 w-2 rounded-full bg-[#febc2e]" />
+                  <span className="h-2 w-2 rounded-full bg-[#28c840]" />
+                </span>
+                <span className="mx-auto truncate rounded-full bg-white px-3 py-0.5 text-[10px] text-neutral-500 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.05)]">
+                  {store.url.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                </span>
+                <span className="w-[26px]" />
+              </div>
+              <div className="relative aspect-[2/1] overflow-hidden">
+                <img
+                  src={store.image}
+                  alt={`${store.name} storefront preview`}
+                  loading="lazy"
+                  className="h-full w-full object-cover object-top"
+                />
+                <div className="absolute inset-0 flex items-end justify-end bg-gradient-to-t from-black/35 via-transparent to-transparent p-3 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+                  <span className="inline-flex translate-y-3 items-center gap-1.5 rounded-full bg-[#16a34a] px-4 py-2 text-xs font-medium text-white shadow-lg transition-transform duration-500 group-hover:translate-y-0">
+                    See store
+                    <ArrowUpRight className="h-3.5 w-3.5" />
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="px-2 pb-2 pt-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-[1.05rem] font-semibold tracking-tight text-neutral-950">{store.name}</h3>
+                <span className="rounded-full bg-[#16a34a]/10 px-2.5 py-1 text-[11px] font-medium text-[#15803d]">{store.category}</span>
+              </div>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-600">{store.desc}</p>
+            </div>
+          </a>
+        ))}
+      </div>
+
+      <div className="relative z-10 mt-4 flex justify-end gap-2.5 px-[var(--gutter)]">
+        <button type="button" onClick={() => go.current(-1)} aria-label="Previous store" className="btn-icon">
+          <ChevronLeft className="h-5 w-5" />
+        </button>
+        <button type="button" onClick={() => go.current(1)} aria-label="Next store" className="btn-icon">
+          <ChevronRight className="h-5 w-5" />
+        </button>
+      </div>
+    </section>
+  )
+}
+
+// ─── How It Works ─────────────────────────────────────────────────────────────
+const steps = [
+  {
+    title: 'Describe your business',
+    desc: "Type what you're selling, who you're selling to, and where. Seltra handles the rest.",
+    preview: 'composer',
+  },
+  {
+    title: 'Seltra builds your stack',
+    desc: 'Products, images, storefront, domain, and payments scaffolded in under minutes.',
+    preview: 'thinking',
+  },
+  {
+    title: 'Ship and scale',
+    desc: 'Your store goes live on your subdomain. Seltra keeps it running and updated.',
+    preview: 'browser',
+  },
+]
+
+const stepComposerPrompts = [
+  'Ask Seltra to build an ice cream...',
+  'Ask Seltra to launch a bakery selling...',
+  'Ask Seltra to open a fashion store for...',
+]
+
+function PreviewWell({
+  circle,
+  width = 'w-[88%]',
+  children,
+}: {
+  circle: string
+  width?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="relative flex h-[158px] items-center justify-center overflow-hidden rounded-[1.75rem]">
+      <div className={cn('landing-blob absolute left-1/2 top-[55%] h-[220px] w-[220px] -translate-x-1/2 -translate-y-1/2 rounded-full', circle)} />
+      <div className={cn('relative z-10', width)}>{children}</div>
+    </div>
+  )
+}
+
+function StepPreview({ type }: { type: string }) {
+  if (type === 'composer') {
+    return (
+      <PreviewWell circle="bg-[#dcefe4]" width="w-[86%]">
+        <div className="flex h-[118px] flex-col justify-between rounded-[1.6rem] bg-white px-4 py-3.5 shadow-[0_10px_28px_-14px_rgba(15,23,15,0.28)]">
+          <TypewriterPlaceholder
+            prompts={stepComposerPrompts}
+            typingSpeed={35}
+            deleteSpeed={18}
+            pauseDuration={1600}
+            resumeDelay={200}
+            className="text-left text-[13px] leading-relaxed text-neutral-500"
+          />
+          <button type="button" className="flex h-7 w-7 items-center justify-center rounded-full border border-black/[0.1] bg-white text-neutral-500" aria-hidden>
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </PreviewWell>
+    )
+  }
+
+  if (type === 'thinking') {
+    return (
+      <PreviewWell circle="bg-[#e8ece8]" width="w-[90%]">
+        <div className="flex h-[118px] flex-col justify-between text-left">
+          <div>
+            <p className="text-[13px] leading-relaxed text-neutral-600">
+              You are Seltra AI, acting as a world-class designer, growth marketer, brand strategist, photographer, copywriter, and conversion...
+            </p>
+            <p className="mt-1.5 text-[12px] font-medium text-[#16a34a]">Show more</p>
+          </div>
+          <div className="relative inline-flex w-fit">
+            <span className="agent-glow-backdrop opacity-70" />
+            <p className="agent-thinking-text-light relative z-10 rounded-full bg-white px-3 py-1 text-[12px] font-medium shadow-[0_6px_16px_-8px_rgba(15,23,15,0.35)]">Thinking...</p>
+          </div>
+        </div>
+      </PreviewWell>
+    )
+  }
+
+  return (
+    <PreviewWell circle="bg-[#efe4d4]" width="w-[94%]">
+      <div className="flex h-[118px] flex-col overflow-hidden rounded-[1.2rem] bg-[#f7f1e8] shadow-[0_10px_28px_-14px_rgba(15,23,15,0.28)]">
+        <div className="flex items-center justify-end gap-1.5 bg-neutral-950 px-3 py-1.5">
+          <span className="h-2 w-2 rounded-full bg-[#22c55e]" />
+          <span className="h-2 w-2 rounded-full bg-white" />
+          <span className="relative inline-flex items-center rounded-full bg-[#16a34a] px-2.5 py-0.5 text-[10px] font-semibold text-white">
+            Open Store
+            <svg
+              viewBox="0 0 16 20"
+              className="pointer-to-store absolute -bottom-3 right-0 h-4 w-3.5 drop-shadow-sm"
+              aria-hidden
+            >
+              <path d="M1 1l13 9.2-6.1 1.4 2.2 6.2-2.6.9-2.2-6.1L1 16.2V1z" fill="white" stroke="#111" strokeWidth="1.1" strokeLinejoin="round" />
+            </svg>
+          </span>
+        </div>
+        <img src="/seltra/store-dwomohs.png" alt="" className="min-h-0 flex-1 object-cover object-top" />
+      </div>
+    </PreviewWell>
+  )
+}
+
+function HowItWorks() {
+  return (
+    <section id="pipeline" className="relative overflow-hidden pb-16 pt-16 sm:pb-24 sm:pt-20">
+      <Aurora tone="light" />
+      <div className="relative z-10 mx-auto max-w-[1328px] px-5 sm:px-8">
+        <h2 data-reveal className={cn(sectionTitle, 'mb-10 text-[#15803d] sm:mb-12')}>
+          One prompt to live store.
+        </h2>
+
+        <div className="relative">
+          <div className="relative z-10 grid gap-5 md:grid-cols-3">
+          {steps.map((step, index) => (
+            <article
+              key={step.title}
+              data-reveal
+              style={{ ['--reveal-delay' as string]: `${index * 90}ms` }}
+              className="landing-glass-card relative rounded-[2.25rem] p-4 pb-6 sm:p-5"
+            >
+              <div className="mb-5">
+                <StepPreview type={step.preview} />
+              </div>
+              <div className="flex items-end justify-between gap-4 px-1 pr-10">
+                <div>
+                  <h3 className="text-[1.15rem] font-bold tracking-tight text-neutral-950">{step.title}</h3>
+                  <p className="mt-2 max-w-[17rem] text-[13px] font-medium leading-relaxed text-neutral-700">{step.desc}</p>
+                </div>
+              </div>
+              <span className="absolute bottom-3.5 right-3.5 flex h-8 w-8 items-center justify-center rounded-full bg-[#22c55e] text-[11px] font-semibold text-white">
+                0{index + 1}
+              </span>
+            </article>
+          ))}
+          </div>
+        </div>
+      </div>
+      <img
+        src="/assets/brand/mark.png"
+        alt=""
+        aria-hidden
+        className="landing-diamond pointer-events-none z-0 ml-auto mt-2 block h-[220px] w-auto select-none sm:h-[300px]"
+      />
+    </section>
+  )
+}
+
+function PlatformCarousel() {
+  const cards = [...platformCards, ...platformCards]
+
+  return (
+    <section className="border-t border-border py-20 sm:py-28">
+      <div className="container mx-auto px-4 sm:px-6">
+        <div className="mb-12 max-w-2xl sm:mb-16">
+          <p className="mb-3 font-mono text-xs text-primary">{'// platform'}</p>
+          <h2 className="mb-4 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl md:text-5xl">
+            One platform, not six tabs.
+          </h2>
+          <p className="text-base text-muted-foreground sm:text-lg">
+            WhatsApp for orders, Instagram for sales, a notebook for stock, three separate ways to get paid. Seltra replaces the fragments with one agent that already knows your store — and does the work the moment you ask.
+          </p>
+        </div>
+      </div>
+
+      <div className="relative overflow-hidden">
+        <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-background to-transparent sm:w-28" />
+        <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-background to-transparent sm:w-28" />
+
+        <div className="platform-track flex w-max gap-5 px-4 sm:px-6">
+          {cards.map((card, i) => (
+            <div
+              key={`${card.title}-${i}`}
+              className="w-[300px] flex-shrink-0 rounded-2xl border border-border bg-card p-6 sm:w-[340px] sm:p-7"
+            >
+              <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-xl border border-primary/20 bg-primary/10">
+                <card.icon className="h-5 w-5 text-primary" />
+              </div>
+              <h3 className="mb-2 text-lg font-semibold leading-snug text-foreground">
+                {card.title} <span className="text-primary">{card.highlight}</span>
+              </h3>
+              <p className="mb-5 text-sm leading-relaxed text-muted-foreground">{card.desc}</p>
+              <div className="rounded-lg border border-border bg-background/60 px-3.5 py-2.5">
+                <p className="font-mono text-xs italic leading-relaxed text-muted-foreground">"{card.prompt}"</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <style jsx>{`
+        .platform-track {
+          animation: platform-scroll 60s linear infinite;
+        }
+        .platform-track:hover {
+          animation-play-state: paused;
+        }
+        @keyframes platform-scroll {
+          0% {
+            transform: translateX(0);
+          }
+          100% {
+            transform: translateX(-50%);
+          }
+        }
+      `}</style>
+    </section>
+  )
+}
+// ─── Dashboard Proof ───────────────────────────────────────────────────────
+// Replaces the old "Investors / tile wall" section. Instead of unverifiable
+// numbers, this proves the product actually works with real screens from
+// the live agent + dashboard.
+function BrowserFrame({ image, alt, url }: { image: string; alt: string; url: string }) {
+  return (
+    <div className="relative">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -inset-6 -z-10 rounded-[2.5rem] bg-primary/[0.08] blur-3xl sm:-inset-10"
+      />
+      <div className="rounded-[1.75rem] border border-white/10 bg-gradient-to-b from-white/[0.05] to-white/[0.01] p-2.5 shadow-[0_60px_140px_-60px_rgba(0,0,0,0.9)] sm:p-3">
+        <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#0b0d0c]">
+          <div className="flex items-center gap-3 border-b border-white/10 bg-[#12140f]/80 px-4 py-3">
+            <div className="flex flex-shrink-0 gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
+              <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
+              <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
+            </div>
+            <div className="mx-auto flex max-w-xs flex-1 items-center justify-center truncate rounded-md border border-white/10 bg-black/30 px-3 py-1 font-mono text-[11px] text-white/45">
+              {url}
+            </div>
+            <div className="w-[52px] flex-shrink-0" />
+          </div>
+          <img src={image} alt={alt} loading="lazy" className="h-auto w-full" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DashboardProof() {
+  return (
+    <section id="proof" className="overflow-hidden border-t border-border py-20 sm:py-28">
+      <div className="container mx-auto px-4 sm:px-6">
+          <div className="mx-auto mb-16 max-w-3xl text-center sm:mb-24">
+                <p className="mb-3 font-mono text-xs text-primary">{'// inside seltra'}</p>
+                <h2 className="text-3xl font-semibold tracking-[-0.035em] sm:text-4xl md:text-5xl lg:whitespace-nowrap">
+                  Built by agents. Run by agents.
+                </h2>
+                <p className="mt-4 text-base text-muted-foreground sm:text-lg">
+                  The same agent behind these screens is the one running your store — writing the catalog, keeping it updated, without you touching a dashboard.
+                </p>
+              </div>
+
+        <div className="space-y-24 sm:space-y-32">
+          {dashboardShowcases.map((item, i) => {
+            const imageOnRight = i % 2 === 0
+            return (
+              <div key={item.eyebrow} className="grid items-center gap-10 lg:grid-cols-12 lg:gap-6">
+                <div
+                  className={`lg:col-span-4 ${imageOnRight ? 'lg:order-1' : 'lg:order-2'}`}
+                >
+                  <p className="mb-3 font-mono text-xs text-primary">{item.eyebrow}</p>
+                  <h3 className="mb-4 text-2xl font-semibold leading-tight tracking-[-0.02em] sm:text-3xl">
+                    {item.title}
+                  </h3>
+                  <p className="mb-6 text-sm leading-relaxed text-muted-foreground sm:text-base">{item.desc}</p>
+                  <ul className="space-y-4">
+                    {item.bullets.map((b) => (
+                      <li key={b.lead} className="flex items-start gap-2.5 text-sm text-muted-foreground">
+                        <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
+                        <span>
+                          <span className="font-medium text-foreground">{b.lead}</span> {b.rest}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div
+                  className={`lg:col-span-8 ${imageOnRight ? 'lg:order-2 lg:-mr-6 xl:-mr-20' : 'lg:order-1 lg:-ml-6 xl:-ml-20'}`}
+                >
+                  <BrowserFrame image={item.image} alt={item.alt} url={item.url} />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function WhySeltra() {
+  return (
+    <section id="why" className="px-4 py-4 sm:px-8 sm:py-6">
+      <div className="landing-stats-panel mx-auto max-w-[1264px] rounded-[2rem] px-5 py-14 sm:rounded-[2.5rem] sm:px-10 sm:py-20">
+      <Aurora tone="dark" />
+      <img
+        src="/assets/brand/mark.png"
+        alt=""
+        aria-hidden
+        className="landing-diamond pointer-events-none absolute left-0 top-6 z-0 h-[88px] w-auto select-none sm:top-8 sm:h-[120px]"
+      />
+      <div className="relative z-10">
+        <p data-reveal className="text-center text-[1.7rem] font-semibold leading-[1.15] tracking-[-0.03em] text-[#3ddc84] sm:text-[2.15rem] lg:text-[2.4rem]">
+          Why Seltra exists.
+        </p>
+        <h2 data-reveal className="mx-auto mt-4 max-w-[40rem] text-balance text-center text-[1.7rem] font-semibold leading-[1.15] tracking-[-0.03em] text-white sm:mt-5 sm:text-[2.15rem] lg:text-[2.4rem]">
+          “Commerce is becoming autonomous and AI-first.”
+        </h2>
+        <div data-reveal className="landing-glass-dark relative mx-auto mt-8 max-w-3xl overflow-hidden rounded-[1.5rem] px-6 py-7 sm:mt-10 sm:px-8 sm:py-8">
+          <img src="/seltra/william.png" className="h-12 w-12 rounded-full object-cover" alt="William" />
+          <p className="mt-5 text-[15px] leading-[1.65] text-white sm:text-[16.5px]">
+            Most small and medium businesses (SMEs) still run on a patchwork of DMs, spreadsheets, and disconnected tools selling through Instagram, taking orders on WhatsApp, tracking inventory in a notebook, with no real storefront and no way to scale past one person doing everything manually. Going from &quot;I sell things online&quot; to &quot;I run an online business&quot; has always required a developer, a designer, and weeks of setup. We built Seltra so that gap closes to one sentence.
+          </p>
+          <div className="mt-5">
+            <div className="text-sm font-semibold text-white">William</div>
+            <div className="text-[13px] text-white/45">Co-Founder @ Seltra</div>
+          </div>
+          <div aria-hidden className="absolute inset-x-0 bottom-0 h-[3px] bg-[#3A745C] shadow-[0_0_22px_rgba(58,153,109,0.85)]" />
+        </div>
+      </div>
+      </div>
+    </section>
+  )
+}
+
+function Testimonials() {
+  const scroller = useRef<HTMLDivElement>(null)
+  const quotes = [...customerQuotes, ...customerQuotes]
+
+  const cardStep = () => {
+    const node = scroller.current
+    const card = node?.querySelector<HTMLElement>('[data-quote-card]')
+    const gap = node ? parseFloat(getComputedStyle(node).columnGap || getComputedStyle(node).gap) || 20 : 20
+    return (card?.offsetWidth ?? 420) + gap
+  }
+
+  const scrollByCard = (direction: number) => {
+    const node = scroller.current
+    if (!node) return
+    node.scrollBy({ left: direction * cardStep(), behavior: 'smooth' })
+  }
+
+  return (
+    <section
+      id="testimonials"
+      className="relative overflow-hidden pb-16 pt-16 sm:pb-24 sm:pt-24 [--gutter:max(1.25rem,calc((100%-83rem)/2+1.25rem))] sm:[--gutter:max(2rem,calc((100%-83rem)/2+2rem))]"
+    >
+      <Aurora tone="light" />
+      <img
+        src="/assets/brand/mark.png"
+        alt=""
+        aria-hidden
+        className="landing-diamond pointer-events-none absolute right-0 top-0 z-0 h-[220px] w-auto select-none sm:h-[320px]"
+      />
+
+      <div className="relative z-10 px-[var(--gutter)]">
+        <h2 data-reveal className={cn(sectionTitle, 'text-neutral-950')}>
+          What customers say about Seltra.
+        </h2>
+      </div>
+
+      <div
+        ref={scroller}
+        data-reveal
+        className="relative z-10 mt-6 flex gap-5 overflow-x-auto pb-6 pl-[var(--gutter)] pr-5 pt-4 scrollbar-none sm:mt-8 sm:pr-8"
+      >
+        {quotes.map((item, index) => (
+          <article
+            key={`${item.name}-${index}`}
+            data-quote-card
+            className="landing-glass-card w-[min(86vw,420px)] flex-shrink-0 rounded-[1.5rem] p-6 sm:w-[460px] sm:p-7"
+          >
+            <div className="flex gap-0.5 text-[#16a34a]">
+              {Array.from({ length: 5 }).map((_, star) => (
+                <Star key={star} className="h-4 w-4 fill-current" />
+              ))}
+            </div>
+            <p className="mt-5 text-[15px] leading-relaxed text-neutral-700">{item.quote}</p>
+            <div className="mt-6 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-neutral-950">{item.name}</p>
+                <p className="text-[12px] text-neutral-500">{item.role}</p>
+              </div>
+              <img src={item.avatar} alt="" className="h-9 w-9 rounded-full object-cover" />
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div className="relative z-10 mt-4 flex justify-end gap-2.5 px-[var(--gutter)]">
+        <button type="button" onClick={() => scrollByCard(-1)} aria-label="Previous review" className="btn-icon">
+          <ChevronLeft className="h-5 w-5" />
+        </button>
+        <button type="button" onClick={() => scrollByCard(1)} aria-label="Next review" className="btn-icon">
+          <ChevronRight className="h-5 w-5" />
+        </button>
+      </div>
+    </section>
+  )
+}
+
+function Stats() {
+  return (
+    <section
+      id="stats"
+      className="relative px-4 pb-4 sm:px-8"
+    >
+      <div>
+        <div data-reveal className="landing-stats-panel mx-auto max-w-[1264px] rounded-[2rem] px-6 py-12 sm:rounded-[2.5rem] sm:px-12 sm:py-16 lg:px-16">
+          <Aurora tone="dark" />
+          <div className="relative z-10">
+          <h2 className={cn(sectionTitle, 'text-center text-white')}>
+            How far Seltra <span className="text-[#4ade80]">has come</span>
+          </h2>
+          <SlashDivider className="mt-6 text-center sm:mt-8" />
+          <div className="mt-10 grid gap-8 sm:mt-16 sm:grid-cols-3 sm:gap-0">
+            {seltraStats.map((stat, index) => (
+              <div
+                key={stat.label}
+                className={cn(
+                  'sm:px-8 lg:px-12',
+                  index === 0 && 'sm:pl-0 lg:pl-0',
+                  index > 0 && 'border-t border-[#22c55e]/25 pt-8 sm:border-l sm:border-t-0 sm:pt-0',
+                )}
+              >
+                <p className="text-[2rem] font-semibold tracking-[-0.03em] text-white sm:text-[2.4rem]">{stat.value}</p>
+                <p className="mt-2 max-w-[15rem] text-[14px] leading-snug text-white/65">{stat.label}</p>
+              </div>
+            ))}
+          </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── Features ─────────────────────────────────────────────────────────────────
+function Features() {
+  return (
+    <section id="features" className="px-4 py-4 sm:px-8 sm:py-6">
+      <div className="landing-feature-panel mx-auto max-w-[1264px] rounded-[2rem] px-6 py-12 sm:rounded-[2.5rem] sm:px-12 sm:py-16 lg:px-24 lg:py-24">
+        <Aurora tone="dark" />
+        <div className="relative z-10">
+          <h2 data-reveal className={cn(sectionTitle, 'text-white')}>
+            Specialized agents that <span className="text-[#4ade80]">run your store.</span>
+          </h2>
+
+          <div className="mt-10 space-y-14 sm:mt-14 sm:space-y-20">
+            {features.map((feature, index) => (
+              <article key={feature.title} data-reveal>
+                <h3 className="text-[1.15rem] font-semibold tracking-tight text-white sm:text-[1.35rem]">
+                  {feature.title}
+                </h3>
+                <p className="mt-2 max-w-md text-[14px] leading-relaxed text-white/65 sm:text-[15px]">{feature.desc}</p>
+                {index === 0 ? (
+                  <div className="landing-agent-shot mt-6 p-3 sm:mt-8 sm:p-4">
+                    <img
+                      src={encodeURI(feature.image)}
+                      alt={feature.title}
+                      className="block h-auto w-full rounded-[18px]"
+                    />
+                  </div>
+                ) : (
+                  <div className="landing-agent-shot mt-6 flex items-center justify-center px-5 py-8 sm:mt-8 sm:px-8 sm:py-10">
+                    <img
+                      src={encodeURI(feature.image)}
+                      alt={feature.title}
+                      className="h-auto w-full max-w-[614px] rounded-[18px] object-contain"
+                    />
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+export default function LandingPage() {
+  const [authOpen, setAuthOpen] = useState(false)
+  const [authSession, setAuthSession] = useState(0)
+  const [authNext, setAuthNext] = useState('/dashboard')
+
+  const openAuth = (next: string) => {
+    setAuthNext(next)
+    setAuthSession((session) => session + 1)
+    setAuthOpen(true)
+  }
+
+  return (
+    <div className="landing-page min-h-screen">
+      <SiteHeader transparentTop />
+      <Hero onNeedAuth={() => openAuth('/onboarding')} />
+      <HowItWorks />
+      <Showcase />
+      <Features />
+      <WhySeltra />
+      <Testimonials />
+      <Stats />
+      <PromptCTA />
+      <SiteFooter />
+      <AuthFlowModal key={authSession} open={authOpen} nextPath={authNext} onClose={() => setAuthOpen(false)} />
+    </div>
+  )
+}

@@ -146,7 +146,7 @@ export default function OnboardingPage() {
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,transparent_30%,hsl(0_0%_0%/0.6))]" />
       <div className="relative w-full max-w-xl">
         <Link href="/" className="mb-6 flex items-center justify-center gap-2">
-          <img src="https://res.cloudinary.com/dfmsaarli/image/upload/v1782364695/ICON_large_ngiv41.png" alt="Seltra" className="h-9 w-10 rounded-xl" />
+          <img src="/assets/brand/mark.png" alt="Seltra" className="h-9 w-auto object-contain" />
           <span className="font-mono text-lg font-semibold text-white">seltra</span>
         </Link>
 

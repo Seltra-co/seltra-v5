@@ -232,7 +232,7 @@ export function AuthFlowModal({
       className="relative flex w-full flex-col overflow-hidden rounded-[clamp(1.15rem,2vw,1.75rem)] bg-[#f4f6f4] px-[clamp(1rem,4vw,2rem)] py-[clamp(0.7rem,2.4dvh,2.25rem)] shadow-[0_24px_80px_-36px_rgba(15,23,15,0.45)]"
     >
       <div className="flex items-center justify-between gap-3">
-        <img src="/seltra/hero/seltra-logo.png" alt="seltra" className="h-[clamp(1.15rem,2.6dvh,1.75rem)] w-auto object-contain" />
+        <img src="/assets/brand/logo.png" alt="seltra" className="h-[clamp(1.15rem,2.6dvh,1.75rem)] w-auto object-contain" />
         <h2 id="auth-flow-title" className="text-[clamp(1.05rem,2.6dvh,1.35rem)] font-semibold tracking-[-0.03em] text-[#16803c]">
           {title}
         </h2>

@@ -68,7 +68,7 @@ export function PromptCTA() {
         <h2 className="text-[2rem] font-semibold tracking-[-0.035em] text-neutral-950 sm:text-[2.75rem]">
           Your store is <span className="text-[#16a34a]">one prompt away</span>
         </h2>
-        <p className="mx-auto mt-4 max-w-lg text-[15px] text-neutral-500 sm:text-base">
+        <p className="mx-auto mt-4 whitespace-nowrap text-[15px] text-neutral-500 sm:text-base">
           No code. No designers. No manual setup. Just describe what you are building.
         </p>
 

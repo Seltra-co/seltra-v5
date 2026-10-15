@@ -68,7 +68,7 @@ export function SiteHeader({ transparentTop = false, dark = false }: { transpare
               <Link href="/" className="flex min-w-0 items-center">
                 <img
                   ref={bindLogo}
-                  src="/seltra/hero/seltra-logo.png"
+                  src="/assets/brand/logo.png"
                   alt="seltra"
                   onLoad={() => setBrandReady(true)}
                   onError={() => setBrandReady(true)}
@@ -133,17 +133,6 @@ export function SiteHeader({ transparentTop = false, dark = false }: { transpare
               >
                 {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
               </button>
-              <Link
-                href="/dashboard"
-                aria-label="Preview dashboard"
-                title="Preview dashboard"
-                className={cn(
-                  'grid h-9 w-9 place-items-center rounded-full text-[13px] font-semibold',
-                  dark ? 'bg-white text-neutral-950' : 'bg-neutral-950 text-white',
-                )}
-              >
-                D
-              </Link>
             </div>
           </div>
         </div>

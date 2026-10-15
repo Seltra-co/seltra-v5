@@ -1,3 +1,4 @@
+import { BackgroundMark } from '@/components/marketing/BackgroundMark'
 import { SiteFooter } from '@/components/marketing/SiteFooter'
 import { SiteHeader } from '@/components/marketing/SiteHeader'
 
@@ -7,7 +8,7 @@ export function LegalPage({ title, lead, sections }: { title: string; lead: stri
   return (
     <div className="site-dark relative min-h-screen overflow-hidden">
       <SiteHeader dark />
-      <img src="/seltra/mark-left.png" alt="" aria-hidden className="pointer-events-none absolute left-0 top-28 w-24 select-none sm:w-36 lg:w-44" />
+      <BackgroundMark tone="dark" className="left-0 top-24 w-[240px] sm:top-28 sm:w-[340px] lg:w-[460px]" />
 
       <main className="relative z-10 mx-auto max-w-3xl px-5 pb-24 pt-36 sm:px-6 sm:pt-44">
         <h1 className="text-[2.5rem] font-semibold tracking-[-0.04em] sm:text-[3.4rem]">

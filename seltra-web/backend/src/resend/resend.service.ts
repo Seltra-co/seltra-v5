@@ -2,7 +2,24 @@ import { Injectable, Logger } from '@nestjs/common'
 import { Resend } from 'resend'
 import type { ApplicationDto } from '../application/application.dto'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+function getResend() {
+  const key = process.env.RESEND_API_KEY
+  if (!key) return null
+  return new Resend(key)
+}
+
+const resend = {
+  emails: {
+    send: async (payload: Parameters<Resend['emails']['send']>[0]) => {
+      const client = getResend()
+      if (!client) {
+        console.warn('[Resend] RESEND_API_KEY is not set; email skipped')
+        return { data: null, error: null }
+      }
+      return client.emails.send(payload)
+    },
+  },
+}
 const FROM = process.env.RESEND_FROM ?? 'Seltra <careers@send.seltra.co>'
 const NOTIFY_TO = process.env.RESEND_NOTIFY_TO ?? 'williamofosu677@gmail.com'
 

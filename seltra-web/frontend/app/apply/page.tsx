@@ -2,6 +2,7 @@
 import type { Metadata } from 'next'
 import { SignupFlow } from '@/components/marketing/SignupFlow'
 import { publicAsset } from '@/lib/public-asset'
+import { pageMeta } from '@/lib/seo'
 
 export const metadata: Metadata = {
   title: 'Create your account | Seltra',

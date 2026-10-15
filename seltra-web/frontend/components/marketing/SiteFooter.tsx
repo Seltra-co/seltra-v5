@@ -25,7 +25,7 @@ export function SiteFooter() {
         <Aurora tone="dark" />
         <div className="relative z-10">
           <Link href="/" className="inline-flex items-center justify-center">
-            <img src="/seltra/hero/seltra-logo.png" alt="seltra" className="h-7 w-auto sm:h-8" />
+            <img src="/assets/brand/logo.png" alt="seltra" className="h-7 w-auto sm:h-8" />
           </Link>
 
           <nav className="landing-menu mt-8 flex flex-wrap items-center justify-center gap-x-7 gap-y-3 text-[14px] text-white/75 sm:gap-x-10">

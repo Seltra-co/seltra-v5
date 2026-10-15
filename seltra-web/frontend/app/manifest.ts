@@ -11,8 +11,8 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: '#16A34A',
     icons: [
       {
-        src: 'https://res.cloudinary.com/dfmsaarli/image/upload/ICON_large_ngiv41.png',
-        sizes: '512x512',
+        src: '/assets/brand/favicon.png',
+        sizes: '256x256',
         type: 'image/png',
       },
     ],

@@ -1,7 +1,12 @@
 import type { Metadata } from 'next'
 import { LegalPage } from '@/components/marketing/LegalPage'
+import { pageMeta } from '@/lib/seo'
 
-export const metadata: Metadata = { title: 'Terms of Service | Seltra' }
+export const metadata: Metadata = pageMeta({
+  title: 'Terms of Service',
+  description: 'The terms for creating and operating an AI-generated store on Seltra.',
+  path: '/terms',
+})
 
 export default function TermsPage() {
   return (
