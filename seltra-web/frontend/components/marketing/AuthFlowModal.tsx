@@ -15,7 +15,7 @@ function readableError(message: string) {
     return "We couldn't reach Seltra. Please try again."
   }
   if (/couldn't find an account with those details/i.test(message)) {
-    return 'That email or password is incorrect.'
+    return 'No account for this email. Sign up to continue.'
   }
   return message
 }

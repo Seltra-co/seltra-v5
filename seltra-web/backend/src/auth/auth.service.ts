@@ -7,6 +7,7 @@ import { TenantEventsService } from '../internal-ops/events/tenant-events.servic
 import { ResendService } from '../resend/resend.service'
 
 const GENERIC_LOGIN_ERROR = 'That email or password is incorrect.'
+const MISSING_ACCOUNT_ERROR = 'No account for this email. Sign up to continue.'
 const MERCHANT_ID_PATTERN = /^(SELTRA-[A-Z0-9]+-[0-9A-Z]+|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i
 const LOGIN_LIMIT = 3
 const LOGIN_WINDOW_MS = 60_000
@@ -162,7 +163,7 @@ export class AuthService {
     if (!email || !password.trim()) throw new UnauthorizedException(GENERIC_LOGIN_ERROR)
 
     const user = await prisma.user.findUnique({ where: { email } })
-    if (!user) throw new UnauthorizedException(GENERIC_LOGIN_ERROR)
+    if (!user) throw new UnauthorizedException(MISSING_ACCOUNT_ERROR)
 
     const valid = await bcrypt.compare(password, user.passwordHash)
     if (!valid) throw new UnauthorizedException(GENERIC_LOGIN_ERROR)
