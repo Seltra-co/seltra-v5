@@ -10,6 +10,16 @@ type Step = 'login' | 'forgot-email' | 'otp' | 'reset'
 
 type AuthResponse = { access_token?: string; token?: string; user: unknown }
 
+function readableError(message: string) {
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(message)) {
+    return "We couldn't reach Seltra. Please try again."
+  }
+  if (/couldn't find an account with those details/i.test(message)) {
+    return 'That email or password is incorrect.'
+  }
+  return message
+}
+
 async function apiPost<T>(path: string, body: unknown): Promise<{ data: T | null; error: string | null }> {
   try {
     const res = await fetch(`${API_BASE}${path}`, {
@@ -20,11 +30,13 @@ async function apiPost<T>(path: string, body: unknown): Promise<{ data: T | null
     const json = await res.json().catch(() => ({}))
     if (!res.ok) {
       const message = json?.message ?? json?.error ?? `HTTP ${res.status}`
-      return { data: null, error: Array.isArray(message) ? message[0] : String(message) }
+      const text = Array.isArray(message) ? String(message[0]) : String(message)
+      return { data: null, error: readableError(text) }
     }
     return { data: json as T, error: null }
   } catch (error) {
-    return { data: null, error: error instanceof Error ? error.message : 'Network error' }
+    const message = error instanceof Error ? error.message : 'Network error'
+    return { data: null, error: readableError(message) }
   }
 }
 

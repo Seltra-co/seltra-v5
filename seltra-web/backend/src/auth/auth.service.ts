@@ -6,7 +6,7 @@ import { prisma } from '../db'
 import { TenantEventsService } from '../internal-ops/events/tenant-events.service'
 import { ResendService } from '../resend/resend.service'
 
-const GENERIC_LOGIN_ERROR = "We couldn't find an account with those details. Contact support@seltra.co"
+const GENERIC_LOGIN_ERROR = 'That email or password is incorrect.'
 const MERCHANT_ID_PATTERN = /^(SELTRA-[A-Z0-9]+-[0-9A-Z]+|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i
 const LOGIN_LIMIT = 3
 const LOGIN_WINDOW_MS = 60_000
