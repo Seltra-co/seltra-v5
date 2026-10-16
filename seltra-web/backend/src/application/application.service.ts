@@ -14,13 +14,28 @@ export class ApplicationService {
     const existing = await prisma.merchantApplication.findUnique({
       where: { email: data.email },
     })
-    if (existing) {
+
+    if (existing && existing.status !== 'rejected') {
       throw new BadRequestException(
         'An application with this email already exists. Try using a different email address or reach out to support.'
       )
     }
-   
-    const application = await prisma.merchantApplication.create({ data })
+
+    const application = existing
+      ? await prisma.merchantApplication.update({
+          where: { id: existing.id },
+          data: {
+            ...data,
+            status: 'pending',
+            reviewNotes: null,
+            reviewedAt: null,
+            merchantId: null,
+            userId: null,
+            credentialsGeneratedAt: null,
+            welcomeEmailSentAt: null,
+          },
+        })
+      : await prisma.merchantApplication.create({ data })
 
     // Fire-and-forget — email failure never blocks the applicant
     void this.resendService.sendApplicationNotification(dto, application.id)

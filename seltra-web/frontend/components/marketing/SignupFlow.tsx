@@ -75,7 +75,7 @@ const STEPS = [
 ]
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const SUBMIT_RETRY_MESSAGE = 'Merchant applications are paused for now. We will reopen soon.'
+const SUBMIT_RETRY_MESSAGE = "We couldn't send your details just now. Your answers are still here — please tap Submit again in a moment."
 
 export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null; donePhoto: string | null }) {
   const [step, setStep] = useState(0)
@@ -176,7 +176,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (error) {
       const offline = error instanceof TypeError || !(error instanceof Error)
-      toast(offline ? 'Applications paused' : 'Almost there!', { description: offline ? SUBMIT_RETRY_MESSAGE : error.message })
+      toast('Almost there!', { description: offline ? SUBMIT_RETRY_MESSAGE : error.message })
     } finally {
       setLoading(false)
     }
