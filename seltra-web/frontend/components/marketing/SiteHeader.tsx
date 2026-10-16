@@ -40,11 +40,15 @@ export function SiteHeader({ transparentTop = false, dark = false }: { transpare
   }, [])
 
   useEffect(() => {
-    if (!featuresOpen) return
+    if (!open) setFeaturesOpen(false)
+  }, [open])
+
+  useEffect(() => {
+    if (!featuresOpen || open) return
     const close = () => setFeaturesOpen(false)
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
-  }, [featuresOpen])
+  }, [featuresOpen, open])
 
   const linkTone = dark ? 'text-white/85 hover:text-white' : 'text-neutral-800 hover:text-neutral-950'
 
@@ -145,20 +149,57 @@ export function SiteHeader({ transparentTop = false, dark = false }: { transpare
                 dark ? 'text-white/80' : 'text-neutral-700',
               )}
             >
-              {[
-                { href: '/#showcase', label: 'Showcase' },
-                { href: '/features', label: 'Features' },
-                { href: '/careers', label: 'Careers' },
-              ].map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn('rounded-xl px-3 py-2.5', dark ? 'hover:bg-white/[0.06]' : 'hover:bg-black/[0.04]')}
-                  onClick={() => setOpen(false)}
+              <Link
+                href="/#showcase"
+                className={cn('rounded-xl px-3 py-2.5', dark ? 'hover:bg-white/[0.06]' : 'hover:bg-black/[0.04]')}
+                onClick={() => setOpen(false)}
+              >
+                Showcase
+              </Link>
+
+              <div>
+                <button
+                  type="button"
+                  className={cn(
+                    'flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left',
+                    dark ? 'hover:bg-white/[0.06]' : 'hover:bg-black/[0.04]',
+                  )}
+                  aria-expanded={featuresOpen}
+                  onClick={() => setFeaturesOpen((value) => !value)}
                 >
-                  {item.label}
-                </Link>
-              ))}
+                  Features
+                  <ChevronDown className={cn('h-4 w-4 transition-transform duration-200', featuresOpen && 'rotate-180')} />
+                </button>
+                {featuresOpen && (
+                  <div className={cn('mb-1 ml-2 flex flex-col gap-0.5 border-l pl-2', dark ? 'border-white/15' : 'border-black/10')}>
+                    {featureLinks.map((item) => (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className={cn(
+                          'rounded-xl px-3 py-2 text-[14px]',
+                          dark ? 'text-white/70 hover:bg-white/[0.06] hover:text-white' : 'text-neutral-600 hover:bg-black/[0.04] hover:text-neutral-950',
+                        )}
+                        onClick={() => {
+                          setFeaturesOpen(false)
+                          setOpen(false)
+                        }}
+                      >
+                        {item.label}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <Link
+                href="/careers"
+                className={cn('rounded-xl px-3 py-2.5', dark ? 'hover:bg-white/[0.06]' : 'hover:bg-black/[0.04]')}
+                onClick={() => setOpen(false)}
+              >
+                Careers
+              </Link>
+
               <div className="mt-2 grid grid-cols-2 gap-2 px-1">
                 <button
                   type="button"

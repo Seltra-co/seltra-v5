@@ -1,6 +1,6 @@
 {
   "name": "seltra-backend",
-  "version": "4.1.2", 
+  "version": "4.1.2",
   "private": true,
   "scripts": {
     "dev": "nest start --watch",
@@ -25,6 +25,7 @@
     "@nestjs/schedule": "^4",
     "@nestjs/swagger": "^7.4.2",
     "@prisma/client": "^5",
+    "@supabase/supabase-js": "^2.118.0",
     "bcryptjs": "^2",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",

@@ -5,7 +5,6 @@ import Link from 'next/link'
 import { ArrowLeft, ArrowRight, Check, ChevronDown, Globe, Send, Sparkles } from 'lucide-react'
 import { z } from 'zod'
 import { toast } from 'sonner'
-import { AuthFlowModal } from '@/components/marketing/AuthFlowModal'
 import { cn } from '@/lib/utils'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001'
@@ -40,8 +39,14 @@ const REVENUE_STAGES = [
 const AI_FAMILIARITY = ['Yes, I use it often', 'I have heard of it', 'Not really']
 const ALLOW_AI = ['Yes, let it run things', 'Maybe, show me first', 'I would rather do it myself']
 
+const hasTwoNames = (name: string) => name.trim().split(/\s+/).filter((part) => part.length >= 2).length >= 2
+
 const schema = z.object({
-  full_name: z.string().trim().min(1, 'Your name is required').max(120),
+  full_name: z
+    .string()
+    .trim()
+    .max(120)
+    .refine(hasTwoNames, 'Enter your first and last name'),
   phone: z.string().trim().min(5, 'Phone is required').max(40),
   email: z.string().trim().email('Enter a valid email').max(255),
   business_name: z.string().trim().min(1, 'Business name is required').max(160),
@@ -70,13 +75,12 @@ const STEPS = [
 ]
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const SUBMIT_RETRY_MESSAGE = 'Merchant applications are paused for now. We will reopen soon.'
 
 export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null; donePhoto: string | null }) {
   const [step, setStep] = useState(0)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
-  const [authOpen, setAuthOpen] = useState(false)
-  const [authSession, setAuthSession] = useState(0)
   const [region, setRegion] = useState('')
   const [country, setCountry] = useState('')
   const [city, setCity] = useState('')
@@ -110,6 +114,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
       if (!region) e.region = 'Required'
       if (!country) e.country = region ? 'Required' : 'Pick a region first'
       if (!data.full_name.trim()) e.full_name = 'Required'
+      else if (!hasTwoNames(data.full_name)) e.full_name = 'Enter first and last name'
     }
     if (step === 1) {
       if (!phone) e.phone = 'Required'
@@ -163,11 +168,15 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
         body: JSON.stringify(parsed.data),
       })
       const json = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(json.message || 'Submission failed')
+      if (!res.ok) {
+        const message = Array.isArray(json.message) ? json.message[0] : json.message
+        throw new Error(res.status < 500 && message ? message : SUBMIT_RETRY_MESSAGE)
+      }
       setDone(true)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Submission failed')
+      const offline = error instanceof TypeError || !(error instanceof Error)
+      toast(offline ? 'Applications paused' : 'Almost there!', { description: offline ? SUBMIT_RETRY_MESSAGE : error.message })
     } finally {
       setLoading(false)
     }
@@ -209,7 +218,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
 
             <div className="signup-card relative z-10 mt-4 overflow-hidden rounded-2xl p-4 sm:p-5">
               {done ? (
-                <Complete onLogin={() => { setAuthSession((s) => s + 1); setAuthOpen(true) }} />
+                <Complete />
               ) : (
                 <>
                   <div className="flex items-center gap-1.5">
@@ -386,13 +395,11 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
           </div>
         </div>
       </div>
-
-      <AuthFlowModal key={authSession} open={authOpen} nextPath="/dashboard" onClose={() => setAuthOpen(false)} />
     </div>
   )
 }
 
-function Complete({ onLogin }: { onLogin: () => void }) {
+function Complete() {
   return (
     <div className="relative flex flex-col items-center justify-center px-2 py-8 text-center sm:px-8">
       <span className="relative z-10 inline-flex">
@@ -403,16 +410,12 @@ function Complete({ onLogin }: { onLogin: () => void }) {
         </span>
       </span>
       <p className="relative z-10 mt-7 max-w-[15rem] text-[16px] font-medium leading-snug text-white">
-        Your account has been created successfully.
+        Your application has been received.
       </p>
-      <p className="relative z-10 mt-5 text-[13px] text-white/60">Check your email for your log in credentials</p>
-      <button
-        type="button"
-        onClick={onLogin}
-        className="btn btn-lg btn-primary relative z-10 mt-6 w-full max-w-[330px]"
-      >
-        Log in
-      </button>
+      <p className="relative z-10 mt-5 text-[13px] text-white/60">We&apos;ll email you as soon as your account is ready.</p>
+      <Link href="/" className="btn btn-lg btn-primary relative z-10 mt-6 w-full max-w-[330px]">
+        Back to home
+      </Link>
       <div aria-hidden className="absolute -bottom-12 left-1/2 z-0 w-52 -translate-x-1/2 opacity-30">
         <div className="signup-deco w-full" />
       </div>

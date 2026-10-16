@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
+import { clearSeltraSession, getSupabase } from '@/lib/supabase'
 
 const IDLE_TIMEOUT_MS = 60 * 60 * 1000
 const LAST_ACTIVITY_KEY = 'seltra:last_activity'
@@ -30,10 +31,32 @@ export function SessionGuard({ children }: { children: React.ReactNode }) {
     let timer: ReturnType<typeof setTimeout> | undefined
 
     const logout = () => {
+      try {
+        void getSupabase().auth.signOut()
+      } catch {
+        // ignore missing config during logout
+      }
+      clearSeltraSession()
       AUTH_KEYS.forEach((key) => localStorage.removeItem(key))
       localStorage.removeItem(LAST_ACTIVITY_KEY)
       const next = `${window.location.pathname}${window.location.search}`
       router.replace(`/auth?next=${encodeURIComponent(next || '/dashboard')}`)
+    }
+
+    let unsubscribe: (() => void) | undefined
+    try {
+      const { data } = getSupabase().auth.onAuthStateChange((event, session) => {
+        if (session?.access_token) {
+          localStorage.setItem('seltra:token', session.access_token)
+          return
+        }
+        if (event === 'SIGNED_OUT' && getToken() && getToken() !== 'dev-preview') {
+          logout()
+        }
+      })
+      unsubscribe = () => data.subscription.unsubscribe()
+    } catch {
+      // Supabase optional until env is ready
     }
 
     const scheduleLogout = () => {
@@ -68,6 +91,7 @@ export function SessionGuard({ children }: { children: React.ReactNode }) {
 
     return () => {
       if (timer) clearTimeout(timer)
+      unsubscribe?.()
       activityEvents.forEach((event) => window.removeEventListener(event, recordActivity))
       window.removeEventListener('storage', handleStorage)
       window.removeEventListener('seltra:auth-expired', logout)

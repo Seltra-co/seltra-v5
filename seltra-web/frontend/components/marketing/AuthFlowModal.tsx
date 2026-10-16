@@ -3,12 +3,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
+import { clearSeltraSession, getSupabase, storeSeltraSession } from '@/lib/supabase'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001'
 
 type Step = 'login' | 'forgot-email' | 'otp' | 'reset'
 
-type AuthResponse = { access_token?: string; token?: string; user: unknown }
+type AuthResponse = {
+  access_token?: string
+  token?: string
+  refresh_token?: string
+  user: unknown
+}
 
 function readableError(message: string) {
   if (/failed to fetch|networkerror|load failed|network request failed/i.test(message)) {
@@ -16,6 +22,9 @@ function readableError(message: string) {
   }
   if (/couldn't find an account with those details/i.test(message)) {
     return 'No account for this email. Sign up to continue.'
+  }
+  if (/invalid login credentials|invalid_credentials/i.test(message)) {
+    return 'That email or password is incorrect.'
   }
   return message
 }
@@ -40,10 +49,21 @@ async function apiPost<T>(path: string, body: unknown): Promise<{ data: T | null
   }
 }
 
-function storeSession(data: AuthResponse) {
+async function storeSession(data: AuthResponse) {
   const token = data.access_token ?? data.token ?? ''
-  localStorage.setItem('seltra:token', token)
-  localStorage.setItem('seltra:user', JSON.stringify(data.user))
+  storeSeltraSession({ access_token: token, user: data.user })
+
+  if (data.refresh_token) {
+    try {
+      const supabase = getSupabase()
+      await supabase.auth.setSession({
+        access_token: token,
+        refresh_token: data.refresh_token,
+      })
+    } catch (error) {
+      console.warn('[auth] Could not persist Supabase session', error)
+    }
+  }
 }
 
 function SlashMark() {
@@ -152,8 +172,8 @@ export function AuthFlowModal({
 
   if (!open) return null
 
-  const finish = (data: AuthResponse) => {
-    storeSession(data)
+  const finish = async (data: AuthResponse) => {
+    await storeSession(data)
     onClose()
     router.push(nextPath)
   }
@@ -162,13 +182,52 @@ export function AuthFlowModal({
     event.preventDefault()
     setLoading(true)
     setError(null)
-    const { data, error: authError } = await apiPost<AuthResponse>('/api/v1/auth/login', { email, password })
+
+    const trimmedEmail = email.trim()
+
+    try {
+      const supabase = getSupabase()
+      const { data: supabaseData, error: supabaseError } = await supabase.auth.signInWithPassword({
+        email: trimmedEmail,
+        password,
+      })
+
+      if (!supabaseError && supabaseData.session) {
+        const meRes = await fetch(`${API_BASE}/api/v1/auth/me`, {
+          headers: { Authorization: `Bearer ${supabaseData.session.access_token}` },
+        })
+        const meJson = await meRes.json().catch(() => ({}))
+        if (meRes.ok && meJson.user) {
+          setLoading(false)
+          await finish({
+            access_token: supabaseData.session.access_token,
+            refresh_token: supabaseData.session.refresh_token,
+            user: meJson.user,
+          })
+          return
+        }
+        await supabase.auth.signOut()
+        clearSeltraSession()
+        if (meRes.status === 401) {
+          setLoading(false)
+          setError('No merchant account for this email. Sign up to continue.')
+          return
+        }
+      }
+    } catch {
+      // fall through to backend login
+    }
+
+    const { data, error: authError } = await apiPost<AuthResponse>('/api/v1/auth/login', {
+      email: trimmedEmail,
+      password,
+    })
     setLoading(false)
     if (authError || !data) {
       setError(authError ?? 'Could not log in')
       return
     }
-    finish(data)
+    await finish(data)
   }
 
   const submitEmail = async (event: React.FormEvent) => {
@@ -227,7 +286,7 @@ export function AuthFlowModal({
       return
     }
     toast.success('Password updated')
-    finish(data)
+    await finish(data)
   }
 
   const title =

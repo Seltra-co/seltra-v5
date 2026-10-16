@@ -65,6 +65,7 @@ export class ResendService {
     loginUrl: string
     merchantId: string
     merchantEmail: string
+    temporaryPassword?: string
   }) {
     await resend.emails.send({
       from: FROM,
@@ -410,6 +411,7 @@ function buildMerchantApprovalEmail(input: {
   loginUrl: string
   merchantId: string
   merchantEmail: string
+  temporaryPassword?: string
 }): string {
   const firstName = input.fullName.split(' ')[0]
   return emailShell(`
@@ -428,6 +430,7 @@ function buildMerchantApprovalEmail(input: {
         <tr><td style="padding:20px 24px">
           ${row('Merchant ID', input.merchantId)}
           ${row('Merchant Email', input.merchantEmail)}
+          ${row('Temporary password', input.temporaryPassword)}
           ${row('Login', input.loginUrl)}
         </td></tr>
       </table>

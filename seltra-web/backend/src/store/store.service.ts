@@ -935,20 +935,9 @@ export class StoreService {
     required: false,
   ): Promise<string | undefined>
   private async getUserIdFromAuth(authorization?: string, required = true) {
-    const token = authorization?.replace(/^Bearer\s+/i, '')
-    if (!token) {
-      if (required) throw new UnauthorizedException('Missing bearer token')
-      return undefined
-    }
-    try {
-      const payload = await this.jwtService.verifyAsync<{ sub: string }>(token, {
-        secret: process.env.JWT_SECRET || 'change-me',
-      })
-      return payload.sub
-    } catch {
-      if (required) throw new UnauthorizedException('Invalid bearer token')
-      return undefined
-    }
+    const { resolveUserIdFromAuthorization } = await import('../auth/resolve-user')
+    const userId = await resolveUserIdFromAuthorization(authorization, this.jwtService, required)
+    return userId ?? undefined
   }
 
   private withDerivedFields<T extends { canonical: unknown }>(tenant: T) {

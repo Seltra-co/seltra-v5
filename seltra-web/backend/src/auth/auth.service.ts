@@ -5,6 +5,8 @@ import * as bcrypt from 'bcryptjs'
 import { prisma } from '../db'
 import { TenantEventsService } from '../internal-ops/events/tenant-events.service'
 import { ResendService } from '../resend/resend.service'
+import { getSupabaseAdmin, getSupabaseAnon } from '../supabase/supabase.client'
+import { resolveUserIdFromAuthorization } from './resolve-user'
 
 const GENERIC_LOGIN_ERROR = 'That email or password is incorrect.'
 const MISSING_ACCOUNT_ERROR = 'No account for this email. Sign up to continue.'
@@ -153,8 +155,11 @@ export class AuthService {
       data: { passwordHash },
     })
 
+    const session = await this.ensureSupabaseUser(email, nextPassword, user.name)
+
     return {
-      ...this.authPayload(user),
+      ...this.authPayload(user, session?.access_token),
+      refresh_token: session?.refresh_token,
       otpRequired: false,
     }
   }
@@ -162,12 +167,36 @@ export class AuthService {
   private async signinWithPassword(email: string, password: string) {
     if (!email || !password.trim()) throw new UnauthorizedException(GENERIC_LOGIN_ERROR)
 
-    const user = await prisma.user.findUnique({ where: { email } })
-    if (!user) throw new UnauthorizedException(MISSING_ACCOUNT_ERROR)
+    const prismaUser = await prisma.user.findUnique({ where: { email } })
+    if (!prismaUser) throw new UnauthorizedException(MISSING_ACCOUNT_ERROR)
 
-    const valid = await bcrypt.compare(password, user.passwordHash)
+    const supabaseSession = await this.signInWithSupabase(email, password)
+    if (supabaseSession) {
+      await this.recordLogin(email)
+      return {
+        ...this.authPayload(prismaUser, supabaseSession.access_token),
+        refresh_token: supabaseSession.refresh_token,
+        otpRequired: false,
+        otpEnforcement: 'disabled',
+      }
+    }
+
+    const valid = await bcrypt.compare(password, prismaUser.passwordHash)
     if (!valid) throw new UnauthorizedException(GENERIC_LOGIN_ERROR)
 
+    const provisioned = await this.ensureSupabaseUser(email, password, prismaUser.name)
+    const session = provisioned ?? (await this.signInWithSupabase(email, password))
+    await this.recordLogin(email)
+
+    return {
+      ...this.authPayload(prismaUser, session?.access_token),
+      refresh_token: session?.refresh_token,
+      otpRequired: false,
+      otpEnforcement: 'disabled',
+    }
+  }
+
+  private async recordLogin(email: string) {
     const tenant = await prisma.tenant.findFirst({
       where: { owner: { email: { equals: email, mode: 'insensitive' } } },
       select: { id: true },
@@ -175,12 +204,58 @@ export class AuthService {
     if (tenant) {
       void this.tenantEvents.recordForTenant(tenant.id, 'login', { email })
     }
+  }
 
+  private async signInWithSupabase(email: string, password: string) {
+    const client = getSupabaseAnon()
+    if (!client) return null
+    const { data, error } = await client.auth.signInWithPassword({ email, password })
+    if (error || !data.session) return null
     return {
-      ...this.authPayload(user),
-      otpRequired: false,
-      otpEnforcement: 'disabled',
+      access_token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
     }
+  }
+
+  private async ensureSupabaseUser(email: string, password: string, name: string | null) {
+    const admin = getSupabaseAdmin()
+    if (!admin) return null
+
+    const metadata = { name: name || undefined, full_name: name || undefined }
+    const { error: createError } = await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: metadata,
+    })
+
+    if (createError && !/already|registered|exists/i.test(createError.message)) {
+      console.error('[Supabase] createUser failed', createError.message)
+      return null
+    }
+
+    if (createError) {
+      const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
+        type: 'recovery',
+        email,
+      })
+      const userId = linkData?.user?.id
+      if (linkError || !userId) {
+        console.error('[Supabase] lookup user failed', linkError?.message)
+        return null
+      }
+      const { error: updateError } = await admin.auth.admin.updateUserById(userId, {
+        password,
+        email_confirm: true,
+        user_metadata: metadata,
+      })
+      if (updateError) {
+        console.error('[Supabase] updateUser failed', updateError.message)
+        return null
+      }
+    }
+
+    return this.signInWithSupabase(email, password)
   }
 
   private resetKey(email: string) {
@@ -278,16 +353,10 @@ export class AuthService {
   }
 
   async me(token: string) {
-    try {
-      const payload = await this.jwtService.verifyAsync<{ sub: string }>(token, {
-        secret: process.env.JWT_SECRET || 'change-me',
-      })
-      const user = await prisma.user.findUnique({ where: { id: payload.sub } })
-      if (!user) throw new UnauthorizedException('User not found')
-      return { user: this.publicUser(user) }
-    } catch {
-      throw new UnauthorizedException('Invalid bearer token')
-    }
+    const userId = await resolveUserIdFromAuthorization(`Bearer ${token}`, this.jwtService, true)
+    const user = await prisma.user.findUnique({ where: { id: userId! } })
+    if (!user) throw new UnauthorizedException('User not found')
+    return { user: this.publicUser(user) }
   }
 
   private enforceLoginRateLimit(ip: string) {
@@ -341,9 +410,12 @@ export class AuthService {
   //   })
   // }
 
-  private authPayload(user: { id: string; email: string; name: string | null; createdAt?: Date; plan?: string | null }) {
+  private authPayload(
+    user: { id: string; email: string; name: string | null; createdAt?: Date; plan?: string | null },
+    accessToken?: string,
+  ) {
     const publicUser = this.publicUser(user)
-    const token = this.jwtService.sign({ sub: user.id, email: user.email })
+    const token = accessToken || this.jwtService.sign({ sub: user.id, email: user.email })
     return {
       token,
       access_token: token,

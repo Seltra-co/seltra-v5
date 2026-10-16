@@ -58,19 +58,10 @@ export class StoreImageController {
   }
 
   private async assertOwner(storeId: string, authorization?: string) {
-    const token = authorization?.replace(/^Bearer\s+/i, '')
-    if (!token) throw new UnauthorizedException('Missing token')
-    let userId: string
-    try {
-      const payload = await this.jwtService.verifyAsync<{ sub: string }>(token, {
-        secret: process.env.JWT_SECRET || 'change-me',
-      })
-      userId = payload.sub
-    } catch {
-      throw new UnauthorizedException('Invalid token')
-    }
+    const { resolveUserIdFromAuthorization } = await import('../auth/resolve-user')
+    const userId = await resolveUserIdFromAuthorization(authorization, this.jwtService, true)
     const tenant = await prisma.tenant.findFirst({
-      where: { OR: [{ id: storeId }, { slug: storeId }], ownerId: userId },
+      where: { OR: [{ id: storeId }, { slug: storeId }], ownerId: userId! },
     })
     if (!tenant) throw new NotFoundException('Store not found')
     return tenant
