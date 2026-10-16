@@ -17,6 +17,11 @@ async function bootstrap() {
   // Static allowlist for known non-tenant origins (marketing site, admin dashboard, local dev)
   const STATIC_ALLOWED_ORIGINS = new Set([
     'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:8080',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:8080',
     'https://seltra.co',
     'https://www.seltra.co',
     'https://seltra-merchant.vercel.app',
@@ -25,6 +30,9 @@ async function bootstrap() {
 
   // Matches any merchant storefront subdomain, e.g. https://glow-luxe-skincare.seltra.co
   const TENANT_SUBDOMAIN_REGEX = /^https:\/\/[a-z0-9-]+\.seltra\.co$/
+  // Ops dashboard previews (Vercel / Lovable)
+  const OPS_ORIGIN_REGEX =
+    /^https:\/\/([a-z0-9-]+\.)*(seltra-ops|seltra-ops-platform)([a-z0-9-]*)?\.(vercel\.app|lovable\.app)$/i
 
   app.enableCors({
     origin: (origin, callback) => {
@@ -32,7 +40,9 @@ async function bootstrap() {
       if (!origin) return callback(null, true)
 
       const isAllowed =
-        STATIC_ALLOWED_ORIGINS.has(origin) || TENANT_SUBDOMAIN_REGEX.test(origin)
+        STATIC_ALLOWED_ORIGINS.has(origin) ||
+        TENANT_SUBDOMAIN_REGEX.test(origin) ||
+        OPS_ORIGIN_REGEX.test(origin)
 
       if (isAllowed) {
         return callback(null, true)
