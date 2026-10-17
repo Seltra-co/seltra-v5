@@ -221,6 +221,8 @@ export class ApplicationsService {
       where: { id },
       data: {
         status: MerchantStatus.pending,
+        // Bump so reopened apps sort to the top of the Ops waitlist
+        createdAt: new Date(),
         reviewNotes: null,
         reviewedAt: null,
         merchantId: null,

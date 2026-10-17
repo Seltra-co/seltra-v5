@@ -27,6 +27,8 @@ export class ApplicationService {
           data: {
             ...data,
             status: 'pending',
+            // Re-applications should appear as newest on the Ops waitlist
+            createdAt: new Date(),
             reviewNotes: null,
             reviewedAt: null,
             merchantId: null,
