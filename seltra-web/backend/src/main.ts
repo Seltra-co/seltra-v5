@@ -57,7 +57,8 @@ async function bootstrap() {
       }
 
       logger.warn(`Blocked CORS request from origin: ${origin}`)
-      return callback(new Error('Not allowed by CORS'), false)
+      // Do not throw — Nest maps Error callbacks to HTTP 500; false is enough to deny.
+      return callback(null, false)
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [

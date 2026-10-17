@@ -8,7 +8,7 @@ const PRODUCTION_API_BASE = 'https://seltra-merchant-backend.onrender.com'
 
 function apiBases() {
   const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '')
-  const bases: string[] = []
+  const bases: string[] = ['']
   if (fromEnv) bases.push(fromEnv)
   if (typeof window !== 'undefined') {
     const host = window.location.hostname

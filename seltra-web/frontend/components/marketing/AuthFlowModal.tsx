@@ -13,9 +13,10 @@ function apiBases(): string[] {
   const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '')
   const host = typeof window !== 'undefined' ? window.location.hostname : ''
   const isLocalHost = host === 'localhost' || host === '127.0.0.1'
-  const bases: string[] = []
+  // Same-origin first (Next.js rewrite → API) — avoids CORS on LAN / previews.
+  const bases: string[] = ['']
 
-  if (fromEnv) bases.push(fromEnv)
+  if (fromEnv && !bases.includes(fromEnv)) bases.push(fromEnv)
   // Local UI often has approval credentials issued by production Ops/Render.
   if (isLocalHost) {
     if (!bases.includes('http://127.0.0.1:3001')) bases.push('http://127.0.0.1:3001')
