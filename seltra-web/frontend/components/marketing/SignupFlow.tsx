@@ -7,7 +7,24 @@ import { z } from 'zod'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001'
+const PRODUCTION_API_BASE = 'https://seltra-merchant-backend.onrender.com'
+
+function apiBases(): string[] {
+  const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '')
+  // Same-origin first (Next rewrite → API) so apply works on www/LAN without CORS.
+  const bases: string[] = ['']
+  if (fromEnv && !bases.includes(fromEnv)) bases.push(fromEnv)
+  if (!bases.includes(PRODUCTION_API_BASE)) bases.push(PRODUCTION_API_BASE)
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname
+    if (host === 'localhost' || host === '127.0.0.1') {
+      for (const local of ['http://127.0.0.1:3001', 'http://localhost:3001']) {
+        if (!bases.includes(local)) bases.push(local)
+      }
+    }
+  }
+  return bases
+}
 
 const REGIONS: Record<string, string[]> = {
   Africa: ['Ghana', 'Nigeria', 'Kenya', 'South Africa', "Côte d'Ivoire", 'Senegal', 'Rwanda', 'Egypt', 'Other'],
@@ -162,16 +179,38 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
     }
     setLoading(true)
     try {
-      const res = await fetch(`${API_BASE}/api/v1/application/submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsed.data),
-      })
-      const json = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        const message = Array.isArray(json.message) ? json.message[0] : json.message
-        throw new Error(res.status < 500 && message ? message : SUBMIT_RETRY_MESSAGE)
+      let lastMessage = SUBMIT_RETRY_MESSAGE
+      let submitted = false
+
+      for (const base of apiBases()) {
+        try {
+          const res = await fetch(`${base}/api/v1/application/submit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(parsed.data),
+          })
+          const json = await res.json().catch(() => ({}))
+          if (!res.ok) {
+            const message = Array.isArray(json.message) ? json.message[0] : json.message
+            // Reachable API with a real client error — stop retrying other bases.
+            if (res.status < 500 && message) {
+              throw new Error(String(message))
+            }
+            lastMessage = SUBMIT_RETRY_MESSAGE
+            continue
+          }
+          submitted = true
+          break
+        } catch (error) {
+          if (error instanceof Error && error.message !== SUBMIT_RETRY_MESSAGE && !(error instanceof TypeError)) {
+            throw error
+          }
+          lastMessage = SUBMIT_RETRY_MESSAGE
+        }
       }
+
+      if (!submitted) throw new Error(lastMessage)
+
       setDone(true)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (error) {
