@@ -184,11 +184,15 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
 
       for (const base of apiBases()) {
         try {
+          const controller = new AbortController()
+          const timer = window.setTimeout(() => controller.abort(), 90_000)
           const res = await fetch(`${base}/api/v1/application/submit`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(parsed.data),
+            signal: controller.signal,
           })
+          window.clearTimeout(timer)
           const json = await res.json().catch(() => ({}))
           if (!res.ok) {
             const message = Array.isArray(json.message) ? json.message[0] : json.message
@@ -202,7 +206,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
           submitted = true
           break
         } catch (error) {
-          if (error instanceof Error && error.message !== SUBMIT_RETRY_MESSAGE && !(error instanceof TypeError)) {
+          if (error instanceof Error && error.message !== SUBMIT_RETRY_MESSAGE && !(error instanceof TypeError) && error.name !== 'AbortError') {
             throw error
           }
           lastMessage = SUBMIT_RETRY_MESSAGE

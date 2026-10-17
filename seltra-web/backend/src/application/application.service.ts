@@ -15,12 +15,14 @@ export class ApplicationService {
       where: { email: data.email },
     })
 
-    if (existing && existing.status !== 'rejected') {
+    // Approved / suspended accounts keep their seat — ask them to log in instead.
+    if (existing && existing.status !== 'rejected' && existing.status !== 'pending') {
       throw new BadRequestException(
         'An application with this email already exists. Try using a different email address or reach out to support.'
       )
     }
 
+    // Pending (or rejected reopen) — upsert so a retry after a flaky network still lands in Ops.
     const application = existing
       ? await prisma.merchantApplication.update({
           where: { id: existing.id },
