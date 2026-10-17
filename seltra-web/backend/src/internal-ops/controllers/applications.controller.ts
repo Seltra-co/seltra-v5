@@ -3,6 +3,7 @@ import { Body, Controller, Get, Headers, Param, Post, Query, UseFilters, UseGuar
 import { ApiBadRequestResponse, ApiHeader, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiParam, ApiSecurity, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger'
 import { ApplicationsQueryDto } from '../dto/applications-query.dto'
 import { RejectApplicationDto } from '../dto/reject-application.dto'
+import { ReopenApplicationDto } from '../dto/reopen-application.dto'
 import { ApplicationApprovalResponseDto, ApplicationRejectionResponseDto, ApplicationsListResponseDto, OpsErrorResponseDto } from '../dto/swagger-response.dto'
 import { OpsExceptionFilter } from '../filters/ops-exception.filter'
 import { OpsApiKeyGuard } from '../guards/ops-api-key.guard'
@@ -90,6 +91,32 @@ export class ApplicationsController {
     const actorLabel = this.audit.requireActor(actor)
     const result = await this.applications.reject(id, body.reason)
     await this.audit.record(actorLabel, 'application.reject', 'merchant_application', id, { reason: body.reason })
+    return result
+  }
+
+  //Dashboard reopen rejected merchant application endpoint for the internal ops API
+  //@req POST /internal/ops/applications/:id/reopen
+  //x-internal-api-key
+  //x-ops-actor
+  @Post(':id/reopen')
+  @ApiOperation({
+    summary: 'Reopen a rejected or suspended merchant application',
+    description:
+      'Moves a rejected/suspended application back to pending so it appears on the waitlist. Optional body fields overwrite application details (e.g. rename a rejected record to a new business).',
+  })
+  @ApiParam({ name: 'id', description: 'Merchant application ID.', example: 'clx9app123' })
+  @ApiHeader({ name: 'x-ops-actor', description: 'Human-readable ops actor recorded in the audit log.', required: true, example: 'ops@seltra.co' })
+  @ApiOkResponse({ description: 'Application reopened as pending.' })
+  @ApiBadRequestResponse({ description: 'Application is not rejected/suspended.', type: OpsErrorResponseDto })
+  @ApiNotFoundResponse({ description: 'Application was not found.', type: OpsErrorResponseDto })
+  async reopen(
+    @Param('id') id: string,
+    @Body() body: ReopenApplicationDto,
+    @Headers('x-ops-actor') actor?: string,
+  ) {
+    const actorLabel = this.audit.requireActor(actor)
+    const result = await this.applications.reopen(id, body)
+    await this.audit.record(actorLabel, 'application.reopen', 'merchant_application', id, result)
     return result
   }
 }

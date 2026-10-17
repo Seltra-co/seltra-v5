@@ -193,6 +193,59 @@ export class ApplicationsService {
     return { applicationId: updated.id, status: updated.status }
   }
 
+  // Re-open a rejected/suspended application back to pending (optional field overrides)
+  async reopen(
+    id: string,
+    updates: {
+      fullName?: string
+      businessName?: string
+      storeName?: string
+      businessType?: string
+      phone?: string
+      basedIn?: string
+      whatYouSell?: string
+      monthlyRevenue?: string
+    } = {},
+  ) {
+    const application = await prisma.merchantApplication.findUnique({ where: { id } })
+    if (!application) throw new NotFoundException('Application not found')
+
+    if (
+      application.status !== MerchantStatus.rejected &&
+      application.status !== MerchantStatus.suspended
+    ) {
+      throw new BadRequestException('Only rejected or suspended applications can be reopened')
+    }
+
+    const updated = await prisma.merchantApplication.update({
+      where: { id },
+      data: {
+        status: MerchantStatus.pending,
+        reviewNotes: null,
+        reviewedAt: null,
+        merchantId: null,
+        userId: null,
+        credentialsGeneratedAt: null,
+        welcomeEmailSentAt: null,
+        ...(updates.fullName !== undefined && { fullName: updates.fullName }),
+        ...(updates.businessName !== undefined && { businessName: updates.businessName }),
+        ...(updates.storeName !== undefined && { storeName: updates.storeName }),
+        ...(updates.businessType !== undefined && { businessType: updates.businessType }),
+        ...(updates.phone !== undefined && { phone: updates.phone }),
+        ...(updates.basedIn !== undefined && { basedIn: updates.basedIn }),
+        ...(updates.whatYouSell !== undefined && { whatYouSell: updates.whatYouSell }),
+        ...(updates.monthlyRevenue !== undefined && { monthlyRevenue: updates.monthlyRevenue }),
+      },
+    })
+
+    return {
+      applicationId: updated.id,
+      status: updated.status,
+      businessName: updated.businessName,
+      ownerEmail: updated.email,
+    }
+  }
+
 
 
   private async provisionSupabaseAuth(email: string, password: string, name: string) {
