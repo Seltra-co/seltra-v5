@@ -8,22 +8,21 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
 const PRODUCTION_API_BASE = 'https://seltra-merchant-backend.onrender.com'
+/** Same-origin proxy that does not forward browser Origin (avoids Render CORS 500s). */
+const SELTRA_PROXY_PREFIX = '/api/seltra'
 
-function apiBases(): string[] {
+function submitUrls(): string[] {
   const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '')
-  // Same-origin first (Next rewrite → API) so apply works on www/LAN without CORS.
-  const bases: string[] = ['']
-  if (fromEnv && !bases.includes(fromEnv)) bases.push(fromEnv)
-  if (!bases.includes(PRODUCTION_API_BASE)) bases.push(PRODUCTION_API_BASE)
+  const urls = [`${SELTRA_PROXY_PREFIX}/application/submit`]
+  if (fromEnv) urls.push(`${fromEnv}/api/v1/application/submit`)
+  urls.push(`${PRODUCTION_API_BASE}/api/v1/application/submit`)
   if (typeof window !== 'undefined') {
     const host = window.location.hostname
     if (host === 'localhost' || host === '127.0.0.1') {
-      for (const local of ['http://127.0.0.1:3001', 'http://localhost:3001']) {
-        if (!bases.includes(local)) bases.push(local)
-      }
+      urls.push('http://127.0.0.1:3001/api/v1/application/submit', 'http://localhost:3001/api/v1/application/submit')
     }
   }
-  return bases
+  return Array.from(new Set(urls))
 }
 
 const REGIONS: Record<string, string[]> = {
@@ -182,11 +181,11 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
       let lastMessage = SUBMIT_RETRY_MESSAGE
       let submitted = false
 
-      for (const base of apiBases()) {
+      for (const url of submitUrls()) {
         try {
           const controller = new AbortController()
           const timer = window.setTimeout(() => controller.abort(), 90_000)
-          const res = await fetch(`${base}/api/v1/application/submit`, {
+          const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(parsed.data),

@@ -7,14 +7,15 @@ import { toast } from 'sonner'
 import { clearSeltraSession, getSupabase, storeSeltraSession } from '@/lib/supabase'
 
 const PRODUCTION_API_BASE = 'https://seltra-merchant-backend.onrender.com'
+const SELTRA_PROXY = '/api/seltra'
 const MERCHANT_ID_PATTERN = /^SELTRA-[A-Z0-9]+-[0-9A-Z]+$/i
 
 function apiBases(): string[] {
   const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '')
   const host = typeof window !== 'undefined' ? window.location.hostname : ''
   const isLocalHost = host === 'localhost' || host === '127.0.0.1'
-  // Same-origin first (Next.js rewrite → API) — avoids CORS on LAN / previews.
-  const bases: string[] = ['']
+  // Prefer dedicated proxy (does not forward Origin) then env / production.
+  const bases: string[] = [SELTRA_PROXY]
 
   if (fromEnv && !bases.includes(fromEnv)) bases.push(fromEnv)
   // Local UI often has approval credentials issued by production Ops/Render.
@@ -24,6 +25,12 @@ function apiBases(): string[] {
   }
   if (!bases.includes(PRODUCTION_API_BASE)) bases.push(PRODUCTION_API_BASE)
   return bases
+}
+
+/** Map `/api/v1/...` onto the seltra proxy or a full API base. */
+function apiUrl(base: string, path: string) {
+  if (base === SELTRA_PROXY) return `${SELTRA_PROXY}${path.replace(/^\/api\/v1/, '')}`
+  return `${base}${path}`
 }
 
 type Step = 'login' | 'forgot-email' | 'otp' | 'reset'
@@ -57,7 +64,7 @@ async function apiPost<T>(
 
   for (const base of bases) {
     try {
-      const res = await fetch(`${base}${path}`, {
+      const res = await fetch(apiUrl(base, path), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -247,7 +254,7 @@ export function AuthFlowModal({
       if (!supabaseError && supabaseData.session) {
         for (const base of apiBases()) {
           try {
-            const meRes = await fetch(`${base}/api/v1/auth/me`, {
+            const meRes = await fetch(apiUrl(base, '/api/v1/auth/me'), {
               headers: { Authorization: `Bearer ${supabaseData.session.access_token}` },
             })
             const meJson = await meRes.json().catch(() => ({}))

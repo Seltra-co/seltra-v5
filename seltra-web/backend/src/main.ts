@@ -26,6 +26,7 @@ async function bootstrap() {
     'https://www.seltra.co',
     'https://seltra-merchant.vercel.app',
     'https://seltra-v5-merchant.vercel.app',
+    'https://seltra-v5-merchant-pi.vercel.app',
   ])
 
   // Matches any merchant storefront subdomain, e.g. https://glow-luxe-skincare.seltra.co
