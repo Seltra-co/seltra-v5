@@ -5,18 +5,24 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { clearSeltraSession, getSupabase, storeSeltraSession } from '@/lib/supabase'
 
-function resolveApiBase() {
-  const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '')
-  if (fromEnv) return fromEnv
-  if (typeof window !== 'undefined') {
-    const host = window.location.hostname
-    if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:3001'
-  }
-  // Never ship a localhost default to production browsers.
-  return 'https://seltra-merchant-backend.onrender.com'
-}
+const PRODUCTION_API_BASE = 'https://seltra-merchant-backend.onrender.com'
+const MERCHANT_ID_PATTERN = /^SELTRA-[A-Z0-9]+-[0-9A-Z]+$/i
 
-const API_BASE = resolveApiBase()
+function apiBases(): string[] {
+  const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '')
+  const host = typeof window !== 'undefined' ? window.location.hostname : ''
+  const isLocalHost = host === 'localhost' || host === '127.0.0.1'
+  const bases: string[] = []
+
+  if (fromEnv) bases.push(fromEnv)
+  // Local UI often has approval credentials issued by production Ops/Render.
+  if (isLocalHost) {
+    if (!bases.includes('http://127.0.0.1:3001')) bases.push('http://127.0.0.1:3001')
+    if (!bases.includes('http://localhost:3001')) bases.push('http://localhost:3001')
+  }
+  if (!bases.includes(PRODUCTION_API_BASE)) bases.push(PRODUCTION_API_BASE)
+  return bases
+}
 
 type Step = 'login' | 'forgot-email' | 'otp' | 'reset'
 
@@ -40,23 +46,37 @@ function readableError(message: string) {
   return message
 }
 
-async function apiPost<T>(path: string, body: unknown): Promise<{ data: T | null; error: string | null }> {
-  try {
-    const res = await fetch(`${API_BASE}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    const json = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      const message = json?.message ?? json?.error ?? `HTTP ${res.status}`
-      const text = Array.isArray(message) ? String(message[0]) : String(message)
-      return { data: null, error: readableError(text) }
+async function apiPost<T>(
+  path: string,
+  body: unknown,
+): Promise<{ data: T | null; error: string | null; baseUrl?: string }> {
+  const bases = apiBases()
+  let lastNetworkError: string | null = null
+
+  for (const base of bases) {
+    try {
+      const res = await fetch(`${base}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const message = json?.message ?? json?.error ?? `HTTP ${res.status}`
+        const text = Array.isArray(message) ? String(message[0]) : String(message)
+        // Auth/validation errors mean the API is reachable — stop trying fallbacks.
+        return { data: null, error: readableError(text), baseUrl: base }
+      }
+      return { data: json as T, error: null, baseUrl: base }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Network error'
+      lastNetworkError = message
     }
-    return { data: json as T, error: null }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Network error'
-    return { data: null, error: readableError(message) }
+  }
+
+  return {
+    data: null,
+    error: readableError(lastNetworkError ?? 'Network error'),
   }
 }
 
@@ -195,35 +215,54 @@ export function AuthFlowModal({
     setError(null)
 
     const trimmedEmail = email.trim()
+    const secret = password.trim()
+    const merchantId = MERCHANT_ID_PATTERN.test(secret) ? secret.toUpperCase() : undefined
+
+    // Approval emails include Merchant ID — accept it in the password field for www/local.
+    if (merchantId) {
+      const { data, error: authError } = await apiPost<AuthResponse>('/api/v1/auth/login', {
+        email: trimmedEmail,
+        merchantId,
+      })
+      setLoading(false)
+      if (authError || !data) {
+        setError(authError ?? 'Could not log in')
+        return
+      }
+      await finish(data)
+      return
+    }
 
     try {
       const supabase = getSupabase()
       const { data: supabaseData, error: supabaseError } = await supabase.auth.signInWithPassword({
         email: trimmedEmail,
-        password,
+        password: secret,
       })
 
       if (!supabaseError && supabaseData.session) {
-        const meRes = await fetch(`${API_BASE}/api/v1/auth/me`, {
-          headers: { Authorization: `Bearer ${supabaseData.session.access_token}` },
-        })
-        const meJson = await meRes.json().catch(() => ({}))
-        if (meRes.ok && meJson.user) {
-          setLoading(false)
-          await finish({
-            access_token: supabaseData.session.access_token,
-            refresh_token: supabaseData.session.refresh_token,
-            user: meJson.user,
-          })
-          return
+        for (const base of apiBases()) {
+          try {
+            const meRes = await fetch(`${base}/api/v1/auth/me`, {
+              headers: { Authorization: `Bearer ${supabaseData.session.access_token}` },
+            })
+            const meJson = await meRes.json().catch(() => ({}))
+            if (meRes.ok && meJson.user) {
+              setLoading(false)
+              await finish({
+                access_token: supabaseData.session.access_token,
+                refresh_token: supabaseData.session.refresh_token,
+                user: meJson.user,
+              })
+              return
+            }
+            if (meRes.status === 401) break
+          } catch {
+            // try next API base
+          }
         }
         await supabase.auth.signOut()
         clearSeltraSession()
-        if (meRes.status === 401) {
-          setLoading(false)
-          setError('No merchant account for this email. Sign up to continue.')
-          return
-        }
       }
     } catch {
       // fall through to backend login
@@ -231,7 +270,7 @@ export function AuthFlowModal({
 
     const { data, error: authError } = await apiPost<AuthResponse>('/api/v1/auth/login', {
       email: trimmedEmail,
-      password,
+      password: secret,
     })
     setLoading(false)
     if (authError || !data) {
@@ -335,12 +374,15 @@ export function AuthFlowModal({
                   className={inputClass}
                 />
               </Field>
-              <Field label="Password">
+              <Field
+                label="Password or Merchant ID"
+                hint="Use the temporary password or Merchant ID from your Seltra approval email."
+              >
                 <input
                   type="password"
                   required
                   autoComplete="current-password"
-                  placeholder="Password"
+                  placeholder="Password or SELTRA-XXXX-XXXX"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   className={inputClass}
