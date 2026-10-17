@@ -4,7 +4,17 @@ import { Suspense, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AuthFlowModal } from '@/components/marketing/AuthFlowModal'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001'
+function resolveApiBase() {
+  const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '')
+  if (fromEnv) return fromEnv
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname
+    if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:3001'
+  }
+  return 'https://seltra-merchant-backend.onrender.com'
+}
+
+const API_BASE = resolveApiBase()
 
 function AuthContent() {
   const router = useRouter()

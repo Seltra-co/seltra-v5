@@ -5,7 +5,18 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { clearSeltraSession, getSupabase, storeSeltraSession } from '@/lib/supabase'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001'
+function resolveApiBase() {
+  const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '')
+  if (fromEnv) return fromEnv
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname
+    if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:3001'
+  }
+  // Never ship a localhost default to production browsers.
+  return 'https://seltra-merchant-backend.onrender.com'
+}
+
+const API_BASE = resolveApiBase()
 
 type Step = 'login' | 'forgot-email' | 'otp' | 'reset'
 

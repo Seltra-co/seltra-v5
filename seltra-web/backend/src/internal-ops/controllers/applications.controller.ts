@@ -69,6 +69,24 @@ export class ApplicationsController {
     return result
   }
 
+  @Post(':id/resend-credentials')
+  @ApiOperation({
+    summary: 'Resend merchant login credentials',
+    description:
+      'Regenerates a temporary password for an approved application, syncs Supabase Auth, and emails Merchant ID + password.',
+  })
+  @ApiParam({ name: 'id', description: 'Merchant application ID.', example: 'clx9app123' })
+  @ApiHeader({ name: 'x-ops-actor', description: 'Human-readable ops actor recorded in the audit log.', required: true, example: 'ops@seltra.co' })
+  @ApiOkResponse({ description: 'Credentials regenerated and email attempted.', type: ApplicationApprovalResponseDto })
+  @ApiBadRequestResponse({ description: 'Application is not approved or missing required fields.', type: OpsErrorResponseDto })
+  @ApiNotFoundResponse({ description: 'Application was not found.', type: OpsErrorResponseDto })
+  async resendCredentials(@Param('id') id: string, @Headers('x-ops-actor') actor?: string) {
+    const actorLabel = this.audit.requireActor(actor)
+    const result = await this.applications.resendCredentials(id)
+    await this.audit.record(actorLabel, 'application.resend_credentials', 'merchant_application', id, result)
+    return result
+  }
+
   //Dashboard reject merchant application endpoint for the internal ops API
   //@req POST /internal/ops/applications/:id/reject
   //x-internal-api-key

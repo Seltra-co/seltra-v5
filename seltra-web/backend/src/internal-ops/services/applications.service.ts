@@ -48,7 +48,8 @@ export class ApplicationsService {
         businessName: application.businessName,
         businessType: application.businessType,
         status: application.status,
-        appliedAt: application.createdAt.toISOString(),    
+        merchantId: application.merchantId,
+        appliedAt: application.createdAt.toISOString(),
       })),
       page: query.page,
       pageSize: query.pageSize,
@@ -177,6 +178,82 @@ export class ApplicationsService {
     credentialsSent,
   }
 }
+
+  /** Re-issue login credentials for an already-approved application (email + password + merchant ID). */
+  async resendCredentials(id: string) {
+    const application = await prisma.merchantApplication.findUnique({ where: { id } })
+    if (!application) throw new NotFoundException('Application not found')
+    if (application.status !== MerchantStatus.approved) {
+      throw new BadRequestException('Only approved applications can resend credentials')
+    }
+    if (!application.email || !application.fullName) {
+      throw new BadRequestException('Application must have an email and full name')
+    }
+
+    const tempPassword = randomBytes(9).toString('base64url')
+    const passwordHash = await bcrypt.hash(tempPassword, 12)
+
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.upsert({
+        where: { email: application.email },
+        update: { name: application.fullName, passwordHash },
+        create: {
+          email: application.email,
+          name: application.fullName,
+          passwordHash,
+        },
+      })
+
+      let merchantId = application.merchantId
+      if (!merchantId) {
+        merchantId = await this.generateMerchantId(tx)
+      }
+
+      await tx.merchantApplication.update({
+        where: { id: application.id },
+        data: {
+          merchantId,
+          userId: user.id,
+          credentialsGeneratedAt: new Date(),
+        },
+      })
+
+      return { user, merchantId }
+    })
+
+    await this.provisionSupabaseAuth(application.email, tempPassword, application.fullName)
+
+    let credentialsSent = false
+    try {
+      await this.resendService.sendMerchantApproval({
+        to: application.email,
+        fullName: application.fullName,
+        storeName: application.storeName,
+        loginUrl:
+          process.env.MERCHANT_APP_URL ??
+          process.env.FRONTEND_LOGIN_URL ??
+          'https://www.seltra.co/auth?next=/dashboard',
+        merchantId: result.merchantId,
+        merchantEmail: application.email,
+        temporaryPassword: tempPassword,
+      })
+      await prisma.merchantApplication.update({
+        where: { id: application.id },
+        data: { welcomeEmailSentAt: new Date() },
+      })
+      credentialsSent = true
+    } catch (err) {
+      console.error(err)
+    }
+
+    return {
+      applicationId: application.id,
+      merchantId: result.merchantId,
+      email: application.email,
+      status: 'approved',
+      credentialsSent,
+    }
+  }
 
 //Reject an application with a reason
   async reject(id: string, reason: string) {
