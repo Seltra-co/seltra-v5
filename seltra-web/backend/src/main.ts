@@ -33,6 +33,12 @@ async function bootstrap() {
   // Ops dashboard previews (Vercel / Lovable)
   const OPS_ORIGIN_REGEX =
     /^https:\/\/([a-z0-9-]+\.)*(seltra-ops|seltra-ops-platform)([a-z0-9-]*)?\.(vercel\.app|lovable\.app)$/i
+  // Local/LAN Next.js (http://192.168.x.x:3000) — needed when testing from Network URL
+  const LOCAL_LAN_ORIGIN_REGEX =
+    /^http:\/\/(localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2}):(3000|3001|5173|8080)$/i
+  // Merchant marketing / app Vercel previews
+  const MERCHANT_VERCEL_ORIGIN_REGEX =
+    /^https:\/\/([a-z0-9-]+\.)*(seltra|seltra-merchant|seltra-v5|seltra-v5-merchant)([a-z0-9-]*)?\.vercel\.app$/i
 
   app.enableCors({
     origin: (origin, callback) => {
@@ -42,7 +48,9 @@ async function bootstrap() {
       const isAllowed =
         STATIC_ALLOWED_ORIGINS.has(origin) ||
         TENANT_SUBDOMAIN_REGEX.test(origin) ||
-        OPS_ORIGIN_REGEX.test(origin)
+        OPS_ORIGIN_REGEX.test(origin) ||
+        LOCAL_LAN_ORIGIN_REGEX.test(origin) ||
+        MERCHANT_VERCEL_ORIGIN_REGEX.test(origin)
 
       if (isAllowed) {
         return callback(null, true)

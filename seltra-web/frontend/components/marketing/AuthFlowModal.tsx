@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Eye, EyeOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { clearSeltraSession, getSupabase, storeSeltraSession } from '@/lib/supabase'
 
@@ -148,6 +149,7 @@ export function AuthFlowModal({
   const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
   const frameRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
@@ -157,6 +159,7 @@ export function AuthFlowModal({
     setStep('login')
     setError(null)
     setLoading(false)
+    setShowPassword(false)
     setScale(1)
   }, [open])
 
@@ -206,7 +209,7 @@ export function AuthFlowModal({
   const finish = async (data: AuthResponse) => {
     await storeSession(data)
     onClose()
-    router.push(nextPath)
+    router.replace(nextPath || '/dashboard')
   }
 
   const submitLogin = async (event: React.FormEvent) => {
@@ -374,19 +377,26 @@ export function AuthFlowModal({
                   className={inputClass}
                 />
               </Field>
-              <Field
-                label="Password or Merchant ID"
-                hint="Use the temporary password or Merchant ID from your Seltra approval email."
-              >
-                <input
-                  type="password"
-                  required
-                  autoComplete="current-password"
-                  placeholder="Password or SELTRA-XXXX-XXXX"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  className={inputClass}
-                />
+              <Field label="Password or Merchant ID">
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    autoComplete="current-password"
+                    placeholder="Password or SELTRA-XXXX-XXXX"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    className={`${inputClass} pr-12`}
+                  />
+                  <button
+                    type="button"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    onClick={() => setShowPassword((current) => !current)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-neutral-500 transition-colors hover:text-neutral-900"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </Field>
               <button
                 type="button"
