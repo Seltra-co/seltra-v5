@@ -1947,7 +1947,7 @@ function DashboardFrame({
       <div className="dash-scroll relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
         <div className="relative flex min-h-full w-full flex-col p-2 pl-2">
           {children}
-          {disconnected && (chatSkeleton ? <ConnectionCanvas /> : <div className="absolute inset-2 z-30 rounded-[20px] bg-[#141615]/80" />)}
+          {disconnected && (chatSkeleton ? <ConnectionCanvas /> : <div className="absolute inset-2 z-30 rounded-[28px] bg-[#141615]/80" />)}
         </div>
       </div>
       {disconnected && !pillDismissed && <ConnectionPill state={connection} onDismiss={onDismissConnection} />}
@@ -2343,9 +2343,9 @@ function EmptyState({
 
         <div className="relative z-20 flex w-full flex-col items-center px-4 pt-[20vh] sm:px-6">
           <div className="flex w-full max-w-[640px] flex-col items-center">
-            <div className="flex flex-col items-center gap-3 sm:flex-row sm:gap-3.5">
-              <img src="/assets/brand/mark.png" alt="" className="h-9 w-9 object-contain sm:h-10 sm:w-10" />
-              <h1 className="text-center text-[1.75rem] font-semibold tracking-[-0.04em] text-neutral-950 sm:text-[2.15rem] lg:text-[2.35rem]">
+            <div className="flex flex-col items-center gap-2.5 sm:flex-row sm:gap-3">
+              <img src="/assets/brand/mark.png" alt="" className="h-7 w-7 object-contain sm:h-8 sm:w-8" />
+              <h1 className="text-center text-[1.5rem] font-semibold tracking-[-0.03em] text-neutral-950 sm:text-[1.75rem] lg:text-[2rem]">
                 What&apos;s the vision{firstName ? `, ${firstName}` : ''}?
               </h1>
             </div>
