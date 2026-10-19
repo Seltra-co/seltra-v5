@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Learn React and Next.js with Seltra</title>
+<style>
+  @page {
+    size: A4;
+    margin: 16mm 16mm 18mm 16mm;
+    @bottom-center {
+      content: counter(page);
+      font-family: "Segoe UI", sans-serif;
+      font-size: 10px;
+      color: #6b645b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { font-size: 11.2pt; }
+  body {
+    margin: 0;
+    color: #1c1915;
+    font-family: "Segoe UI", Calibri, sans-serif;
+    line-height: 1.48;
+    background: #fff;
+  }
+  h1, h2, h3, h4 { font-family: Georgia, "Palatino Linotype", serif; line-height: 1.2; color: #14110e; page-break-after: avoid; }
+  h1 { font-size: 28pt; margin: 0 0 8px; letter-spacing: -0.4px; }
+  h2 { font-size: 18pt; margin: 28px 0 8px; border-top: 2px solid #1c1915; padding-top: 14px; }
+  h3 { font-size: 13.5pt; margin: 18px 0 6px; }
+  h4 { font-size: 12pt; margin: 14px 0 4px; }
+  p { margin: 0 0 8px; }
+  ul, ol { margin: 4px 0 10px; padding-left: 1.2em; }
+  li { margin: 2px 0; }
+  code, pre { font-family: Consolas, "Cascadia Mono", monospace; }
+  code { font-size: 0.92em; background: #f3efe8; padding: 0 3px; border-radius: 3px; }
+  pre {
+    background: #1c1915;
+    color: #f6f1e8;
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 8.7pt;
+    line-height: 1.38;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    page-break-inside: avoid;
+  }
+  pre code { background: transparent; color: inherit; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 12px; font-size: 10pt; page-break-inside: avoid; }
+  th, td { border: 1px solid #ddd4c8; padding: 5px 7px; text-align: left; vertical-align: top; }
+  th { background: #f6f1e8; }
+  a { color: #1c1915; }
+  .cover { page-break-after: always; min-height: 250mm; display: flex; flex-direction: column; justify-content: space-between; }
+  .kicker { letter-spacing: 0.16em; text-transform: uppercase; font-size: 10pt; color: #7a6552; margin-bottom: 18px; }
+  .subtitle { font-size: 14pt; max-width: 38em; color: #3d342c; }
+  .meta { margin-top: 28px; color: #5c534b; font-size: 10.5pt; }
+  .rule { height: 3px; width: 72px; background: #c4a574; margin: 18px 0; }
+  .box { border: 1px solid #e4d9c8; background: #fbf8f3; padding: 10px 12px; margin: 10px 0 12px; border-radius: 6px; page-break-inside: avoid; }
+  .box.kid { border-left: 4px solid #c4a574; }
+  .box.proj { border-left: 4px solid #2f5d50; }
+  .box.say { border-left: 4px solid #1c1915; background: #fff; }
+  .box.trap { border-left: 4px solid #8d3b32; background: #fdf7f6; }
+  .label { font-size: 9pt; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }
+  .kid .label { color: #8a6840; }
+  .proj .label { color: #2f5d50; }
+  .say .label { color: #1c1915; }
+  .trap .label { color: #8d3b32; }
+  .q { font-weight: 700; }
+  .small { font-size: 10pt; color: #5c534b; }
+  .toc a { text-decoration: none; }
+  .toc li { margin: 3px 0; }
+  .keep { page-break-inside: avoid; }
+  figure { margin: 12px 0 14px; page-break-inside: avoid; }
+  figure img, figure svg.shot { width: 100%; height: auto; display: block; border: 1px solid #e4d9c8; border-radius: 8px; }
+  figcaption { font-size: 9.5pt; color: #5c534b; margin-top: 5px; }
+  svg.diagram { width: 100%; height: auto; display: block; }
+</style>
+</head>
+<body>
+
+<section class="cover">
+  <div>
+    <div class="kicker">A course built from this repository</div>
+    <h1>Learn React and Next.js<br>by building Seltra</h1>
+    <div class="rule"></div>
+    <p class="subtitle">Simple enough to read like a story. Precise enough to survive a technical interview. Every idea is tied to a real file in the Seltra frontend.</p>
+    <p class="meta">Project: seltra-web frontend · React 18.3 · Next.js 16 App Router · TypeScript<br>Stack you will meet: components, hooks, context, server components, routing, data fetching, forms, auth.</p>
+  </div>
+  <p class="small">Study order: read a chapter, open the file it names, then answer the interview question out loud in under 90 seconds. If you can point at the file while you talk, you understand it.</p>
+</section>
+
+<h2>How to use this course</h2>
+<p>You do not need to memorize the whole Seltra dashboard. You need a small set of principles, and you need to see those principles in working code. This document does both.</p>
+<p>Each idea has three layers:</p>
+<ol>
+  <li><strong>Like you are five.</strong> A picture you can hold in your head.</li>
+  <li><strong>In this project.</strong> The exact Seltra file where that picture is real.</li>
+  <li><strong>Say this in the interview.</strong> A short answer a hiring manager can follow.</li>
+</ol>
+<p>Read it twice. The first time, only the kid boxes and the project boxes. The second time, the interview boxes. Then rebuild the tiny versions in the practice chapter without looking.</p>
+
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>Seltra is a toy shop that builds other toy shops. The website is a book. Each web address is a page in the book. React is the set of stickers and moving parts on the page. Next.js is the printing press that decides which page to print, and whether the printing happens in the back room or in your hands.</p>
+</div>
+
+<h2>0. The map of this application</h2>
+<p>There are two programs. You are learning the front one.</p>
+<table>
+  <tr><th>Piece</th><th>Where</th><th>Job</th></tr>
+  <tr><td>Frontend</td><td><code>seltra-web/frontend</code></td><td>What people see and click. React + Next.js.</td></tr>
+  <tr><td>Backend</td><td><code>seltra-web/backend</code></td><td>The office that stores users, stores, products, and emails. The browser asks it questions.</td></tr>
+  <tr><td>Database / login</td><td>Supabase</td><td>A rented filing cabinet and a lock on the door.</td></tr>
+</table>
+  <p>The frontend talks to the backend with <code>fetch</code>. A public store page can ask the server to fetch, so the secret server address stays off the browser. A signup form runs in the browser, so it uses a public address.</p>
+  <figure>
+    <svg class="diagram" viewBox="0 0 720 168" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Browser talks to Next.js, which talks to the Nest API and Supabase">
+      <rect width="720" height="168" fill="#fbf8f3"/>
+      <rect x="16" y="48" width="150" height="72" rx="8" fill="#fff" stroke="#1c1915"/>
+      <text x="91" y="78" text-anchor="middle" font-family="Georgia, serif" font-size="14" fill="#1c1915">Browser</text>
+      <text x="91" y="98" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" fill="#5c534b">what you click</text>
+      <rect x="250" y="28" width="190" height="112" rx="8" fill="#fff" stroke="#2f5d50" stroke-width="2"/>
+      <text x="345" y="58" text-anchor="middle" font-family="Georgia, serif" font-size="14" fill="#1c1915">Next.js frontend</text>
+      <text x="345" y="80" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" fill="#5c534b">server pages</text>
+      <text x="345" y="98" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" fill="#5c534b">client components</text>
+      <text x="345" y="116" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" fill="#5c534b">React UI</text>
+      <rect x="524" y="18" width="180" height="58" rx="8" fill="#fff" stroke="#1c1915"/>
+      <text x="614" y="42" text-anchor="middle" font-family="Georgia, serif" font-size="13" fill="#1c1915">Nest API</text>
+      <text x="614" y="60" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" fill="#5c534b">stores, orders, mail</text>
+      <rect x="524" y="92" width="180" height="58" rx="8" fill="#fff" stroke="#1c1915"/>
+      <text x="614" y="116" text-anchor="middle" font-family="Georgia, serif" font-size="13" fill="#1c1915">Supabase</text>
+      <text x="614" y="134" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" fill="#5c534b">login and data</text>
+      <path d="M166 84 H246" stroke="#c4a574" stroke-width="2" marker-end="url(#arr)"/>
+      <path d="M440 70 H520" stroke="#c4a574" stroke-width="2"/>
+      <path d="M440 112 H520" stroke="#c4a574" stroke-width="2"/>
+      <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6 Z" fill="#c4a574"/></marker></defs>
+    </svg>
+    <figcaption>Figure 1. The browser only talks to the Next.js app. That app asks the Nest API and Supabase for the real records.</figcaption>
+  </figure>
+
+<h3>The folders that matter</h3>
+<table>
+  <tr><th>Path</th><th>Meaning</th></tr>
+  <tr><td><code>frontend/app</code></td><td>URLs. A folder is a path. <code>page.tsx</code> is the screen. <code>layout.tsx</code> is the frame around screens.</td></tr>
+  <tr><td><code>frontend/components</code></td><td>Reusable pieces: buttons, header, signup, storefront.</td></tr>
+  <tr><td><code>frontend/context</code></td><td>Shared memory. Today: which store is active.</td></tr>
+  <tr><td><code>frontend/lib</code></td><td>Helpers that are not screens: class names, Supabase, SEO text.</td></tr>
+  <tr><td><code>frontend/hooks</code></td><td>Reusable React behavior, such as toasts.</td></tr>
+  <tr><td><code>frontend/public</code> and assets</td><td>Files the browser can request directly, like logos.</td></tr>
+</table>
+  <p><code>tsconfig.json</code> says <code>"@/*": ["./*"]</code>. That is why imports look like <code>@/components/ui/button</code> instead of <code>../../components/ui/button</code>. The <code>@</code> is the frontend folder.</p>
+  <figure>
+    <svg class="diagram" viewBox="0 0 720 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Root layout wrapping the page">
+      <rect width="720" height="220" fill="#fbf8f3"/>
+      <rect x="210" y="14" width="300" height="36" rx="6" fill="#fff" stroke="#1c1915"/>
+      <text x="360" y="37" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="13" fill="#1c1915">Root layout — stays on screen</text>
+      <rect x="230" y="64" width="260" height="32" rx="6" fill="#fff" stroke="#c4a574"/>
+      <text x="360" y="85" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="13" fill="#1c1915">ThemeProvider</text>
+      <rect x="210" y="110" width="300" height="32" rx="6" fill="#fff" stroke="#2f5d50"/>
+      <text x="360" y="131" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="13" fill="#1c1915">StoreProvider — shared store memory</text>
+      <rect x="40" y="164" width="200" height="40" rx="6" fill="#fff" stroke="#1c1915"/>
+      <text x="140" y="189" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="13" fill="#1c1915">SessionGuard + page</text>
+      <rect x="260" y="164" width="200" height="40" rx="6" fill="#fff" stroke="#1c1915"/>
+      <text x="360" y="189" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="13" fill="#1c1915">Scroll helpers</text>
+      <rect x="480" y="164" width="200" height="40" rx="6" fill="#fff" stroke="#1c1915"/>
+      <text x="580" y="189" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="13" fill="#1c1915">Toaster</text>
+      <path d="M360 50 V64 M360 96 V110 M280 142 V164 M360 142 V164 M440 142 H580 V164" stroke="#c4a574" fill="none"/>
+    </svg>
+    <figcaption>The frame in <code>app/layout.tsx</code>. Only the page inside SessionGuard swaps when the URL changes.</figcaption>
+  </figure>
+
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“Seltra’s UI is a Next.js App Router app. Routes live in <code>app</code>. Interactive UI lives in client components. The root layout wraps every page with theme, store context, and a session guard. Public store pages are async server components that fetch by slug and revalidate every 30 seconds. Forms and the dashboard are client components because they need state and browser APIs.”</p>
+</div>
+
+<h2>1. JavaScript you need before React</h2>
+<p>React is JavaScript with a drawing language. If these six ideas are solid, React stops feeling magical.</p>
+
+<h3>1.1 A function is a machine</h3>
+<pre><code>function greet(name) {
+  return "Hello " + name
+}
+greet("Ama") // "Hello Ama"</code></pre>
+<p>A React component is this kind of machine. You give it inputs. It returns a description of UI.</p>
+
+<h3>1.2 Objects and arrays</h3>
+<pre><code>const store = { name: "De Yogo", slug: "de-yogo" }
+store.name // "De Yogo"
+
+const products = [{ id: "1", price: 49 }, { id: "2", price: 28 }]
+products.map((product) => product.price) // [49, 28]</code></pre>
+<p>You will map arrays into lists of components. You will read fields off store objects. That is most of the dashboard.</p>
+
+<h3>1.3 Copy, do not scribble</h3>
+<pre><code>const next = { ...store, name: "New name" }
+setData((current) => ({ ...current, email: "a@b.com" }))</code></pre>
+<p>The three dots copy the old object and then change one field. React notices a new object. If you change the old object in place, React may not notice.</p>
+<div class="box proj">
+  <div class="label">In this project</div>
+  <p><code>SignupFlow.tsx</code> updates the form like this: <code>setData((current) => ({ ...current, [key]: value }))</code>. That is the correct pattern. The function form of <code>setData</code> means “start from the latest copy,” which matters if two updates happen close together.</p>
+</div>
+
+<h3>1.4 Destructuring and rest</h3>
+<pre><code>const { className, variant, size, asChild = false, ...props } = incoming</code></pre>
+<p>Pull out the fields you care about. <code>...props</code> is “everything else,” passed on to the real button. See <code>components/ui/button.tsx</code>.</p>
+
+<h3>1.5 Async and fetch</h3>
+<pre><code>const res = await fetch(url)
+if (!res.ok) return null
+return res.json()</code></pre>
+<p><code>await</code> means “pause this function until the answer arrives, but do not freeze the whole program.” <code>getStore</code> in <code>app/store/[slug]/page.tsx</code> is exactly this.</p>
+
+<h3>1.6 Modules</h3>
+<p><code>export</code> puts a name on the shelf. <code>import</code> takes it off the shelf. A default export is the main thing in the file. A named export is one of several. <code>page.tsx</code> default-exports the page component and also named-exports <code>metadata</code>.</p>
+
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“React state should be updated immutably. I copy objects with the spread operator and use the functional updater when the next value depends on the previous one. Lists are rendered with <code>map</code>. Server data is loaded with async <code>fetch</code>.”</p>
+</div>
+
+<h2>2. React, from a blank page</h2>
+
+<h3>2.1 A component</h3>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>A component is a cookie cutter. The cutter is the function. Each cookie is what you see on the screen. You can stamp the same cutter many times with different icing.</p>
+</div>
+<figure>
+  <img src="images/fig-components.jpg" alt="One cookie cutter stamps three cookies, each with different icing." />
+  <figcaption>Figure 2. One component function, many copies on the screen. The icing is the props: same cutter, different name or price.</figcaption>
+</figure>
+<pre><code>function Hello({ name }: { name: string }) {
+  return &lt;p&gt;Hello {name}&lt;/p&gt;
+}</code></pre>
+<p>Rules that interviewers listen for:</p>
+<ul>
+  <li>The function name starts with a capital letter. <code>Hello</code> is a component. <code>hello</code> is just a function, and JSX will not treat it as a component.</li>
+  <li>It returns JSX, or <code>null</code>.</li>
+  <li>It must be pure during render: same inputs, same output, no surprises like writing to a database while drawing.</li>
+  <li>Surprises (timers, network, subscriptions) belong in effects or in event handlers, not in the body of render.</li>
+</ul>
+
+<h3>2.2 JSX</h3>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>JSX is a letter to the browser written in a mix of HTML and JavaScript. Curly braces mean “stop writing the letter and do some math.”</p>
+</div>
+<pre><code>const price = 49
+return &lt;p className="price"&gt;GHS {price}&lt;/p&gt;</code></pre>
+<table>
+  <tr><th>HTML habit</th><th>JSX habit</th><th>Why</th></tr>
+  <tr><td><code>class</code></td><td><code>className</code></td><td><code>class</code> is a JavaScript word.</td></tr>
+  <tr><td><code>for</code></td><td><code>htmlFor</code></td><td>Same reason. <code>for</code> is a loop.</td></tr>
+  <tr><td><code>onclick</code></td><td><code>onClick</code></td><td>React events are camelCase.</td></tr>
+  <tr><td>close optional tags</td><td><code>&lt;img /&gt;</code>, <code>&lt;input /&gt;</code></td><td>JSX must be valid XML-ish.</td></tr>
+  <tr><td>many roots sometimes</td><td>one parent, or <code>&lt;&gt;...&lt;/&gt;</code></td><td>A component returns one tree.</td></tr>
+</table>
+<p>This project sets <code>"jsx": "react-jsx"</code> in <code>tsconfig.json</code>. You do not write <code>import React from "react"</code> just to use JSX. The compiler adds the runtime. You still import hooks by name: <code>import { useState } from "react"</code>.</p>
+
+<h3>2.3 Props: stickers on the way in</h3>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>Props are instructions from the parent. The child may read them. The child does not edit them. If the child wants a change, it asks the parent by calling a function the parent handed down.</p>
+</div>
+<pre><code>export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null; donePhoto: string | null }) {
+  // formPhoto and donePhoto are props
+}</code></pre>
+<p>Props are read-only. They can be strings, numbers, objects, arrays, functions, or other components (<code>children</code>).</p>
+<p><code>children</code> is the special prop for whatever you put between the opening and closing tags.</p>
+<pre><code>function Card({ children }: { children: React.ReactNode }) {
+  return &lt;section className="card"&gt;{children}&lt;/section&gt;
+}
+// &lt;Card&gt;&lt;p&gt;Hi&lt;/p&gt;&lt;/Card&gt;</code></pre>
+<div class="box proj">
+  <div class="label">In this project</div>
+  <p><code>RootLayout</code> receives <code>children</code> and wraps them in theme, store, and session providers. <code>SessionGuard</code> receives <code>children</code> and returns them after setting up logout timers. <code>StoreProvider</code> does the same. This is composition: frames wrap pictures without the picture knowing about the frame.</p>
+</div>
+
+<h3>2.4 One-way data flow</h3>
+  <p>Data moves down through props. Events move up through callback props. There is no secret tunnel where a child mutates a parent’s variable.</p>
+  <figure>
+    <img src="images/fig-data-flow.jpg" alt="A parent treehouse sends a paper airplane down to two children, and one child sends a message back up." />
+    <figcaption>Figure 3. Props travel down. A click travels back up as a function call. The child never edits the parent’s notebook.</figcaption>
+  </figure>
+<pre><code>function Parent() {
+  const [open, setOpen] = useState(false)
+  return &lt;Child open={open} onClose={() =&gt; setOpen(false)} /&gt;
+}</code></pre>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“React data flow is unidirectional. Parents pass state down as props. Children request changes through callbacks. That makes the UI predictable: I can find who owns a value by walking up the tree. When many distant children need the same value, I lift it into context instead of threading props through components that do not care.”</p>
+</div>
+
+<h3>2.5 State: the component’s notebook</h3>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>Props are what you were given. State is what you remember. When the notebook changes, React redraws that component.</p>
+</div>
+<pre><code>const [step, setStep] = useState(0)
+const [loading, setLoading] = useState(false)</code></pre>
+<p>Calling <code>setStep(1)</code> does two things: it stores <code>1</code>, and it schedules a new render. You do not push pixels yourself.</p>
+<p>Important rules:</p>
+<ul>
+  <li>State updates are asynchronous. Right after <code>setStep(1)</code>, <code>step</code> is still the old number until the next render.</li>
+  <li>If the new value depends on the old one, use <code>setStep((current) => current + 1)</code>.</li>
+  <li>Do not store what you can calculate. Seltra’s form errors are calculated with <code>useMemo</code>, not stored as a second copy of the truth.</li>
+  <li>Many <code>useState</code> calls are fine when the fields are independent. If many fields always change together through named actions, <code>useReducer</code> is clearer.</li>
+</ul>
+<div class="box proj">
+  <div class="label">In this project</div>
+  <p><code>SiteHeader.tsx</code> keeps <code>open</code>, <code>scrolled</code>, and <code>authOpen</code> in state. Those are real memories: menu open or closed, whether the user has scrolled, whether the login modal is showing. <code>SignupFlow</code> keeps the wizard step and the form fields. The error object is derived from those fields, which is the right split.</p>
+</div>
+
+<h3>2.6 Rendering, in one paragraph you can repeat</h3>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“Render means calling the component function to get a React element tree. React compares that tree to the previous one and updates the DOM where they differ. A state or prop change schedules a render of that component and its children. Render itself should be pure. Side effects go in event handlers or <code>useEffect</code>. I never change state during render unless it is the narrow pattern React documents for adjusting state when a prop changes, and even then I prefer deriving the value.”</p>
+</div>
+<p>People say “virtual DOM.” The accurate version: React keeps a description of the UI in memory, diffs it, and patches the real DOM. You do not need to claim React is fast because of a virtual DOM. You say React skips DOM writes when the description did not change, and it uses keys so lists can be matched correctly.</p>
+
+<h3>2.7 Lists and keys</h3>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>If you have three toy cars in a row and you remove the middle one, name tags stop you from repainting the wrong car. The key is the name tag.</p>
+</div>
+<figure>
+  <img src="images/fig-keys.jpg" alt="Three toy cars, each with a luggage tag, the middle one being lifted." />
+  <figcaption>Figure 4. The key is the name tag. React uses it to keep the right state on the right row when the list changes.</figcaption>
+</figure>
+<pre><code>{products.map((product) => (
+  &lt;li key={product.id}&gt;{product.name}&lt;/li&gt;
+))}</code></pre>
+<ul>
+  <li>Keys must be stable and unique among siblings.</li>
+  <li>Use an id from the data. Do not use the array index if the list can be reordered, filtered, or inserted into.</li>
+  <li>Index keys make input state stick to the wrong row after a reorder. That is the classic interview bug.</li>
+  <li>Keys are not props. The child does not receive <code>key</code> unless you also pass it under another name.</li>
+</ul>
+
+<h3>2.8 Conditional UI</h3>
+<pre><code>{loading ? &lt;Spinner /&gt; : &lt;button onClick={submit}&gt;Submit&lt;/button&gt;}
+{error ? &lt;p&gt;{error}&lt;/p&gt; : null}
+{done && &lt;Success /&gt;}</code></pre>
+<p><code>done && &lt;Success /&gt;</code> is fine when <code>done</code> is a real boolean. If the value can be <code>0</code> or <code>""</code>, React will print that value. Prefer a ternary when you are not sure.</p>
+
+<h3>2.9 Events</h3>
+<pre><code>&lt;button type="button" onClick={goNext}&gt;Next&lt;/button&gt;
+&lt;input value={email} onChange={(event) => setEmail(event.target.value)} /&gt;</code></pre>
+<p>Pass the function. Do not call it. <code>onClick={goNext}</code> waits for the click. <code>onClick={goNext()}</code> runs during render. If you need an argument, wrap it: <code>onClick={() => remove(id)}</code>.</p>
+<p>In forms, <code>onSubmit</code> on the <code>&lt;form&gt;</code> and <code>event.preventDefault()</code> stop the browser from doing a full page reload.</p>
+
+<h3>2.10 Controlled inputs</h3>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>A controlled input is a puppet. React holds the string. The input only displays it. Every keystroke tells React the new string, and React writes it back.</p>
+</div>
+<p>An uncontrolled input keeps the string inside the DOM. You read it later with a ref. Controlled is what Seltra’s signup and auth forms do, because validation needs the value on every change.</p>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“A controlled input’s value lives in React state. The DOM is a view of that state. I use it when I need to validate, disable a button, or format as the user types. An uncontrolled input is fine for a throwaway field I only read on submit. I do not switch a component from uncontrolled to controlled by starting with <code>value={undefined}</code> and later passing a string.”</p>
+</div>
+
+<h2>3. Hooks, the ones this app actually uses</h2>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>Hooks are special tools you may only use at the top of a component, in the same order every time. You do not put them inside <code>if</code>, loops, or nested functions. React recognizes each hook by its place in line, not by its variable name.</p>
+</div>
+<div class="box trap">
+  <div class="label">Trap</div>
+  <p>If the first render calls three hooks and the second render calls two, React pairs them wrong and state leaks between variables. That is why the rules of hooks exist. Interviewers love this question. Answer: hooks are stored in a list by call order, so the order must be stable.</p>
+</div>
+
+<h3>3.1 useState</h3>
+<p>Covered above. Lazy initial state matters in this repo:</p>
+<pre><code>const [store, setStoreState] = useState&lt;StoreData | null&gt;(() => read())</code></pre>
+<p><code>useState(read())</code> would call <code>read()</code> on every render and throw away the result. <code>useState(() => read())</code> calls it once. <code>read()</code> also checks <code>typeof window === "undefined"</code> because the server has no <code>localStorage</code>.</p>
+
+<h3>3.2 useEffect</h3>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>Render is drawing the picture. An effect is what you do after the picture is on the wall: start a timer, listen for scrolling, subscribe to login changes. The function you return is cleaning up before you draw again or leave the room.</p>
+</div>
+<pre><code>useEffect(() => {
+  const onScroll = () => setScrolled(window.scrollY &gt; 8)
+  window.addEventListener("scroll", onScroll, { passive: true })
+  return () => window.removeEventListener("scroll", onScroll)
+}, [])</code></pre>
+<p>The dependency array is the list of values the effect reads from React.</p>
+<ul>
+  <li><code>[]</code> means “after the first paint on the client, and clean up when the component unmounts.”</li>
+  <li><code>[pathname, router]</code> means “also re-run when the path changes.”</li>
+  <li>Missing a dependency is a stale closure: the effect keeps seeing an old <code>pathname</code>.</li>
+  <li>Putting an object you create during render into the array re-runs the effect every time, because it is a new object every render.</li>
+</ul>
+<div class="box proj">
+  <div class="label">In this project</div>
+  <p><code>SessionGuard.tsx</code> is the textbook effect. On mount and whenever <code>pathname</code> changes, it subscribes to Supabase auth, schedules an idle logout, and listens for activity, storage, and a custom <code>seltra:auth-expired</code> event. The cleanup clears the timer, unsubscribes, and removes listeners. If that cleanup were missing, every navigation would stack another set of listeners.</p>
+</div>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“I use <code>useEffect</code> to synchronize with something outside React: the DOM, timers, subscriptions, browser storage events. I return a cleanup. I do not use an effect to compute values I could derive during render, and I do not use an effect to fetch when a server component or a data library can own that request. Event handlers are better than effects for work caused by a click.”</p>
+</div>
+<div class="box trap">
+  <div class="label">Trap</div>
+  <p>Fetching in <code>useEffect</code> causes a loading flash and a second request after hydration. In the App Router, if the page can be a server component, fetch there. The store page does this. The dashboard cannot, because it is a large client island, so client fetches are a real tradeoff, not a mistake to deny. Say the tradeoff out loud.</p>
+</div>
+
+<h3>3.3 useRef</h3>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>A ref is a box that does not cause a redraw when you change what is inside. You use it to point at a real DOM node, or to remember a value between renders without showing a new picture.</p>
+</div>
+<p><code>AuthFlowModal.tsx</code> holds <code>frameRef</code> and <code>panelRef</code> so it can measure the modal and scale it. Changing a ref does not re-render. If the screen must update, use state.</p>
+<p>Interview line: “State is for values the UI shows. Refs are for values the UI does not show, or for DOM nodes.”</p>
+
+<h3>3.4 useMemo</h3>
+<pre><code>const value = useMemo(() => ({ activeStore: store, setActiveStore }), [store])
+const errors = useMemo(() => { /* derive errors */ }, [step, data, region, country, city])</code></pre>
+<p><code>useMemo</code> caches a calculation until its dependencies change. It is an optimization, not a correctness tool, except when you need a stable identity.</p>
+<p>Two different uses in this repo:</p>
+<ul>
+  <li><strong>StoreContext:</strong> the context value object must stay the same reference if <code>store</code> did not change. Otherwise every context consumer re-renders when the provider’s parent re-renders.</li>
+  <li><strong>SignupFlow errors:</strong> this is derived data. <code>useMemo</code> avoids rebuilding the error map. It would also be correct to compute it during render without <code>useMemo</code>. Computing during render is simpler until you measure a cost.</li>
+</ul>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“I memoize a context value so consumers do not re-render when the provider re-renders for unrelated reasons. I do not wrap every calculation in <code>useMemo</code>. Derived data can live in the render body. I reach for <code>useMemo</code> when the calculation is expensive or when referential equality matters.”</p>
+</div>
+
+<h3>3.5 useCallback</h3>
+<p><code>useCallback(fn, deps)</code> is <code>useMemo</code> for functions. It matters when a child is wrapped in <code>React.memo</code> and you pass the function as a prop, or when a function sits in an effect dependency array. Creating a function is cheap. Stabilizing it is for broken memoization chains, not for style.</p>
+
+<h3>3.6 useContext and the provider pattern</h3>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>Prop drilling is whispering a secret through every room. Context is pinning the secret on the hallway board. Anyone in the house can read the board. Rooms that do not care never hear the whisper.</p>
+</div>
+<p>The whole pattern in <code>context/StoreContext.tsx</code> is small enough to rebuild from memory:</p>
+<ol>
+  <li><code>createContext</code> makes the board. The default is <code>undefined</code> so a missing provider is obvious.</li>
+  <li><code>StoreProvider</code> holds the state and renders <code>&lt;StoreContext.Provider value={value}&gt;</code>.</li>
+  <li><code>useStore</code> calls <code>useContext</code> and throws if there is no provider. That turns a silent bug into a loud one.</li>
+  <li>The provider writes through to <code>localStorage</code> under <code>seltra:active_store</code> so a refresh remembers the store.</li>
+</ol>
+<p>The dashboard imports <code>useStore()</code>. It does not receive the store through twenty layers of props.</p>
+<div class="box trap">
+  <div class="label">Trap</div>
+  <p>Context is not a high-frequency store. Every consumer of that context re-renders when the value changes. A chatty value (mouse position, every keystroke of a giant tree) will hurt. For that, you split contexts, or use an external store. For “which store is open,” context is the right tool.</p>
+</div>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“I lift state to the closest common parent. If that parent is far away and many layers would only forward the prop, I use context. I always ship a custom hook that throws outside the provider. I memoize the value. I do not put the entire app state in one context, because any change re-renders every subscriber.”</p>
+</div>
+
+<h3>3.7 Custom hooks</h3>
+<p>A custom hook is a function whose name starts with <code>use</code> and which may call other hooks. It exists to share behavior, not UI. <code>useStore</code> is one. You could extract <code>useIdleLogout</code> from <code>SessionGuard</code> the same way. The rules of hooks apply inside it, and it must be called from a component or another hook.</p>
+
+<h2>4. How React decides what changed</h2>
+<h3>4.1 Reconciliation</h3>
+<p>When a parent re-renders, React walks the new element tree and the old one.</p>
+<ul>
+  <li>Same component type in the same position: update props, keep state.</li>
+  <li>Different type in that position: unmount the old tree, mount the new one, state is destroyed.</li>
+  <li>Lists: match by key, not by position.</li>
+</ul>
+<p>Practical trick: changing a component’s <code>key</code> resets its state. <code>authSession</code> in the header is incremented so the auth modal can remount clean. If you see <code>key={authSession}</code> on a modal, that is an intentional reset, not a list key.</p>
+
+<h3>4.2 Batching</h3>
+<p>Several <code>setState</code> calls in one event handler become one render. You will not see a half-updated form between them. This has been true for timeouts and promises as well since React 18.</p>
+
+<h3>4.3 Strictness about children</h3>
+<p>Do not put hooks after an early <code>return</code> that sometimes runs. Do not create components inside components.</p>
+<pre><code>function Page() {
+  function Child() { const [n, setN] = useState(0); return &lt;button onClick={() =&gt; setN(n + 1)}&gt;{n}&lt;/button&gt; }
+  return &lt;Child /&gt;
+}</code></pre>
+<p>That inner <code>Child</code> is a new function every render, so React sees a new component type and resets state. Define <code>Child</code> outside, or make it a plain render helper that is not used as <code>&lt;Child /&gt;</code>.</p>
+
+<h3>4.4 forwardRef, displayName, and composition</h3>
+<p><code>components/ui/button.tsx</code> is an interview favorite because it is small and dense.</p>
+<pre><code>const Button = React.forwardRef&lt;HTMLButtonElement, ButtonProps&gt;(
+  ({ className, variant, size, asChild = false, ...props }, ref) =&gt; {
+    const Comp = asChild ? Slot : "button"
+    return &lt;Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} /&gt;
+  },
+)</code></pre>
+<ul>
+  <li><code>forwardRef</code> lets a parent point a ref at the real DOM button inside.</li>
+  <li><code>VariantProps</code> comes from <code>class-variance-authority</code>. <code>variant</code> and <code>size</code> pick Tailwind class strings. The component does not use a pile of if statements for styles.</li>
+  <li><code>asChild</code> uses Radix <code>Slot</code>, which merges the button’s props onto the child element. <code>&lt;Button asChild&gt;&lt;Link href="/auth"&gt;Log in&lt;/Link&gt;&lt;/Button&gt;</code> renders one link, not a button wrapped around a link. Nested interactive elements are an accessibility bug.</li>
+  <li><code>...props</code> forwards <code>onClick</code>, <code>disabled</code>, <code>type</code>, and <code>aria-*</code>.</li>
+</ul>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“Our button is a styled primitive. Variants are data, not branches. <code>asChild</code> is composition: the button look can sit on a link without invalid HTML. Refs are forwarded so parents and libraries can focus the node. Class names go through <code>cn</code>, which is <code>clsx</code> plus <code>tailwind-merge</code>, so later Tailwind classes override earlier ones instead of both applying and fighting.”</p>
+</div>
+
+<h2>5. Next.js: the printing press</h2>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>React knows how to draw a component. It does not know that <code>/</code> is the homepage and <code>/store/de-yogo</code> is a shop. Next.js looks at the <code>app</code> folder and builds that map for you. It can also draw the first picture in the back room, so the visitor receives HTML immediately, which is good for speed and for Google.</p>
+</div>
+<figure>
+  <img src="images/fig-routing.jpg" alt="Open folders, each releasing a simple webpage card." />
+  <figcaption>Figure 5. A folder in <code>app</code> is a piece of the URL. The <code>page.tsx</code> inside it is the screen that comes out.</figcaption>
+</figure>
+<figure>
+  <img src="images/fig-server-client.jpg" alt="A kitchen plating food on the left, and a child moving a toy at the table on the right." />
+  <figcaption>Figure 6. The kitchen is the server: it can prepare the page. The table is the browser: clicks and typing happen there.</figcaption>
+</figure>
+
+<h3>5.1 App Router file conventions</h3>
+<table>
+  <tr><th>File</th><th>Job in Seltra</th></tr>
+  <tr><td><code>app/layout.tsx</code></td><td>Root frame: fonts, theme, providers, toaster. Wraps every page.</td></tr>
+  <tr><td><code>app/page.tsx</code></td><td>The <code>/</code> route. Exports metadata and renders <code>HomePage</code>.</td></tr>
+  <tr><td><code>app/features/page.tsx</code></td><td>The <code>/features</code> route. A folder name is a URL segment.</td></tr>
+  <tr><td><code>app/store/[slug]/page.tsx</code></td><td><code>/store/anything</code>. <code>anything</code> arrives as <code>slug</code>.</td></tr>
+  <tr><td><code>app/store/[slug]/order/[status]/page.tsx</code></td><td>Two dynamic segments.</td></tr>
+  <tr><td><code>app/(dashboard)/dashboard/page.tsx</code></td><td>URL is <code>/dashboard</code>. The parentheses are a route group, not a segment.</td></tr>
+  <tr><td><code>app/(dashboard)/layout.tsx</code></td><td>A layout only for routes inside that group. This one sets no-index metadata.</td></tr>
+  <tr><td><code>app/not-found.tsx</code></td><td>The 404 screen.</td></tr>
+  <tr><td><code>app/api/health/route.ts</code></td><td>A server endpoint, not a page. <code>GET</code> returns JSON.</td></tr>
+  <tr><td><code>app/sitemap.ts</code>, <code>robots.ts</code>, <code>manifest.ts</code></td><td>SEO and PWA metadata generated by code.</td></tr>
+</table>
+<p>There is no separate router table. The file tree is the router. Interviewers call this file-system routing.</p>
+
+<h3>5.2 Layouts do not remount on navigation</h3>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>The picture frame stays on the wall. Only the photo inside changes. That is why the theme and the session guard survive when you go from <code>/</code> to <code>/features</code>.</p>
+</div>
+<p>Layouts wrap child layouts and pages. The root layout must include <code>&lt;html&gt;</code> and <code>&lt;body&gt;</code>. Nested layouts must not.</p>
+<p>A navigation with <code>&lt;Link&gt;</code> from <code>next/link</code> swaps the page without a full browser reload. A plain <code>&lt;a href&gt;</code> reloads everything. Use <code>Link</code> for your own pages.</p>
+
+<h3>5.3 Server Components and Client Components</h3>
+<p>This is the question that separates people who have used Next.js from people who have read the docs once.</p>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>Some pieces are built in the kitchen and only the finished plate is carried out. Those are Server Components. They can read secrets and talk to the database, and their JavaScript is not shipped to the phone. Other pieces must still wiggle on the table: buttons, typing, animations. Those are Client Components. The <code>'use client'</code> line is a sticker that says “send this file to the browser.”</p>
+</div>
+<table>
+  <tr><th></th><th>Server Component</th><th>Client Component</th></tr>
+  <tr><td>Default in <code>app/</code></td><td>Yes</td><td>Only with <code>'use client'</code> at the top</td></tr>
+  <tr><td>Can be <code>async</code> and <code>await fetch</code></td><td>Yes</td><td>No. Fetch inside effects or event handlers.</td></tr>
+  <tr><td><code>useState</code>, <code>useEffect</code>, browser APIs</td><td>No</td><td>Yes</td></tr>
+  <tr><td>Reads secret env vars</td><td>Yes</td><td>Only <code>NEXT_PUBLIC_</code> variables, which are public</td></tr>
+  <tr><td>Exports <code>metadata</code></td><td>Yes</td><td>No</td></tr>
+</table>
+<div class="box proj">
+  <div class="label">In this project</div>
+  <p><code>app/page.tsx</code> has no <code>'use client'</code>. It exports <code>metadata</code> and renders <code>&lt;HomePage /&gt;</code>. That file is a Server Component. <code>components/marketing/HomePage.tsx</code> begins with <code>'use client'</code> because the homepage tracks input, scrolling, and refs. The server page is a thin shell. The interactive island is the client child.</p>
+  <p><code>app/store/[slug]/page.tsx</code> is an async Server Component. It awaits the store, then passes plain data into <code>StorefrontCanvas</code>. Data passed from server to client must be serializable: objects, arrays, strings, numbers. You cannot pass functions, class instances, or dates you expect to stay as <code>Date</code> objects without converting them.</p>
+  <p><code>app/(dashboard)/dashboard/page.tsx</code> is <code>'use client'</code> from the first line. The whole dashboard is a client island. That is why it reads <code>NEXT_PUBLIC_API_BASE_URL</code> and <code>localStorage</code>.</p>
+</div>
+<figure>
+  <svg class="diagram" viewBox="0 0 720 150" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Server page wrapping a client homepage">
+    <rect width="720" height="150" fill="#fbf8f3"/>
+    <rect x="40" y="24" width="300" height="102" rx="8" fill="#fff" stroke="#2f5d50" stroke-width="2"/>
+    <text x="190" y="52" text-anchor="middle" font-family="Georgia, serif" font-size="14" fill="#1c1915">app/page.tsx</text>
+    <text x="190" y="72" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="12" fill="#2f5d50">Server Component</text>
+    <text x="190" y="96" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" fill="#5c534b">exports metadata</text>
+    <text x="190" y="112" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="11" fill="#5c534b">renders HomePage</text>
+    <rect x="400" y="36" width="280" height="78" rx="8" fill="#fff" stroke="#c4a574" stroke-width="2"/>
+    <text x="540" y="66" text-anchor="middle" font-family="Georgia, serif" font-size="14" fill="#1c1915">HomePage.tsx</text>
+    <text x="540" y="88" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="12" fill="#8a6840">'use client'</text>
+    <path d="M340 75 H396" stroke="#1c1915" stroke-width="1.5"/>
+  </svg>
+  <figcaption>Figure 8. The URL stays a server page. The interactive homepage is a client island inside it.</figcaption>
+</figure>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“In the App Router, components are Server Components unless a file has <code>'use client'</code>. That directive marks a client boundary: the file and the modules it imports are included in the browser bundle. I keep pages on the server when they mostly fetch and render, and I push <code>'use client'</code> down to the smallest interactive leaf. The homepage does this. The dashboard does not, because almost all of it is interactive, and I would name that as a splitting opportunity.”</p>
+</div>
+<div class="box trap">
+  <div class="label">Trap</div>
+  <p><code>'use client'</code> does not mean “this runs only in the browser.” Client components are still pre-rendered to HTML on the server, then hydrated in the browser. They cannot use <code>useState</code> during a server-only thinking step, but their first render must succeed on the server. That is why touching <code>window</code> in the render body crashes, and why <code>StoreContext</code> guards <code>localStorage</code> with <code>typeof window</code>.</p>
+</div>
+
+<h3>5.4 Hydration</h3>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>The server sends a paper picture. Hydration is the moment the picture becomes a toy you can touch. React walks the paper and attaches the click handlers. If the paper does not match the toy’s first pose, React complains.</p>
+</div>
+<p>The root layout sets <code>suppressHydrationWarning</code> on <code>&lt;html&gt;</code> and <code>&lt;body&gt;</code>. <code>next-themes</code> adds a class such as <code>dark</code> from <code>localStorage</code>. The server cannot see that storage, so the class can differ for one moment. The attribute tells React to ignore that known mismatch on those two tags. It is not a way to hide real bugs deeper in the tree.</p>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“Hydration mismatches happen when the server HTML and the client’s first render disagree. Common causes are <code>Date.now()</code>, <code>Math.random()</code>, locale formatting, and reading browser-only storage during render. I keep the first render deterministic. For theme, I accept a suppressed warning on the html element because the theme class is applied by a client library after it reads storage.”</p>
+</div>
+
+<h3>5.5 Dynamic routes and async params</h3>
+<pre><code>type StoreRouteProps = { params: Promise&lt;{ slug: string }&gt; }
+
+export default async function StorefrontPage({ params }: StoreRouteProps) {
+  const { slug } = await params
+  const store = (await getStore(slug)) ?? fallback(slug)
+  // ...
+}</code></pre>
+<p>In Next.js 15 and in this Next.js 16 app, <code>params</code> is a Promise. You await it. Older tutorials show <code>props.params.slug</code> as a plain object. If you write that here, it will not work. Say the version when you answer.</p>
+<p><code>generateMetadata</code> on the same page awaits the same params, fetches the store, and builds the title, description, Open Graph image, and canonical URL from real store data. That is how a shared link to a shop shows the shop’s name instead of a generic “Seltra” title.</p>
+
+<h3>5.6 Data fetching and revalidation</h3>
+<pre><code>const res = await fetch(`${API_BASE}/api/v1/seltra/store/${encodeURIComponent(slug)}`, {
+  next: { revalidate: 30 },
+})</code></pre>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>The first visitor asks the kitchen for the menu. Next.js photocopies the menu for 30 seconds and hands out the photocopy. After 30 seconds the next visitor gets a fresh menu, and the photocopy is replaced. Shoppers in those 30 seconds all see the same fast copy.</p>
+</div>
+<p>Names interviewers use:</p>
+<ul>
+  <li><strong>SSR:</strong> render on the server for that request. In the App Router this is dynamic rendering.</li>
+  <li><strong>SSG:</strong> render at build time and reuse forever, until you rebuild.</li>
+  <li><strong>ISR:</strong> incremental static regeneration. Serve a cached page, refresh it in the background on an interval. <code>revalidate: 30</code> is that interval in seconds.</li>
+  <li><strong>Client fetch:</strong> the browser asks after the page is already showing. The dashboard does a lot of this.</li>
+</ul>
+<p><code>encodeURIComponent(slug)</code> makes a slug safe to put in a URL. <code>getStore</code> returns <code>null</code> on failure, and the page substitutes <code>fallback(slug)</code> demo products. That is a product choice: the page still renders. In an interview, say you would not show fake products on a real customer store without a clear “preview” label, because it can look like a successful load of the wrong catalog.</p>
+<p><code>API_BASE</code> here is <code>process.env.API_BASE_URL</code>. It is not prefixed with <code>NEXT_PUBLIC_</code>. It is only read in a Server Component, so it is not bundled to the browser. Compare with signup:</p>
+<pre><code>const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001"</code></pre>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“<code>NEXT_PUBLIC_</code> variables are inlined into client JavaScript and are public. Anything secret — service keys, private API hosts you do not want exposed — stays unprefixed and is read only on the server. I treat the public anon key as public by design, and I rely on database rules for real protection. I never put a service-role key in a <code>NEXT_PUBLIC_</code> variable.”</p>
+</div>
+
+<h3>5.7 Suspense and loading</h3>
+<p>The store page wraps <code>StorefrontCanvas</code> in <code>&lt;Suspense fallback={&lt;Skeleton /&gt;}&gt;</code>. Suspense shows the fallback only if a child actually suspends: a lazy component, or a component that throws a promise while it loads. The <code>fetch</code> in this page is already awaited before that JSX runs, so the skeleton is not the loading state for <code>getStore</code>. The visitor waits on the server response, then receives HTML.</p>
+<p>The idiomatic Next.js tool for that wait is <code>loading.tsx</code> beside <code>page.tsx</code>. Next wraps the page in Suspense for you and shows <code>loading.tsx</code> immediately while the async page resolves. There is a <code>not-found.tsx</code>. A matching <code>loading.tsx</code> and <code>error.tsx</code> would be the next files to add.</p>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“<code>loading.tsx</code> is a route-level Suspense boundary. <code>error.tsx</code> is an error boundary for that segment and must be a client component. <code>not-found.tsx</code> renders when we call <code>notFound()</code> or when no route matches. Suspense in the tree is for nested waits. Awaiting fetch in the page and also wrapping a non-suspending child does not create a loading state by itself.”</p>
+</div>
+
+<h3>5.8 Route handlers</h3>
+<pre><code>export function GET() {
+  return NextResponse.json({ ok: true, service: "seltra-web", time: new Date().toISOString() })
+}</code></pre>
+<p><code>app/api/health/route.ts</code> is a backend endpoint inside the Next server. Export functions named <code>GET</code>, <code>POST</code>, and so on. This one is a heartbeat. The real business API still lives in the Nest backend. Next route handlers are the right place for BFF-style glue: hide a secret, shape a response, set a cookie. They are not automatically better than calling the backend from a Server Component.</p>
+
+<h3>5.9 Navigation hooks</h3>
+<p>Import from <code>next/navigation</code>, not <code>next/router</code>. The second one is the old Pages Router.</p>
+<ul>
+  <li><code>useRouter()</code> in <code>SessionGuard</code> calls <code>router.replace(...)</code> so a logout does not leave <code>/dashboard</code> in the back button as a page you can return to.</li>
+  <li><code>usePathname()</code> tells the guard the current path so <code>/auth</code> does not redirect to itself.</li>
+  <li><code>redirect()</code> from <code>next/navigation</code> is for Server Components. It throws, by design, so Next can catch it. Do not catch it and ignore it.</li>
+</ul>
+
+<h3>5.10 Metadata, fonts, images, redirects</h3>
+<p><strong>Metadata.</strong> The root layout exports a <code>metadata</code> object: title template <code>"%s | Seltra"</code>, description, Open Graph, Twitter, icons, robots. Child pages export their own <code>metadata</code> or <code>generateMetadata</code>. The dashboard group spreads <code>noIndex</code> so private screens ask Google not to index them.</p>
+<p><strong>Fonts.</strong> <code>next/font/google</code> downloads Fraunces and Poppins at build time and exposes them as CSS variables on <code>&lt;html&gt;</code>. Geist is loaded from the <code>geist</code> package the same way. Self-hosting avoids a flash of invisible text and a third-party request during page view.</p>
+<p><strong>Images.</strong> <code>next.config.ts</code> lists <code>images.remotePatterns</code>. <code>next/image</code> refuses remote hosts that are not listed. That limits abuse of the image optimizer as an open proxy. <code>dangerouslyAllowSVG</code> is on; in an interview you mention SVG can carry script if the source is not trusted, so this should stay paired with hosts you control.</p>
+<p><strong>Redirects.</strong> <code>/store</code> redirects to <code>/dashboard</code> with <code>permanent: false</code>, a temporary redirect. Permanent redirects are cached hard by browsers. Use them only when the move is forever.</p>
+<p><strong>Script.</strong> The layout uses <code>next/script</code> for JSON-LD structured data so search engines can read organization and website facts. <code>dangerouslySetInnerHTML</code> is acceptable here because the JSON is produced by <code>JSON.stringify</code> from your own constants, not from a stranger’s HTML.</p>
+
+<h3>5.11 The request, end to end</h3>
+  <figure>
+    <svg class="diagram" viewBox="0 0 720 210" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Request flow for a store URL">
+      <rect width="720" height="210" fill="#fbf8f3"/>
+      <g font-family="Segoe UI, sans-serif" font-size="12" fill="#1c1915">
+        <rect x="16" y="16" width="160" height="44" rx="6" fill="#fff" stroke="#1c1915"/><text x="96" y="43" text-anchor="middle">/store/de-yogo</text>
+        <rect x="200" y="16" width="160" height="44" rx="6" fill="#fff" stroke="#1c1915"/><text x="280" y="36" text-anchor="middle">Match [slug]</text><text x="280" y="52" text-anchor="middle" font-size="11" fill="#5c534b">slug = de-yogo</text>
+        <rect x="384" y="16" width="150" height="44" rx="6" fill="#fff" stroke="#2f5d50"/><text x="459" y="36" text-anchor="middle">Fetch store</text><text x="459" y="52" text-anchor="middle" font-size="11" fill="#5c534b">revalidate 30s</text>
+        <rect x="554" y="16" width="150" height="44" rx="6" fill="#fff" stroke="#1c1915"/><text x="629" y="36" text-anchor="middle">Metadata</text><text x="629" y="52" text-anchor="middle" font-size="11" fill="#5c534b">title and share card</text>
+        <rect x="120" y="110" width="200" height="44" rx="6" fill="#fff" stroke="#c4a574"/><text x="220" y="130" text-anchor="middle">Pick theme</text><text x="220" y="146" text-anchor="middle" font-size="11" fill="#5c534b">luxury, bold, editorial</text>
+        <rect x="360" y="110" width="240" height="44" rx="6" fill="#fff" stroke="#2f5d50"/><text x="480" y="130" text-anchor="middle">StorefrontCanvas</text><text x="480" y="146" text-anchor="middle" font-size="11" fill="#5c534b">plain data, then hydrate</text>
+        <path d="M176 38 H200 M360 38 H384 M534 38 H554 M459 60 V88 H220 V110 M320 132 H360" stroke="#c4a574" fill="none"/>
+      </g>
+    </svg>
+    <figcaption>Figure 9. One visit to a public shop. The server fetches, picks a theme, and sends HTML. The browser hydrates the parts that can be clicked.</figcaption>
+  </figure>
+  <p>Someone opens <code>/store/de-yogo</code>.</p>
+<ol>
+  <li>Next matches <code>app/store/[slug]/page.tsx</code>. <code>slug</code> is <code>de-yogo</code>.</li>
+  <li>The root layout renders the frame: fonts, theme provider, store provider, session guard.</li>
+  <li><code>generateMetadata</code> fetches the store and sets the tab title and social cards.</li>
+  <li>The page function fetches again (Next can dedupe identical fetches in one render pass) with a 30-second revalidate.</li>
+  <li>If the API fails, a fallback object is built from the slug so the screen is not blank.</li>
+  <li>Theme key is chosen from brand personality and layout variant: luxury, bold-dark, editorial, or minimal-light.</li>
+  <li>Plain store data is passed into the canvas, which is the visible shop.</li>
+  <li>The browser hydrates client components inside that tree so buttons work.</li>
+</ol>
+<p>Someone opens <code>/dashboard</code> while logged out.</p>
+<ol>
+  <li>The group layout applies no-index metadata. The page is a client component.</li>
+  <li><code>SessionGuard</code>’s effect sees there is no token and returns early on paths that are not protected inside the effect itself. Read that file carefully before you claim every route is guarded: the effect returns immediately when there is no token, and it skips work on <code>/auth</code>. Protection is “if a token exists, watch it and log it out.” A page that assumes a user is present must still check the token itself and redirect. Know this limitation. It is a strong interview observation.</li>
+</ol>
+
+<h2>6. Forms, validation, and trust</h2>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>The form is a clipboard. React holds the answers. Before you send the clipboard to the office, you check the handwriting. You check it again in the office, because anyone can skip your website and send a messy clipboard directly.</p>
+</div>
+<p><code>SignupFlow.tsx</code> is the form lesson.</p>
+<ul>
+  <li>A Zod schema names every field, its type, and its limits. <code>z.infer&lt;typeof schema&gt;</code> creates the TypeScript type from the schema so the two cannot drift.</li>
+  <li>UI errors for the current step are derived in <code>useMemo</code>.</li>
+  <li><code>attempted</code> controls whether required-field errors show. Format errors, like a bad email, can show earlier so the user is not punished for still typing.</li>
+  <li><code>goNext</code> refuses to advance when <code>errors</code> is not empty, and sets <code>attempted</code> so the messages appear.</li>
+  <li><code>submit</code> runs <code>schema.safeParse</code>. On failure it toasts the first issue. On success it posts JSON to the backend.</li>
+  <li>A toast is a small message that does not navigate away. The project uses Sonner.</li>
+</ul>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“Client validation is for fast feedback. Server validation is for truth, because the client can be modified. I like a single schema shared by both sides when the stack allows it. Zod’s <code>safeParse</code> returns a result instead of throwing, which is easier to turn into field errors. I keep derived errors out of state.”</p>
+</div>
+<p>The project also depends on <code>react-hook-form</code> and <code>@hookform/resolvers</code>. That library is the industrial version of what <code>SignupFlow</code> does by hand: it tracks fields, touched state, and validation without re-rendering the whole tree on every keystroke. If an interviewer asks “why not hand-roll,” a fair answer is: hand-rolled is clear for a short wizard; React Hook Form pays off when there are many fields, third-party inputs, and you want uncontrolled registration for performance.</p>
+
+<h2>7. Auth, in plain language</h2>
+<div class="box kid">
+  <div class="label">Like you are five</div>
+  <p>A token is a stamped ticket. The browser keeps the ticket. Every request to the office shows the ticket. If the ticket is old, or the person has been quiet for an hour, the guard takes the ticket and walks them back to the login door.</p>
+</div>
+<figure>
+  <img src="images/fig-auth.jpg" alt="A door guard holds a stamped ticket in front of a shop office." />
+  <figcaption>Figure 7. The ticket is the access token. SessionGuard watches the ticket and the clock. The real lock is still the API, not the picture on the door.</figcaption>
+</figure>
+<p>What the code actually does:</p>
+<ul>
+  <li><code>lib/supabase.ts</code> builds one browser Supabase client and reuses it. Creating a client per render would be wasteful and would break the auth subscription.</li>
+  <li>The client persists the Supabase session, refreshes tokens, and detects a session in the URL after a magic-link redirect.</li>
+  <li><code>storeSeltraSession</code> also copies the access token and user JSON into <code>localStorage</code> under <code>seltra:token</code> and <code>seltra:user</code>.</li>
+  <li><code>SessionGuard</code> listens with <code>onAuthStateChange</code>. A new access token is written to <code>localStorage</code>. A sign-out clears Seltra keys and sends the user to <code>/auth?next=...</code>.</li>
+  <li>Idle timeout is one hour from the last pointer, key, touch, or scroll. Token expiry is read by base64-decoding the JWT payload and reading <code>exp</code>. Logout happens at whichever comes first.</li>
+  <li>A <code>storage</code> listener logs this tab out if another tab deletes the token.</li>
+</ul>
+<div class="box trap">
+  <div class="label">Trap you should volunteer</div>
+  <p>Decoding a JWT in the browser does not verify its signature. Anyone can edit <code>localStorage</code> and invent an <code>exp</code>. Expiry here is only a user-experience timer. The backend must verify the token on every protected request. Also, tokens in <code>localStorage</code> are readable by any script on the page, so an XSS bug can steal them. The stronger design is an httpOnly, Secure, SameSite cookie that JavaScript cannot read. I would say that tradeoff without being asked.</p>
+</div>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“The client stores a Supabase access token and mirrors it for API calls. A guard component subscribes to auth changes, enforces an idle timeout, and clears storage on sign-out. I do not trust the client’s view of expiry. Authorization is enforced on the server. If I were hardening this, I would move the session to an httpOnly cookie and keep the client guard as a UX layer only.”</p>
+</div>
+
+<h2>8. Styling without losing the plot</h2>
+<p>Tailwind utilities live on the <code>className</code> string. <code>cn()</code> in <code>lib/utils.ts</code> joins them and lets the later conflicting utility win.</p>
+<p>Design tokens such as <code>bg-primary</code> and <code>text-foreground</code> point at CSS variables. The toaster in the root layout reads those variables so notifications match the theme. <code>next-themes</code> toggles a class on <code>&lt;html&gt;</code>. Dark is the default. System theme is off, and the storage key is <code>seltra-theme</code>.</p>
+<p>You do not need to recite Tailwind in an interview. You need to say: styles are colocated with components, variants are generated, conflicts are merged, and theme is a class plus CSS variables.</p>
+
+<h2>9. TypeScript, only what you use</h2>
+<ul>
+  <li><code>type</code> and <code>interface</code> describe shapes. Props are types so a missing <code>slug</code> is a compile error, not a production bug.</li>
+  <li><code>string | null</code> means the value might be missing. You must handle both. That is why photos in the signup flow are <code>string | null</code>.</li>
+  <li>Generics show up as <code>useState&lt;StoreData | null&gt;</code> and <code>set&lt;K extends keyof typeof data&gt;</code>. The second one means “the key must be a real field, and the value must match that field.” You can describe it as a locked pair: you cannot set <code>email</code> to a number.</li>
+  <li><code>z.infer</code> derives a type from a runtime schema. One source of truth.</li>
+  <li><code>strict: true</code> is on. Do not silence errors with <code>any</code> unless you are at a boundary you do not control, and then narrow it immediately.</li>
+</ul>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“TypeScript does not run in the browser. It disappears at compile time. Runtime checks still need Zod or manual guards. I use types for developer feedback and schemas for data that crossed a network.”</p>
+</div>
+
+<h2>10. Performance stories you can tell honestly</h2>
+<ul>
+  <li><strong>Server-render the public shop.</strong> Less JavaScript, faster first paint, metadata for sharing. The store route does this.</li>
+  <li><strong>Cache with <code>revalidate</code>.</strong> Avoid hitting the API on every view.</li>
+  <li><strong>Push client boundaries down.</strong> The homepage shell is a server page. The dashboard is not. A senior answer names the cost: a multi-thousand-line client page ships a large bundle and cannot keep secrets.</li>
+  <li><strong>Stable context values.</strong> <code>useMemo</code> in <code>StoreProvider</code>.</li>
+  <li><strong><code>next/image</code> and <code>next/font</code>.</strong> Sized images and self-hosted fonts reduce layout shift.</li>
+  <li><strong>Passive scroll listeners.</strong> <code>{ passive: true }</code> tells the browser the listener will not call <code>preventDefault</code>, so scrolling stays smooth.</li>
+  <li><strong>Do not memoize by superstition.</strong> Measure first. React re-rendering a small component is cheap. Re-rendering a 4,000-line dashboard on each keystroke is not. The fix is splitting components so state lives next to the input that changes.</li>
+</ul>
+<div class="box say">
+  <div class="label">Say this in the interview</div>
+  <p>“If a keystroke re-renders a huge tree, I move that state down into the input’s component, or split the page so the expensive subtree receives stable props and can be memoized. I do not start by wrapping every function in <code>useCallback</code>.”</p>
+</div>
+
+<h2>11. Build Seltra again, in small pieces</h2>
+<p>Do these in order. Each one is allowed to be ugly. Each one must run.</p>
+<ol>
+  <li><strong>A component and props.</strong> A <code>ProductCard</code> that receives <code>name</code> and <code>price</code> and returns a figure. Render three of them from an array with stable keys.</li>
+  <li><strong>State.</strong> A counter button. Then a controlled search box that filters the products.</li>
+  <li><strong>Lifting state.</strong> A parent holds <code>query</code>. A child input calls <code>onQueryChange</code>. A sibling list receives the filtered array.</li>
+  <li><strong>Effect and cleanup.</strong> A header that sets <code>scrolled</code> from <code>window.scrollY</code> and removes the listener on unmount.</li>
+  <li><strong>Context.</strong> Recreate <code>StoreProvider</code> and <code>useStore</code> with the throw-if-missing hook. Persist to <code>localStorage</code> with a window guard.</li>
+  <li><strong>Routes.</strong> <code>app/page.tsx</code>, <code>app/features/page.tsx</code>, <code>app/store/[slug]/page.tsx</code>. Log the slug. Add a root layout that wraps children in your provider.</li>
+  <li><strong>Server fetch.</strong> Make the store page async. <code>fetch</code> a mock endpoint with <code>revalidate: 30</code>. Handle failure with a typed empty state, not a fake catalog, unless the UI says “preview.”</li>
+  <li><strong>Client island.</strong> A small <code>'use client'</code> add-to-bag button that receives a serializable product.</li>
+  <li><strong>Metadata.</strong> Static metadata on the home page. <code>generateMetadata</code> on the store page.</li>
+  <li><strong>Form.</strong> A two-step wizard. Derived errors. Zod <code>safeParse</code> on submit. Toast on failure.</li>
+  <li><strong>Button primitive.</strong> Variants with <code>cva</code>, <code>cn</code>, and <code>asChild</code> so a link can wear the button styles.</li>
+  <li><strong>Session sketch.</strong> A fake token in memory. A guard that redirects with <code>useRouter</code> from <code>next/navigation</code> and cleans up a timer.</li>
+</ol>
+<p>When you can do item 11 without opening this file, you can build the front of this application. The rest of Seltra is these patterns repeated: more fields, more routes, more client islands.</p>
+
+<h2>12. A 14-day study plan</h2>
+<table>
+  <tr><th>Day</th><th>Read</th><th>Do</th><th>Say out loud</th></tr>
+  <tr><td>1</td><td>Chapters 0–1</td><td>Draw the folder map from memory</td><td>What is a component?</td></tr>
+  <tr><td>2</td><td>Chapter 2</td><td>Practice items 1–3</td><td>Props vs state</td></tr>
+  <tr><td>3</td><td>Chapter 3.1–3.3</td><td>Practice item 4</td><td>What belongs in an effect?</td></tr>
+  <tr><td>4</td><td>Chapter 3.4–3.7 and <code>StoreContext.tsx</code></td><td>Practice item 5</td><td>Why context, why not always?</td></tr>
+  <tr><td>5</td><td>Chapter 4 and <code>button.tsx</code></td><td>Practice item 11</td><td>Keys, and what <code>asChild</code> prevents</td></tr>
+  <tr><td>6</td><td>Chapter 5.1–5.4</td><td>Practice item 6</td><td>Server vs client component</td></tr>
+  <tr><td>7</td><td>Chapter 5.5–5.8 and the store page</td><td>Practice items 7–9</td><td>What does <code>revalidate: 30</code> mean?</td></tr>
+  <tr><td>8</td><td>Chapter 6 and <code>SignupFlow.tsx</code></td><td>Practice item 10</td><td>Why validate twice?</td></tr>
+  <tr><td>9</td><td>Chapter 7 and <code>SessionGuard.tsx</code></td><td>Practice item 12</td><td>Where must auth really be enforced?</td></tr>
+  <tr><td>10</td><td>Chapters 8–10</td><td>Split one big component into two on paper</td><td>How would you speed up a huge client page?</td></tr>
+  <tr><td>11</td><td>Interview bank, questions 1–15</td><td>Answer with a timer, 90 seconds</td><td>Record yourself once</td></tr>
+  <tr><td>12</td><td>Questions 16–30</td><td>Same</td><td>Point at a file for each answer</td></tr>
+  <tr><td>13</td><td>Chapter 14, the senior notes</td><td>Write five improvements</td><td>Lead with the cookie and the giant dashboard</td></tr>
+  <tr><td>14</td><td>Rebuild the store route from a blank app</td><td>No peeking for 45 minutes, then diff</td><td>Walk the request end to end</td></tr>
+</ol>
+
+<h2>13. Interview bank</h2>
+<p>Speak the answer, then add one Seltra detail. Stop. Do not lecture.</p>
+
+<h3>React fundamentals</h3>
+<p class="q">1. What is React?</p>
+<div class="box say"><div class="label">Answer</div><p>A library for building UI out of components. I describe the screen as a function of state. When state changes, React re-renders and updates the DOM. In Seltra, a page is a tree: layout, providers, then a page component such as the storefront or the dashboard.</p></div>
+
+<p class="q">2. What is the difference between props and state?</p>
+<div class="box say"><div class="label">Answer</div><p>Props come from the parent and are read-only. State is owned by the component and changed with a setter, which schedules a render. <code>SignupFlow</code> receives photos as props and owns the wizard step as state.</p></div>
+
+<p class="q">3. Why can’t a child change a prop?</p>
+<div class="box say"><div class="label">Answer</div><p>One-way data flow. If children mutated props, any component could change shared data and the UI would be impossible to trace. The child calls a callback such as <code>setActiveStore</code>, and the owner updates state.</p></div>
+
+<p class="q">4. What does rendering mean? Is it the same as painting pixels?</p>
+<div class="box say"><div class="label">Answer</div><p>Rendering is running the component to produce a React element tree. Commit is when React applies changes to the DOM. The browser then paints. I keep render pure.</p></div>
+
+<p class="q">5. Why are keys required in lists? Why not the index?</p>
+<div class="box say"><div class="label">Answer</div><p>Keys let React match items across renders. Index keys tie identity to position, so reordering can reuse the wrong component state, especially inputs. I use a stable id, like a product id.</p></div>
+
+<p class="q">6. What happens if you call a hook inside an if?</p>
+<div class="box say"><div class="label">Answer</div><p>Hooks rely on call order. A conditional hook shifts the list and state gets assigned to the wrong hook. I call hooks unconditionally at the top.</p></div>
+
+<p class="q">7. When do you use useEffect?</p>
+<div class="box say"><div class="label">Answer</div><p>To synchronize with an external system after paint, with a cleanup. SessionGuard’s subscriptions and timers are the example. I do not use an effect to copy props into state or to calculate errors I can derive.</p></div>
+
+<p class="q">8. What is a stale closure?</p>
+<div class="box say"><div class="label">Answer</div><p>An effect or callback that captured old state because it was created on an earlier render and its dependencies were incomplete. The fix is a correct dependency array, or a functional update, or resetting with a key when identity should change.</p></div>
+
+<p class="q">9. useMemo versus useCallback versus React.memo?</p>
+<div class="box say"><div class="label">Answer</div><p><code>useMemo</code> caches a value. <code>useCallback</code> caches a function. <code>React.memo</code> skips a child render when its props are shallowly equal. They work together. StoreContext memoizes its value so the object identity is stable. I do not add them everywhere.</p></div>
+
+<p class="q">10. What is prop drilling and what do you do about it?</p>
+<div class="box say"><div class="label">Answer</div><p>Passing data through components that do not use it, only so a grandchild can. I lift state to the closest owner first. If the gap is wide, I use context, the way <code>useStore</code> shares the active store. If the data updates many times a second, I avoid a single broad context.</p></div>
+
+<p class="q">11. Controlled versus uncontrolled inputs?</p>
+<div class="box say"><div class="label">Answer</div><p>Controlled: React state is the source of truth, <code>value</code> plus <code>onChange</code>. Uncontrolled: the DOM holds it, read via ref on submit. Seltra’s signup fields are controlled because each step validates them.</p></div>
+
+<p class="q">12. How do you reset a form or a modal’s state?</p>
+<div class="box say"><div class="label">Answer</div><p>Set state back to initial values, or change the component <code>key</code> so React remounts it and runs initial state again. Remounting is the blunt, reliable reset.</p></div>
+
+<p class="q">13. What is children? What is composition?</p>
+<div class="box say"><div class="label">Answer</div><p><code>children</code> is a prop for nested JSX. Composition means building behavior by wrapping, not by inheritance. The root layout, providers, and <code>Button asChild</code> are composition. React components rarely use class inheritance for UI reuse.</p></div>
+
+<p class="q">14. What would cause an infinite render loop?</p>
+<div class="box say"><div class="label">Answer</div><p>Setting state during render unconditionally, or an effect that sets state and depends on that state without a condition. Example: an effect with <code>[store]</code> that always calls <code>setStore</code> to a new object. I update state in handlers, or in effects only when the next value is actually different.</p></div>
+
+<p class="q">15. How do error boundaries fit?</p>
+<div class="box say"><div class="label">Answer</div><p>They catch render errors in children and show a fallback. They do not catch event-handler errors, async errors, or errors in the boundary itself. In the App Router, <code>error.tsx</code> is that boundary for a route segment and must be a client component. I still use try/catch around <code>fetch</code>, which is what <code>getStore</code> does.</p></div>
+
+<h3>Next.js</h3>
+<p class="q">16. What is the App Router?</p>
+<div class="box say"><div class="label">Answer</div><p>Routing from the <code>app</code> directory. <code>page.tsx</code> makes a route, <code>layout.tsx</code> wraps segments and preserves state across navigations, <code>loading.tsx</code> and <code>error.tsx</code> are special UI, <code>route.ts</code> is an HTTP handler. Seltra uses this, not the Pages Router.</p></div>
+
+<p class="q">17. What does 'use client' do?</p>
+<div class="box say"><div class="label">Answer</div><p>It marks a module and its imports as a client boundary so they can use state, effects, and browser APIs. It is still server-rendered to HTML, then hydrated. I put it as low in the tree as I can. The home route is a server page that renders a client <code>HomePage</code>.</p></div>
+
+<p class="q">18. What can you pass from a server component to a client component?</p>
+<div class="box say"><div class="label">Answer</div><p>Serializable props: plain objects, arrays, strings, numbers, booleans. Not functions, not class instances. The store page passes the fetched store object into the canvas. If I need behavior, the client component defines the function itself.</p></div>
+
+<p class="q">19. Explain SSR, SSG, and ISR with this codebase.</p>
+<div class="box say"><div class="label">Answer</div><p>The store page fetches on the server and can be cached. <code>next: { revalidate: 30 }</code> is time-based revalidation, the ISR idea: serve the cached result, then refresh at the interval. A force-dynamic page would render per request. Client pages like the dashboard render their shell and then fetch in the browser.</p></div>
+
+<p class="q">20. Why is params a Promise here?</p>
+<div class="box say"><div class="label">Answer</div><p>Starting in Next.js 15, and in this Next 16 app, <code>params</code> and <code>searchParams</code> are async so the framework can stream and avoid synchronous blocking. I <code>await params</code> in both the page and <code>generateMetadata</code>. I mention the version so I do not mix it up with Next 14 tutorials.</p></div>
+
+<p class="q">21. What is a route group?</p>
+<div class="box say"><div class="label">Answer</div><p>A folder wrapped in parentheses, like <code>(dashboard)</code>, organizes files and can have its own layout without adding a URL segment. <code>/dashboard</code> is the URL. That layout attaches no-index metadata so private pages are not SEO targets.</p></div>
+
+<p class="q">22. Link versus anchor versus router.replace?</p>
+<div class="box say"><div class="label">Answer</div><p><code>Link</code> prefetches and does client-side transitions, preserving layouts. A raw anchor does a full document load, which I still want for external URLs or when I need a full reset. <code>router.replace</code> navigates without adding a history entry. Logout uses replace so Back does not return to a private screen as easily. I import <code>useRouter</code> from <code>next/navigation</code>.</p></div>
+
+<p class="q">23. Where do you set the document title?</p>
+<div class="box say"><div class="label">Answer</div><p>The Metadata API. Static <code>export const metadata</code> on server pages, <code>generateMetadata</code> when it depends on data, as on the store slug. The root title template is <code>%s | Seltra</code>. Client components should not own SEO metadata.</p></div>
+
+<p class="q">24. How does caching interact with fetch?</p>
+<div class="box say"><div class="label">Answer</div><p>In the App Router, <code>fetch</code> can participate in Next’s data cache. <code>revalidate</code> sets a lifetime. <code>cache: 'no-store'</code> opts out when data must be fresh per user. I would not cache a personalized dashboard response the way I cache a public storefront. Identical fetches in one server render can be deduped.</p></div>
+
+<p class="q">25. What is hydration, and why might this app suppress a warning?</p>
+<div class="box say"><div class="label">Answer</div><p>Hydration attaches event handlers to server HTML. A mismatch means the first client render differed. <code>suppressHydrationWarning</code> on html and body covers the theme class from <code>next-themes</code>, which depends on stored preference the server cannot know. I would not suppress warnings on arbitrary divs.</p></div>
+
+<p class="q">26. How do environment variables work?</p>
+<div class="box say"><div class="label">Answer</div><p>Unprefixed variables are server-only. <code>NEXT_PUBLIC_</code> is exposed to the browser. The store page reads <code>API_BASE_URL</code> on the server. Client forms read <code>NEXT_PUBLIC_API_BASE_URL</code>. The Supabase anon key is public; row-level security has to be the real lock.</p></div>
+
+<p class="q">27. What does next/image buy you, and what is remotePatterns?</p>
+<div class="box say"><div class="label">Answer</div><p>Optimization, sizing, and lazy loading, which helps layout stability. <code>remotePatterns</code> is an allowlist so the optimizer cannot be pointed at arbitrary hosts. Our config allows known image CDNs and a few asset hosts.</p></div>
+
+<p class="q">28. What is a route handler for, if you already have a backend?</p>
+<div class="box say"><div class="label">Answer</div><p>Small server endpoints next to the UI: health checks, webhooks, or a backend-for-frontend that hides secrets and shapes data. <code>app/api/health/route.ts</code> is the simple case. Domain logic for stores and applications stays in the Nest API.</p></div>
+
+<h3>Applied to Seltra</h3>
+<p class="q">29. Walk me through the store page.</p>
+<div class="box say"><div class="label">Answer</div><p>It is an async server component. It awaits <code>params.slug</code>, fetches <code>/api/v1/seltra/store/:slug</code> with a 30-second revalidate, falls back if the request fails, picks a theme from brand personality and layout variant, and renders <code>StorefrontCanvas</code> inside Suspense. <code>generateMetadata</code> uses the same fetch to set social tags and a canonical URL on the store subdomain.</p></div>
+
+<p class="q">30. How does the signup wizard manage correctness?</p>
+<div class="box say"><div class="label">Answer</div><p>Field state lives in one object updated immutably. Step errors are derived. Next is blocked when the current step has errors. Submit runs a Zod schema with <code>safeParse</code> and only then posts. I would repeat that schema check on the server.</p></div>
+
+<p class="q">31. How does logout work?</p>
+<div class="box say"><div class="label">Answer</div><p><code>SessionGuard</code> signs out of Supabase, clears Seltra localStorage keys, and <code>replace</code>s to <code>/auth</code> with a <code>next</code> query so login can return the user. It also logs out at token expiry or after an hour idle, and if another tab removes the token.</p></div>
+
+<p class="q">32. Why memoize the context value?</p>
+<div class="box say"><div class="label">Answer</div><p>So the provider can re-render without changing the value identity when the store is unchanged. Context consumers re-render when the value fails <code>Object.is</code>. A fresh object literal every render would defeat that.</p></div>
+
+<p class="q">33. What is wrong, or risky, in the current frontend?</p>
+<div class="box say"><div class="label">Answer</div><p>I would mention four things. The access token in localStorage is exposed to XSS; httpOnly cookies are stronger, and client-side JWT decode is not verification. The dashboard file is thousands of lines, so state updates are hard to isolate. The store fallback can present demo products when the API fails, which should be labeled as a preview. SessionGuard does not by itself redirect anonymous users away from private pages; each private view still needs an explicit check. I would say these as improvements, calmly, after showing I understand why the code is shaped this way.</p></div>
+
+<p class="q">34. How would you test a component like the button or the wizard?</p>
+<div class="box say"><div class="label">Answer</div><p>React Testing Library: render the button, assert the variant class behavior through its accessible role, and click it. For the wizard, type invalid input, assert the error appears only when appropriate, click next, and mock <code>fetch</code> to assert the payload. I test behavior the user sees, not private state.</p></div>
+
+<p class="q">35. How would you add a new public page?</p>
+<div class="box say"><div class="label">Answer</div><p>Add <code>app/pricing/page.tsx</code> as a server component, export metadata, and link to it with <code>next/link</code>. If a small part needs state, extract that part into a client component. I would not mark the whole page as client just to use one <code>useState</code>.</p></div>
+
+<h2>14. Senior notes: how you sound like you have shipped</h2>
+<ul>
+  <li><strong>Name the boundary.</strong> “This is a server component up to here, and a client island from here.” Draw it with your hand if you are at a whiteboard.</li>
+  <li><strong>Separate UX auth from real auth.</strong> Guards and idle timers are experience. The API is the lock.</li>
+  <li><strong>Prefer derived state.</strong> Errors, filtered lists, theme keys. If it is a formula, do not store the result.</li>
+  <li><strong>Colocate state.</strong> The component that changes most often should own the state that changes. That is the performance plan for the dashboard.</li>
+  <li><strong>Be precise about versions.</strong> React 18.3, Next.js 16, async params, App Router. Interviewers lose trust when versions are mixed.</li>
+  <li><strong>Talk about failure.</strong> <code>getStore</code> catches and returns null. Say what the user should see, and what you would log.</li>
+  <li><strong>Accessibility in one sentence.</strong> Buttons that navigate should sometimes be links. <code>asChild</code> exists so we do not put a link inside a button. Labels point at inputs with <code>htmlFor</code>. Icon-only buttons need an accessible name.</li>
+  <li><strong>Do not pretend the dashboard is a template.</strong> It is a large client page. Your judgment about splitting it is more impressive than defending it.</li>
+</ul>
+
+<h2>15. Glossary</h2>
+<table>
+  <tr><th>Word</th><th>Plain meaning</th></tr>
+  <tr><td>Component</td><td>A function that returns UI.</td></tr>
+  <tr><td>JSX</td><td>HTML-like syntax inside JavaScript.</td></tr>
+  <tr><td>Props</td><td>Inputs from the parent.</td></tr>
+  <tr><td>State</td><td>Memory that causes a redraw when it changes.</td></tr>
+  <tr><td>Render</td><td>Calling the function to describe the UI.</td></tr>
+  <tr><td>Commit</td><td>Writing the description into the DOM.</td></tr>
+  <tr><td>Hydration</td><td>Waking server HTML up so it can handle events.</td></tr>
+  <tr><td>Hook</td><td>A function like <code>useState</code> that taps React features. Call order matters.</td></tr>
+  <tr><td>Effect</td><td>After-paint work with the outside world, plus cleanup.</td></tr>
+  <tr><td>Ref</td><td>A mutable box that does not re-render, often a DOM node.</td></tr>
+  <tr><td>Context</td><td>A way to share a value with a subtree.</td></tr>
+  <tr><td>Key</td><td>A stable identity for an item in a list.</td></tr>
+  <tr><td>Client component</td><td>A module in the browser bundle. Marked with <code>'use client'</code>.</td></tr>
+  <tr><td>Server component</td><td>A module that runs on the server and is not shipped as that component’s logic.</td></tr>
+  <tr><td>Layout</td><td>UI that wraps a route segment and stays mounted.</td></tr>
+  <tr><td>Route group</td><td>A <code>(folder)</code> that does not affect the URL.</td></tr>
+  <tr><td>Dynamic segment</td><td>A <code>[folder]</code> that captures part of the URL.</td></tr>
+  <tr><td>Revalidate</td><td>How long a cached server fetch may be reused.</td></tr>
+  <tr><td>Metadata</td><td>Title, description, and social cards for a route.</td></tr>
+  <tr><td>Hydration mismatch</td><td>Server HTML and the first client render disagreed.</td></tr>
+  <tr><td>Serializable</td><td>Data that can be turned into JSON and passed to a client component.</td></tr>
+  <tr><td>BFF</td><td>A thin server endpoint beside the UI that fronts another API.</td></tr>
+</table>
+
+<h2>16. One-page cheat sheet</h2>
+<pre><code>Component     function Name(props) { return &lt;jsx/&gt; }     capital name, pure render
+Props         read-only inputs from parent              data down
+State         useState, setter schedules render         memory
+Update        setX(v) or setX(prev =&gt; next)             copy objects, do not mutate
+Derived       compute during render                     do not mirror state
+List          items.map(item =&gt; &lt;Row key={item.id}/&gt;)   stable ids
+Effect        useEffect(() =&gt; { ...; return cleanup }, [deps])
+Ref           useRef, no re-render                      DOM or instance values
+Context       createContext + Provider + hook that throws
+Client        'use client' at top of file               hooks and browser
+Server        default in app/                           async, secrets, metadata
+Route         app/segment/page.tsx                      layout.tsx wraps it
+Dynamic       app/store/[slug]/page.tsx                 await params
+Cache         fetch(url, { next: { revalidate: 30 } })
+Public env    NEXT_PUBLIC_*                             everything else is server-only
+Navigate      &lt;Link href&gt;   useRouter from next/navigation
+Validate      Zod on the client and again on the server
+Auth UX       guard, idle timer, storage                real check is the API</code></pre>
+
+<h2>17. The shortest true story</h2>
+<p>If you forget everything except this, you can rebuild the idea of the app.</p>
+<ol>
+  <li>A screen is a function of data.</li>
+  <li>Parents pass data down. Children send events up.</li>
+  <li>If the screen must remember a click, that memory is state.</li>
+  <li>If many screens must share memory, lift it, then use context when the lift is too far.</li>
+  <li>After the picture is drawn, effects talk to the browser, and they clean up after themselves.</li>
+  <li>In Next.js, a file in <code>app</code> is a URL.</li>
+  <li>The server draws what it can. The browser only receives the parts that must move.</li>
+  <li>Public pages fetch on the server and can be cached. Private, clicky pages are client islands and must not be trusted with secrets.</li>
+  <li>Check untrusted input twice. Check identity on the server.</li>
+  <li>When a file gets huge, split it along the state that changes.</li>
+</ol>
+<p>Open <code>app/layout.tsx</code>, <code>app/page.tsx</code>, <code>app/store/[slug]/page.tsx</code>, <code>context/StoreContext.tsx</code>, <code>components/ui/button.tsx</code>, <code>components/marketing/SignupFlow.tsx</code>, and <code>components/auth/SessionGuard.tsx</code>. Those seven files are the course. This document is the commentary.</p>
+
+<p class="small">Written from the Seltra frontend as it exists in this repository: React 18.3, Next.js 16 App Router, TypeScript. When a tutorial on the internet disagrees about <code>params</code> or <code>useRouter</code>, prefer this codebase’s version and say so.</p>
+
+</body>
+</html>

@@ -32,10 +32,35 @@
   html {
     color-scheme: dark;
     scroll-behavior: smooth;
+    /* Lovable-style: thin pill scrollbar flush to the window’s right edge */
+    scrollbar-width: thin;
+    scrollbar-color: #a3a3a3 #0a0a0a;
   }
   body {
     @apply bg-background text-foreground antialiased;
     font-family: var(--font-geist-sans), system-ui, sans-serif;
+  }
+
+  /* WebKit / Chromium — matches Lovable’s far-right thin grey thumb on dark track */
+  html::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  html::-webkit-scrollbar-track {
+    background: #0a0a0a;
+  }
+  html::-webkit-scrollbar-thumb {
+    background: #a3a3a3;
+    border-radius: 9999px;
+    border: 1px solid transparent;
+    background-clip: padding-box;
+  }
+  html::-webkit-scrollbar-thumb:hover {
+    background: #c4c4c4;
+    background-clip: padding-box;
+  }
+  html::-webkit-scrollbar-corner {
+    background: #0a0a0a;
   }
 }
 
@@ -1277,6 +1302,56 @@ html {
 }
 .scrollbar-none::-webkit-scrollbar {
   display: none;
+}
+
+/* Nested panels + Tailwind overflow utilities: same Lovable edge scrollbar */
+.scrollbar-lovable,
+.overflow-y-auto,
+.overflow-auto {
+  scrollbar-width: thin;
+  scrollbar-color: #a3a3a3 #0a0a0a;
+}
+.scrollbar-lovable::-webkit-scrollbar,
+.overflow-y-auto::-webkit-scrollbar,
+.overflow-auto::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-lovable::-webkit-scrollbar-track,
+.overflow-y-auto::-webkit-scrollbar-track,
+.overflow-auto::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+.scrollbar-lovable::-webkit-scrollbar-thumb,
+.overflow-y-auto::-webkit-scrollbar-thumb,
+.overflow-auto::-webkit-scrollbar-thumb {
+  background: #a3a3a3;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+.scrollbar-lovable::-webkit-scrollbar-thumb:hover,
+.overflow-y-auto::-webkit-scrollbar-thumb:hover,
+.overflow-auto::-webkit-scrollbar-thumb:hover {
+  background: #c4c4c4;
+  background-clip: padding-box;
+}
+
+/* Keep hidden scrollbars winning when both utilities are present */
+.scrollbar-none,
+.overflow-y-auto.scrollbar-none,
+.overflow-auto.scrollbar-none,
+.overflow-x-auto.scrollbar-none {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar,
+.overflow-y-auto.scrollbar-none::-webkit-scrollbar,
+.overflow-auto.scrollbar-none::-webkit-scrollbar,
+.overflow-x-auto.scrollbar-none::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
 .composer-textarea {
