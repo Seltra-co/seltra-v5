@@ -782,14 +782,14 @@ function WhatsNewBanner({ onDismiss }: { onDismiss: () => void }) {
   const announcement = WHATS_NEW[CURRENT_ANNOUNCEMENT_VERSION]
   if (!announcement) return null
   return (
-    <section className="relative mx-4 mt-4 overflow-hidden rounded-2xl border border-primary/50 bg-primary/75 px-5 py-5 text-primary-foreground shadow-lg shadow-primary/10 sm:mx-6 sm:px-6">
-      <div className="flex gap-4 pr-8">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-black/10 text-primary-foreground">
-          <Sparkles className="h-5 w-5" />
+    <section className="relative mx-4 mt-3 shrink-0 overflow-hidden rounded-2xl border border-primary/50 bg-primary/75 px-4 py-3 text-primary-foreground shadow-lg shadow-primary/10 sm:mx-6 sm:px-5">
+      <div className="flex gap-3 pr-8">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-black/10 text-primary-foreground">
+          <Sparkles className="h-4 w-4" />
         </div>
-        <div>
+        <div className="min-w-0">
           <h2 className="text-sm font-semibold tracking-tight">{announcement.title}</h2>
-          <p className="mt-1 max-w-3xl text-sm leading-relaxed text-primary-foreground/85">{announcement.body}</p>
+          <p className="mt-0.5 max-w-3xl text-[13px] leading-snug text-primary-foreground/85 line-clamp-2">{announcement.body}</p>
         </div>
       </div>
       <button type="button" onClick={onDismiss} aria-label="Dismiss announcement" className="absolute right-3 top-3 rounded-lg p-1.5 text-primary-foreground/70 transition hover:bg-black/10 hover:text-primary-foreground">
@@ -1549,7 +1549,7 @@ const handleAgentAttach = async (f: File) => {
         onDismissConnection={dismissConnection}
         chatSkeleton={false}
       >
-        <main className="dash-canvas relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <main className="dash-canvas relative flex h-[calc(100dvh-1rem)] min-h-[calc(100dvh-1rem)] min-w-0 w-full flex-1 flex-col overflow-hidden">
           <DashboardTopBar
             activeStore={activeStore}
             sidebarOpen={sidebarOpen}
@@ -1579,26 +1579,32 @@ const handleAgentAttach = async (f: File) => {
       onDismissConnection={dismissConnection}
       chatSkeleton={!showAgentHome}
     >
-      <main className={cn('dash-canvas relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden', showAgentHome ? 'is-wash' : 'is-chat')}>
+      <main
+        className={cn(
+          'dash-canvas relative flex min-w-0 w-full flex-1 flex-col',
+          showAgentHome
+            ? 'is-wash'
+            : 'is-chat h-[calc(100dvh-1rem)] min-h-[calc(100dvh-1rem)] overflow-hidden',
+        )}
+      >
         {showAgentHome ? (
-          <>
-            {announcementVisible && <WhatsNewBanner onDismiss={dismissAnnouncement} />}
-            <EmptyState
-              input={input} setInput={setInput} send={send} sending={sending} name={user?.name ?? ''}
-              pendingAttachment={pendingAttachment}
-              onClearAttachment={clearPendingAttachment}
-              stores={stores}
-              sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => setSidebarOpen((p) => !p)}
-              onMenu={() => setMobileSidebar(true)}
-              onUpgrade={() => setTab('billing')}
-              showUpgrade={user?.plan !== 'premium'}
-              activeStore={activeStore}
-              onOpenStore={(store) => { rememberRecentStore(store); setActiveStore(store); setTab('store') }}
-              onSeeAllStores={() => setTab('store')}
-              onAttach={handleAgentAttach}
-            />
-          </>
+          <EmptyState
+            input={input} setInput={setInput} send={send} sending={sending} name={user?.name ?? ''}
+            pendingAttachment={pendingAttachment}
+            onClearAttachment={clearPendingAttachment}
+            stores={stores}
+            sidebarOpen={sidebarOpen}
+            onToggleSidebar={() => setSidebarOpen((p) => !p)}
+            onMenu={() => setMobileSidebar(true)}
+            onUpgrade={() => setTab('billing')}
+            showUpgrade={user?.plan !== 'premium'}
+            activeStore={activeStore}
+            onOpenStore={(store) => { rememberRecentStore(store); setActiveStore(store); setTab('store') }}
+            onSeeAllStores={() => setTab('store')}
+            onAttach={handleAgentAttach}
+            announcementVisible={announcementVisible}
+            onDismissAnnouncement={dismissAnnouncement}
+          />
         ) : (
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-5 sm:px-6 lg:px-7">
@@ -1935,11 +1941,14 @@ function DashboardFrame({
 }) {
   const disconnected = connection !== 'online'
   return (
-    <div className="dash-app flex h-screen overflow-hidden">
+    <div className="dash-app flex h-dvh overflow-hidden">
       <SidebarDesktop {...sidebarProps} />
-      <div className="relative flex min-h-0 min-w-0 flex-1 p-1.5 sm:p-2">
-        {children}
-        {disconnected && (chatSkeleton ? <ConnectionCanvas /> : <div className="absolute inset-0 z-30 bg-[#141615]/80" />)}
+      {/* Lovable: right column owns vertical scroll; thin scrollbar on the window’s far right */}
+      <div className="dash-scroll relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="relative flex min-h-full w-full flex-col p-2 pl-2">
+          {children}
+          {disconnected && (chatSkeleton ? <ConnectionCanvas /> : <div className="absolute inset-2 z-30 rounded-[20px] bg-[#141615]/80" />)}
+        </div>
       </div>
       {disconnected && !pillDismissed && <ConnectionPill state={connection} onDismiss={onDismissConnection} />}
       <MobileSidebarDrawer
@@ -1975,7 +1984,7 @@ function SidebarDesktop({
   ]
 
   return (
-    <aside className={cn('dash-sidebar landing-menu hidden h-full flex-shrink-0 flex-col overflow-hidden transition-[width] duration-200 lg:flex', open ? 'w-[216px]' : 'w-0')}>
+    <aside className={cn('dash-sidebar landing-menu hidden h-dvh flex-shrink-0 flex-col overflow-hidden transition-[width] duration-200 lg:flex', open ? 'w-[216px]' : 'w-0 opacity-0 pointer-events-none')}>
       <div className="flex h-[60px] flex-shrink-0 items-center justify-between px-3.5">
         <img src="/assets/brand/logo.png" alt="seltra" className="h-7 w-auto" />
         <button type="button" onClick={onToggle} className="grid h-8 w-8 place-items-center rounded-lg text-white/55 transition-colors hover:bg-white/5 hover:text-white" aria-label="Collapse sidebar">
@@ -1994,7 +2003,7 @@ function SidebarDesktop({
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2.5 pb-2">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden scrollbar-none px-2.5 pb-2">
         <button
           type="button"
           onClick={() => setWorkspaceOpen((current) => !current)}
@@ -2151,7 +2160,7 @@ function MobileSidebarDrawer({
                 <Plus className="h-4 w-4 text-[#3ddc84]" /> New store
               </button>
             </div>
-            <nav className="flex-1 overflow-y-auto px-3 pb-3">
+            <nav className="flex-1 overflow-y-auto scrollbar-none px-3 pb-3">
               <div className="px-2.5 py-2 text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">Workspace</div>
               <div className="space-y-0.5">
                 {NAV_TABS.map((t) => (
@@ -2250,6 +2259,7 @@ function storeStatusLabel(store: StoreData) {
 function EmptyState({
   input, setInput, send, sending, name, onAttach, pendingAttachment, onClearAttachment,
   stores, sidebarOpen, onToggleSidebar, onMenu, onUpgrade, showUpgrade, activeStore, onOpenStore, onSeeAllStores,
+  announcementVisible, onDismissAnnouncement,
 }: {
   input: string; setInput: (v: string) => void; send: () => void
   sending: boolean; name: string; onAttach: (f: File) => void
@@ -2263,12 +2273,21 @@ function EmptyState({
   activeStore: StoreData | null
   onOpenStore: (store: StoreData) => void
   onSeeAllStores: () => void
+  announcementVisible?: boolean
+  onDismissAnnouncement?: () => void
 }) {
   const [library, setLibrary] = useState<'recents' | 'stores'>('recents')
   const [query, setQuery] = useState('')
   const [recentIds, setRecentIds] = useState<string[]>([])
+  const composerRef = useRef<HTMLTextAreaElement>(null)
   const firstName = name?.split(' ')[0] || ''
   useEffect(() => { setRecentIds(readRecentStoreIds()) }, [stores])
+  useEffect(() => {
+    const el = composerRef.current
+    if (!el) return
+    el.style.height = '22px'
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, 22), 160)}px`
+  }, [input])
   const filtered = stores.filter((store) => store.name.toLowerCase().includes(query.trim().toLowerCase()))
   const viewed = recentIds
     .map((id) => filtered.find((store) => store.id === id || store.slug === id))
@@ -2283,121 +2302,133 @@ function EmptyState({
   ]
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto">
+    <div className="relative flex w-full flex-col">
       <Aurora tone="hero" />
 
-      <div className="relative z-40 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 pt-5 sm:px-7 sm:pt-6 lg:px-8">
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={onMenu} className="grid h-10 w-10 place-items-center rounded-xl bg-[#1c1e1d] text-white lg:hidden" aria-label="Open menu">
-            <Menu className="h-4 w-4" />
-          </button>
-          {!sidebarOpen && (
-            <button type="button" onClick={onToggleSidebar} className="hidden h-10 w-10 place-items-center rounded-xl bg-[#1c1e1d] text-white lg:grid" aria-label="Open sidebar">
-              <PanelLeft className="h-4 w-4" />
+      {/* Block 1 — hero: fills viewport minus ~85px peek for the dark panel */}
+      <section className="relative z-10 flex w-full min-h-[calc(100dvh-1rem-77px)] flex-col items-center">
+        <div className="absolute inset-x-0 top-0 z-40 grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 pt-5 sm:px-7 sm:pt-6 lg:px-8">
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onMenu} className="grid h-10 w-10 place-items-center rounded-xl bg-[#1c1e1d] text-white lg:hidden" aria-label="Open menu">
+              <Menu className="h-4 w-4" />
             </button>
-          )}
-        </div>
-        <div className="flex justify-center">
-          {showUpgrade && (
-            <button
-              type="button"
-              onClick={onUpgrade}
-              className="inline-flex items-center gap-2 rounded-full bg-[#141615] py-1.5 pl-3.5 pr-1.5 text-[12px] font-medium text-white shadow-[0_12px_30px_-16px_rgba(0,0,0,0.55)] sm:gap-2.5 sm:pl-4 sm:text-[13px]"
-            >
-              Upgrade to Pro
-              <span className="grid h-7 w-7 place-items-center rounded-full bg-[#22c55e]">
-                <ArrowRight className="h-3.5 w-3.5" />
-              </span>
-            </button>
-          )}
-        </div>
-        <NotificationBell activeStore={activeStore} tone="wash" />
-      </div>
-
-      <div className="relative z-10 mx-auto flex w-full max-w-[720px] flex-1 flex-col items-center justify-center px-5 py-10 sm:px-6">
-        <div className="flex flex-col items-center gap-3 sm:flex-row sm:gap-3.5">
-          <img src="/assets/brand/mark.png" alt="" className="h-9 w-9 object-contain sm:h-10 sm:w-10" />
-          <h1 className="text-center text-[1.75rem] font-semibold tracking-[-0.04em] text-neutral-950 sm:text-[2.15rem] lg:text-[2.35rem]">
-            What&apos;s the vision{firstName ? `, ${firstName}` : ''}?
-          </h1>
-        </div>
-
-        <div className="landing-composer-halo mt-8 w-full sm:mt-9">
-          <div className="landing-prompt group relative flex min-h-[118px] w-full flex-col justify-between overflow-hidden text-left">
-            <span className="landing-sheen" aria-hidden />
-            {pendingAttachment && (
-              <div className="relative z-10 px-5 pt-3">
-                <div className="relative h-14 w-14 overflow-hidden rounded-xl border border-black/10">
-                  <img src={pendingAttachment.previewUrl} alt={pendingAttachment.name} className="h-full w-full object-cover" />
-                  <button type="button" onClick={onClearAttachment} className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-black/70 text-white" aria-label="Remove attachment">
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              </div>
+            {!sidebarOpen && (
+              <button type="button" onClick={onToggleSidebar} className="hidden h-10 w-10 place-items-center rounded-xl bg-[#1c1e1d] text-white lg:grid" aria-label="Open sidebar">
+                <PanelLeft className="h-4 w-4" />
+              </button>
             )}
-            <div className="relative z-10 px-5 pt-4 sm:px-6">
-              <TypewriterPlaceholder
-                prompts={[
-                  'Ask seltra to build a skincare brand...',
-                  'Ask seltra to launch a premium coffee brand...',
-                  'Ask seltra to open a fashion store selling...',
-                  'Ask seltra to start a handmade jewelry boutique...',
-                ]}
-                typingSpeed={35}
-                deleteSpeed={18}
-                pauseDuration={1600}
-                active={input.length === 0}
-                resumeDelay={200}
-                className="pointer-events-none absolute inset-x-5 top-4 text-[15px] leading-6 text-neutral-400 sm:inset-x-6 sm:text-base"
-              />
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-                rows={1}
-                wrap="off"
-                placeholder=""
-                aria-label="Describe the store you want to build"
-                className={cn(
-                  'composer-textarea composer-textarea-light relative z-10 h-6 w-full resize-none overflow-x-auto whitespace-pre bg-transparent text-[15px] leading-6 text-neutral-900 focus:outline-none sm:text-base',
-                  input.length === 0 && 'caret-transparent',
-                )}
-              />
-            </div>
-            <div className="relative z-10 flex items-center justify-between gap-3 px-4 pb-3.5 pt-2.5 sm:px-5 sm:pb-4">
-            <label className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-black/[0.08] bg-white text-neutral-400 transition-colors hover:border-black/15 hover:text-neutral-700 sm:h-9 sm:w-9" title="Attach files">
-              <Plus className="h-4 w-4" />
-              <input type="file" className="hidden" accept="image/*" onChange={(e) => { const file = e.target.files?.[0]; if (file) onAttach(file); e.target.value = '' }} />
-            </label>
-            <div className="flex items-center gap-1.5">
-              <span className="hidden items-center gap-1 rounded-full px-3 py-2 text-sm font-medium text-neutral-500 sm:inline-flex">
-                Build <ChevronDown className="h-4 w-4" />
-              </span>
-              <span className="flex h-8 w-8 items-center justify-center rounded-full text-neutral-400 sm:h-9 sm:w-9" title="Voice prompt">
-                <Mic className="h-4 w-4" />
-              </span>
+          </div>
+          <div className="flex justify-center">
+            {showUpgrade && (
               <button
                 type="button"
-                onClick={send}
-                disabled={sending || pendingAttachment?.uploading || (!input.trim() && !pendingAttachment)}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-[#22c55e] text-white transition-colors hover:bg-[#16a34a] disabled:opacity-40 sm:h-9 sm:w-9"
-                title="Build store"
+                onClick={onUpgrade}
+                className="inline-flex items-center gap-2 rounded-full bg-[#141615] py-1.5 pl-3.5 pr-1.5 text-[12px] font-medium text-white shadow-[0_12px_30px_-16px_rgba(0,0,0,0.55)] sm:gap-2.5 sm:pl-4 sm:text-[13px]"
               >
-                {sending ? (
-                  <span className="block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                ) : (
-                  <img src="/seltra/icons/send.png" alt="" className="h-[18px] w-[18px] object-contain" />
-                )}
+                Upgrade to Pro
+                <span className="grid h-7 w-7 place-items-center rounded-full bg-[#22c55e]">
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </span>
               </button>
+            )}
+          </div>
+          <NotificationBell activeStore={activeStore} tone="wash" />
+        </div>
+
+        {announcementVisible && onDismissAnnouncement && (
+          <div className="relative z-30 w-full shrink-0 pt-16">
+            <WhatsNewBanner onDismiss={onDismissAnnouncement} />
+          </div>
+        )}
+
+        <div className="relative z-20 flex w-full flex-col items-center px-4 pt-[20vh] sm:px-6">
+          <div className="flex w-full max-w-[640px] flex-col items-center">
+            <div className="flex flex-col items-center gap-3 sm:flex-row sm:gap-3.5">
+              <img src="/assets/brand/mark.png" alt="" className="h-9 w-9 object-contain sm:h-10 sm:w-10" />
+              <h1 className="text-center text-[1.75rem] font-semibold tracking-[-0.04em] text-neutral-950 sm:text-[2.15rem] lg:text-[2.35rem]">
+                What&apos;s the vision{firstName ? `, ${firstName}` : ''}?
+              </h1>
+            </div>
+
+            <div className="landing-composer-halo landing-composer-halo--crisp mt-8 w-full">
+              <div className="landing-prompt group relative flex min-h-[96px] w-full flex-col overflow-hidden px-4 pb-3 pt-4 text-left">
+                {pendingAttachment && (
+                  <div className="relative z-10 mb-3">
+                    <div className="relative h-14 w-14 overflow-hidden rounded-xl border border-black/10">
+                      <img src={pendingAttachment.previewUrl} alt={pendingAttachment.name} className="h-full w-full object-cover" />
+                      <button type="button" onClick={onClearAttachment} className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-black/70 text-white" aria-label="Remove attachment">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div className="relative z-10 w-full">
+                  <TypewriterPlaceholder
+                    prompts={[
+                      'Ask seltra to build a skincare brand...',
+                      'Ask seltra to launch a premium coffee brand...',
+                      'Ask seltra to open a fashion store selling...',
+                      'Ask seltra to start a handmade jewelry boutique...',
+                    ]}
+                    typingSpeed={35}
+                    deleteSpeed={18}
+                    pauseDuration={1600}
+                    active={input.length === 0}
+                    resumeDelay={200}
+                    className="pointer-events-none absolute inset-x-0 top-0 text-[15px] leading-[22px] text-neutral-400"
+                  />
+                  <textarea
+                    ref={composerRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+                    rows={1}
+                    placeholder=""
+                    aria-label="Describe the store you want to build"
+                    className={cn(
+                      'composer-textarea composer-textarea-light relative z-10 m-0 block w-full resize-none overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent p-0 text-[15px] leading-[22px] text-neutral-900 shadow-none outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0',
+                      input.length === 0 && 'caret-transparent',
+                    )}
+                    style={{ height: 22, minHeight: 22, maxHeight: 160 }}
+                  />
+                </div>
+                <div className="relative z-10 mt-3 flex h-8 shrink-0 items-center justify-between">
+                  <label className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-[rgba(0,0,0,0.08)] bg-white text-neutral-400 transition-colors hover:border-black/15 hover:text-neutral-700" title="Attach files">
+                    <Plus className="h-4 w-4" strokeWidth={2} />
+                    <input type="file" className="hidden" accept="image/*" onChange={(e) => { const file = e.target.files?.[0]; if (file) onAttach(file); e.target.value = '' }} />
+                  </label>
+                  <div className="flex h-8 items-center gap-2">
+                    <span className="hidden h-8 items-center gap-1 text-[14px] font-medium text-neutral-500 sm:inline-flex">
+                      Build <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} />
+                    </span>
+                    <span className="flex h-8 w-8 items-center justify-center text-neutral-400" title="Voice prompt">
+                      <Mic className="h-[18px] w-[18px]" strokeWidth={2} />
+                    </span>
+                    <button
+                      type="button"
+                      onClick={send}
+                      disabled={sending || pendingAttachment?.uploading || (!input.trim() && !pendingAttachment)}
+                      className="flex h-8 w-8 items-center justify-center rounded-full bg-[#22c55e] text-white transition-colors hover:bg-[#16a34a] disabled:opacity-40"
+                      title="Build store"
+                    >
+                      {sending ? (
+                        <span className="block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                      ) : (
+                        <img src="/seltra/icons/send.png" alt="" className="h-4 w-4 object-contain" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-      </div>
+      </section>
 
-      <div className="relative z-10 mx-auto mt-auto w-full max-w-[1040px] px-4 pb-6 sm:px-8 sm:pb-8 lg:px-12 lg:pb-10">
+      {/* Block 2 — dark panel; only ~85px peeks on first load */}
+      <div className="relative z-10 w-full px-12 pb-8">
         {stores.length === 0 ? (
-          <section className="rounded-[28px] bg-[#161817] px-4 py-5 text-white sm:px-6 sm:py-6">
+          <section className="rounded-[32px] bg-[#161817] px-4 py-5 text-white sm:px-6 sm:py-6">
             <h2 className="px-1 text-base font-semibold">Getting started</h2>
             <div className="mt-4 grid gap-3 md:grid-cols-2 md:gap-4">
               {starters.map((desc, index) => (
@@ -2421,7 +2452,7 @@ function EmptyState({
             </div>
           </section>
         ) : (
-          <section className="rounded-[28px] bg-[#161817] px-4 py-5 text-white sm:px-6 sm:py-6">
+          <section className="rounded-[32px] bg-[#161817] px-4 py-5 text-white sm:px-6 sm:py-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-1 rounded-full bg-black/25 p-1">
                 <button type="button" onClick={() => setLibrary('recents')} className={cn('rounded-full px-3.5 py-1.5 text-[13px] font-medium', library === 'recents' ? 'bg-[#2c2e2c] text-white' : 'text-white/55')}>Recents</button>

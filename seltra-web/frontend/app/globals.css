@@ -34,7 +34,7 @@
     scroll-behavior: smooth;
     /* Lovable-style: thin pill scrollbar flush to the window’s right edge */
     scrollbar-width: thin;
-    scrollbar-color: #a3a3a3 #0a0a0a;
+    scrollbar-color: #a3a3a3 #000000;
   }
   body {
     @apply bg-background text-foreground antialiased;
@@ -47,7 +47,7 @@
     height: 6px;
   }
   html::-webkit-scrollbar-track {
-    background: #0a0a0a;
+    background: #000000;
   }
   html::-webkit-scrollbar-thumb {
     background: #a3a3a3;
@@ -60,7 +60,7 @@
     background-clip: padding-box;
   }
   html::-webkit-scrollbar-corner {
-    background: #0a0a0a;
+    background: #000000;
   }
 }
 
@@ -943,11 +943,9 @@ html {
 
 .landing-prompt {
   background: #ffffff;
-  border: 2px solid #f3f2ef;
-  border-radius: 28px;
-  box-shadow:
-    0 14px 28px rgba(0, 0, 0, 0.12),
-    0 36px 72px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 24px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 
 .landing-composer-halo {
@@ -955,15 +953,17 @@ html {
   isolation: isolate;
 }
 
-.landing-composer-halo::before {
+/* Marketing landing only — dashboard composer stays crisp (no glow) */
+.landing-composer-halo:not(.landing-composer-halo--crisp)::before {
   content: '';
   position: absolute;
   z-index: -1;
-  inset: 12% -6% -22%;
+  inset: 18% -4% 8%;
   border-radius: 999px;
   background: radial-gradient(ellipse at center, rgba(132, 204, 22, 0.85), rgba(34, 197, 94, 0.4) 42%, transparent 72%);
   filter: blur(16px);
   animation: halo-breathe 7s ease-in-out infinite;
+  pointer-events: none;
 }
 
 .landing-composer {
@@ -1304,54 +1304,20 @@ html {
   display: none;
 }
 
-/* Nested panels + Tailwind overflow utilities: same Lovable edge scrollbar */
-.scrollbar-lovable,
-.overflow-y-auto,
-.overflow-auto {
+.scrollbar-lovable {
   scrollbar-width: thin;
-  scrollbar-color: #a3a3a3 #0a0a0a;
+  scrollbar-color: #a3a3a3 #000000;
 }
-.scrollbar-lovable::-webkit-scrollbar,
-.overflow-y-auto::-webkit-scrollbar,
-.overflow-auto::-webkit-scrollbar {
+.scrollbar-lovable::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-.scrollbar-lovable::-webkit-scrollbar-track,
-.overflow-y-auto::-webkit-scrollbar-track,
-.overflow-auto::-webkit-scrollbar-track {
-  background: #0a0a0a;
+.scrollbar-lovable::-webkit-scrollbar-track {
+  background: #000000;
 }
-.scrollbar-lovable::-webkit-scrollbar-thumb,
-.overflow-y-auto::-webkit-scrollbar-thumb,
-.overflow-auto::-webkit-scrollbar-thumb {
+.scrollbar-lovable::-webkit-scrollbar-thumb {
   background: #a3a3a3;
   border-radius: 9999px;
-  border: 1px solid transparent;
-  background-clip: padding-box;
-}
-.scrollbar-lovable::-webkit-scrollbar-thumb:hover,
-.overflow-y-auto::-webkit-scrollbar-thumb:hover,
-.overflow-auto::-webkit-scrollbar-thumb:hover {
-  background: #c4c4c4;
-  background-clip: padding-box;
-}
-
-/* Keep hidden scrollbars winning when both utilities are present */
-.scrollbar-none,
-.overflow-y-auto.scrollbar-none,
-.overflow-auto.scrollbar-none,
-.overflow-x-auto.scrollbar-none {
-  scrollbar-width: none !important;
-  -ms-overflow-style: none;
-}
-.scrollbar-none::-webkit-scrollbar,
-.overflow-y-auto.scrollbar-none::-webkit-scrollbar,
-.overflow-auto.scrollbar-none::-webkit-scrollbar,
-.overflow-x-auto.scrollbar-none::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
 }
 
 .composer-textarea {
@@ -1539,10 +1505,32 @@ html {
 }
 
 /* ── Bestseller badge ───────────────────────────────────────────────── */
-/* ── Dashboard shell ─────────────────────────────────────────────────── */
+/* ── Dashboard shell (Lovable: #383837 chrome + pure-black square sidebar) ─ */
 .dash-app {
-  background: #1f2120;
+  background: #383837;
   color: #fff;
+}
+
+/* Only this column scrolls — scrollbar sits on the window’s right edge */
+.dash-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #a3a3a3 #383837;
+}
+.dash-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.dash-scroll::-webkit-scrollbar-track {
+  background: #383837;
+}
+.dash-scroll::-webkit-scrollbar-thumb {
+  background: #a3a3a3;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+.dash-scroll::-webkit-scrollbar-thumb:hover {
+  background: #c4c4c4;
+  background-clip: padding-box;
 }
 
 .dash-canvas {
@@ -1570,8 +1558,10 @@ html {
   box-shadow: none;
 }
 
+/* Sidebar: pure black, square corners, flush — no floating radius */
 .dash-sidebar {
-  background: #1f2120;
+  background: #000000;
+  border-radius: 0;
 }
 
 .dash-nav-item {
