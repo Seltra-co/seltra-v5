@@ -1,0 +1,29 @@
+{
+  "name": "seltra-web-gateway",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "node ../scripts/web/build-gateway.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@nestjs/common": "10.4.20",
+    "@nestjs/core": "10.4.20",
+    "@nestjs/platform-express": "10.4.20",
+    "@prisma/client": "6.19.0",
+    "http-proxy": "1.18.1",
+    "jose": "6.1.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "ws": "8.19.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/http-proxy": "1.17.16",
+    "@types/node": "22.20.1",
+    "@types/ws": "8.18.1",
+    "prisma": "6.19.0",
+    "typescript": "6.0.3"
+  }
+}

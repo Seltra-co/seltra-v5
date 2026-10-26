@@ -95,7 +95,7 @@ export default function StorefrontPreview({
       const token = typeof window !== 'undefined' ? localStorage.getItem('seltra:token') : null
       try {
         const res = await fetch(
-          `${API_BASE}/api/v1/seltra/store/${encodeURIComponent(storeSlug)}`,
+          `${API_BASE}/api/v5/seltra/store/${encodeURIComponent(storeSlug)}`,
           { headers: token ? { Authorization: `Bearer ${token}` } : {} },
         )
         if (!cancelled && res.ok) {

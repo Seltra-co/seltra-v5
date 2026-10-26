@@ -144,7 +144,7 @@ export default function FeaturesPage() {
         <div className="landing-hero-wash is-panel relative mx-auto flex min-h-[560px] max-w-[1400px] items-center justify-center overflow-hidden rounded-b-[2rem] px-5 pb-16 pt-32 sm:h-[88svh] sm:max-h-[860px] sm:rounded-b-[2.5rem] sm:pb-20 sm:pt-28">
           <Aurora tone="hero" />
           <div className="relative z-10 mx-auto max-w-2xl text-center">
-            <h1 className="text-balance text-[2.1rem] font-semibold leading-[1.1] tracking-[-0.035em] text-neutral-950 sm:text-[2.75rem]">
+            <h1 className="text-balance text-[2.1rem] font-semibold leading-[1.12] tracking-[-0.035em] text-neutral-950">
               <span className="text-[#16a34a]">One platform,</span> not six tabs.
             </h1>
             <p className="text-balance mx-auto mt-3 max-w-xl text-[15px] leading-relaxed text-neutral-600 sm:text-base">

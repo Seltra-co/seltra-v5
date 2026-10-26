@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { Eye, EyeOff } from 'lucide-react'
 import { toast } from 'sonner'
-import { clearSeltraSession, getSupabase, storeSeltraSession } from '@/lib/supabase'
+import { getSupabase, storeSeltraSession } from '@/lib/supabase'
 
 const PRODUCTION_API_BASE = 'https://seltra-merchant-backend.onrender.com'
-const SELTRA_PROXY = '/api/seltra'
+const SELTRA_PROXY = '/api/v5'
 const MERCHANT_ID_PATTERN = /^SELTRA-[A-Z0-9]+-[0-9A-Z]+$/i
 
 function apiBases(): string[] {
@@ -27,19 +28,22 @@ function apiBases(): string[] {
   return bases
 }
 
-/** Map `/api/v1/...` onto the seltra proxy or a full API base. */
+/** Map `/api/v5/...` onto the seltra proxy or a full API base. */
 function apiUrl(base: string, path: string) {
-  if (base === SELTRA_PROXY) return `${SELTRA_PROXY}${path.replace(/^\/api\/v1/, '')}`
+  if (base === SELTRA_PROXY) return `${SELTRA_PROXY}${path.replace(/^\/api\/v5/, '')}`
   return `${base}${path}`
 }
 
-type Step = 'login' | 'forgot-email' | 'otp' | 'reset'
+type Step = 'login' | 'login-otp' | 'forgot-email' | 'otp' | 'reset'
 
 type AuthResponse = {
   access_token?: string
   token?: string
   refresh_token?: string
-  user: unknown
+  user?: unknown
+  otpRequired?: boolean
+  merchantId?: string
+  email?: string
 }
 
 function readableError(message: string) {
@@ -153,6 +157,8 @@ export function AuthFlowModal({
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [otp, setOtp] = useState('')
+  const [loginMerchantId, setLoginMerchantId] = useState('')
+  const [maskedEmail, setMaskedEmail] = useState('')
   const [nextPassword, setNextPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -215,8 +221,12 @@ export function AuthFlowModal({
   if (!open) return null
 
   const finish = async (data: AuthResponse) => {
+    if (!data.user) return
     await storeSession(data)
-    onClose()
+    // On the standalone /auth page, onClose navigates to `/`. Running that
+    // navigation alongside the successful nextPath redirect races and can
+    // leave the user on the marketing landing page after signing in.
+    if (variant === 'modal') onClose()
     router.replace(nextPath || '/dashboard')
   }
 
@@ -231,63 +241,63 @@ export function AuthFlowModal({
 
     // Approval emails include Merchant ID — accept it in the password field for www/local.
     if (merchantId) {
-      const { data, error: authError } = await apiPost<AuthResponse>('/api/v1/auth/login', {
+      const { data, error: authError } = await apiPost<AuthResponse>('/api/v5/auth/login', {
         email: trimmedEmail,
         merchantId,
       })
       setLoading(false)
       if (authError || !data) {
-        setError(authError ?? 'Could not log in')
+        const message = authError ?? 'Could not log in'
+        setError(message)
+        toast.error(message)
         return
       }
-      await finish(data)
+      if (data.otpRequired && data.merchantId) {
+        setLoginMerchantId(data.merchantId)
+        setMaskedEmail(data.email || trimmedEmail)
+        setOtp('')
+        setStep('login-otp')
+        toast.success('Sign-in code sent to your email')
+      }
       return
     }
 
-    try {
-      const supabase = getSupabase()
-      const { data: supabaseData, error: supabaseError } = await supabase.auth.signInWithPassword({
-        email: trimmedEmail,
-        password: secret,
-      })
-
-      if (!supabaseError && supabaseData.session) {
-        for (const base of apiBases()) {
-          try {
-            const meRes = await fetch(apiUrl(base, '/api/v1/auth/me'), {
-              headers: { Authorization: `Bearer ${supabaseData.session.access_token}` },
-            })
-            const meJson = await meRes.json().catch(() => ({}))
-            if (meRes.ok && meJson.user) {
-              setLoading(false)
-              await finish({
-                access_token: supabaseData.session.access_token,
-                refresh_token: supabaseData.session.refresh_token,
-                user: meJson.user,
-              })
-              return
-            }
-            if (meRes.status === 401) break
-          } catch {
-            // try next API base
-          }
-        }
-        await supabase.auth.signOut()
-        clearSeltraSession()
-      }
-    } catch {
-      // fall through to backend login
-    }
-
-    const { data, error: authError } = await apiPost<AuthResponse>('/api/v1/auth/login', {
+    const { data, error: authError } = await apiPost<AuthResponse>('/api/v5/auth/login', {
       email: trimmedEmail,
       password: secret,
     })
     setLoading(false)
     if (authError || !data) {
-      setError(authError ?? 'Could not log in')
+      const message = authError ?? 'Could not log in'
+      setError(message)
+      toast.error(message)
       return
     }
+    if (data.otpRequired && data.merchantId) {
+      setLoginMerchantId(data.merchantId)
+      setMaskedEmail(data.email || trimmedEmail)
+      setOtp('')
+      setStep('login-otp')
+      toast.success('Sign-in code sent to your email')
+      return
+    }
+    await finish(data)
+  }
+
+  const submitLoginOtp = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (otp.length !== 6) { setError('Enter the 6-digit code from your email.'); return }
+    setLoading(true)
+    setError(null)
+    const { data, error: verifyError } = await apiPost<AuthResponse>('/api/v5/auth/otp/verify', { merchantId: loginMerchantId, code: otp })
+    setLoading(false)
+    if (verifyError || !data?.user) {
+      const message = verifyError ?? 'That code could not be verified.'
+      setError(message)
+      toast.error(message)
+      return
+    }
+    toast.success('You’re signed in. Welcome to Seltra.')
     await finish(data)
   }
 
@@ -295,7 +305,7 @@ export function AuthFlowModal({
     event.preventDefault()
     setLoading(true)
     setError(null)
-    const { error: sendError } = await apiPost('/api/v1/auth/forgot-password', { email })
+    const { error: sendError } = await apiPost('/api/v5/auth/forgot-password', { email })
     setLoading(false)
     if (sendError) {
       setError(sendError)
@@ -307,13 +317,13 @@ export function AuthFlowModal({
 
   const submitOtp = async (event: React.FormEvent) => {
     event.preventDefault()
-    if (otp.trim().length < 4) {
-      setError('Enter the 4-digit code')
+    if (otp.trim().length < 6) {
+      setError('Enter the 6-digit code')
       return
     }
     setLoading(true)
     setError(null)
-    const { error: verifyError } = await apiPost('/api/v1/auth/forgot-password/verify', { email, code: otp })
+    const { error: verifyError } = await apiPost('/api/v5/auth/forgot-password/verify', { email, code: otp })
     setLoading(false)
     if (verifyError) {
       setError(verifyError)
@@ -336,7 +346,7 @@ export function AuthFlowModal({
     }
     setLoading(true)
     setError(null)
-    const { data, error: resetError } = await apiPost<AuthResponse>('/api/v1/auth/reset-password', {
+    const { data, error: resetError } = await apiPost<AuthResponse>('/api/v5/auth/reset-password', {
       email,
       code: otp,
       password: nextPassword,
@@ -351,20 +361,20 @@ export function AuthFlowModal({
   }
 
   const title =
-    step === 'login' ? 'Log in' : step === 'reset' ? 'Reset Password' : 'Forgot Password?'
+    step === 'login' ? 'Log in' : step === 'login-otp' ? 'Check your email' : step === 'reset' ? 'Reset Password' : 'Forgot Password?'
 
   const onSubmit =
-    step === 'login' ? submitLogin : step === 'forgot-email' ? submitEmail : step === 'otp' ? submitOtp : submitReset
+    step === 'login' ? submitLogin : step === 'login-otp' ? submitLoginOtp : step === 'forgot-email' ? submitEmail : step === 'otp' ? submitOtp : submitReset
 
   const card = (
     <div
       role="dialog"
       aria-modal={variant === 'modal'}
       aria-labelledby="auth-flow-title"
-      className="relative flex w-full flex-col overflow-hidden rounded-[clamp(1.15rem,2vw,1.75rem)] bg-[#f4f6f4] px-[clamp(1rem,4vw,2rem)] py-[clamp(0.7rem,2.4dvh,2.25rem)] shadow-[0_24px_80px_-36px_rgba(15,23,15,0.45)]"
+      className="relative flex w-full flex-col overflow-hidden rounded-[clamp(1.15rem,2vw,1.75rem)] border border-white/70 bg-white/75 px-[clamp(1rem,4vw,2rem)] py-[clamp(0.7rem,2.4dvh,2.25rem)] shadow-[0_24px_80px_-36px_rgba(15,23,15,0.45)] backdrop-blur-2xl"
     >
       <div className="flex items-center justify-between gap-3">
-        <img src="/assets/brand/logo.png" alt="seltra" className="h-[clamp(1.15rem,2.6dvh,1.75rem)] w-auto object-contain" />
+        <Link href="/" aria-label="Seltra home" onClick={onClose} className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#16a34a]"><img src="/assets/brand/logo.png" alt="seltra" className="h-[clamp(1.15rem,2.6dvh,1.75rem)] w-auto object-contain" /></Link>
         <h2 id="auth-flow-title" className="text-[clamp(1.05rem,2.6dvh,1.35rem)] font-semibold tracking-[-0.03em] text-[#16803c]">
           {title}
         </h2>
@@ -433,16 +443,28 @@ export function AuthFlowModal({
             </Field>
           )}
 
+          {step === 'login-otp' && (
+            <div>
+              <p className="text-sm font-medium text-neutral-900">We sent a one-time code to {maskedEmail}.</p>
+              <p className="mt-1 text-xs text-neutral-500">Enter the 6-digit code. It expires in 10 minutes.</p>
+              <label className="sr-only" htmlFor="seltra-login-otp">6-digit sign-in code</label>
+              <input id="seltra-login-otp" inputMode="numeric" autoComplete="one-time-code" maxLength={6} required placeholder="000000" value={otp}
+                onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                className="mt-4 h-14 w-full rounded-xl border border-neutral-300 bg-white text-center text-2xl font-semibold tracking-[0.65em] text-neutral-900 outline-none transition focus:border-[#16a34a] focus:ring-4 focus:ring-[#16a34a]/10" />
+              <button type="button" className="mt-3 text-sm font-medium text-[#16803c] hover:underline" onClick={() => { setStep('login'); setOtp(''); setError(null) }}>Use another email or sign-in method</button>
+            </div>
+          )}
+
           {step === 'otp' && (
             <Field label="Enter OTP">
               <input
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                maxLength={4}
+                maxLength={6}
                 required
-                placeholder="----"
+                placeholder="------"
                 value={otp}
-                onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 4))}
+                onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))}
                 className={`${inputClass} tracking-[0.45em]`}
               />
             </Field>
@@ -483,7 +505,7 @@ export function AuthFlowModal({
           disabled={loading}
           className="mt-[clamp(0.55rem,1.8dvh,1.75rem)] h-[clamp(2.35rem,6dvh,3.25rem)] w-full rounded-[14px] bg-[#16a34a] text-[clamp(0.8125rem,1.8dvh,0.9375rem)] font-medium text-white transition-colors hover:bg-[#15803d] disabled:opacity-70"
         >
-          {loading ? 'Please wait…' : step === 'login' ? 'Log in' : 'Continue'}
+          {loading ? 'Please wait…' : step === 'login' ? 'Log in' : step === 'login-otp' ? 'Verify and sign in' : 'Continue'}
         </button>
         <SlashMark />
         {step === 'login' ? (
@@ -518,7 +540,7 @@ export function AuthFlowModal({
   )
 
   if (variant === 'page') {
-    return <div className="h-dvh overflow-hidden bg-[#f7fbf7] p-3 sm:p-4">{fitted}</div>
+    return <div className="auth-page landing-menu relative h-dvh overflow-hidden p-3 sm:p-4"><div aria-hidden className="auth-glow auth-glow-one"/><div aria-hidden className="auth-glow auth-glow-two"/><div aria-hidden className="auth-grid"/><div className="relative z-10 h-full">{fitted}</div></div>
   }
 
   return (
@@ -526,7 +548,7 @@ export function AuthFlowModal({
       <button
         type="button"
         aria-label="Close"
-        className="absolute inset-0 bg-neutral-950/35"
+        className="absolute inset-0 bg-neutral-950/25 backdrop-blur-xl"
         onClick={() => {
           if (!loading) onClose()
         }}

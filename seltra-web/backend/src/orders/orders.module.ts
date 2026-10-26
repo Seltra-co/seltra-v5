@@ -16,5 +16,6 @@ import { AgentEventsService } from '../agent/agent-events.service'
   ],
   controllers: [OrdersController],
   providers: [OrdersService, TenantEventsService, OrderAgentService, MoolreService, AgentEventsService],
+  exports: [OrdersService],
 })
 export class OrdersModule {}

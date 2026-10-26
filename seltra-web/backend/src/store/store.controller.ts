@@ -83,6 +83,12 @@ export class StoreController {
     return { store }
   }
 
+  @Post('core-workspace')
+  async createCoreWorkspace(@Body() body: { name?: string; prompt?: string }, @Headers('authorization') authorization?: string) {
+    const store = await this.storeService.createCoreWorkspace(body, authorization)
+    return { store }
+  }
+
   @Post('build')
   @HttpCode(202)
   startBuild(@Body() body: CreateStoreDto, @Headers('authorization') authorization?: string) {

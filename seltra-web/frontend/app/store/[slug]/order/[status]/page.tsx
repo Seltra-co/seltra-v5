@@ -57,7 +57,7 @@ export default function OrderStatusPage() {
       setState((current) => (current === 'confirmed' ? current : 'checking'))
 
       try {
-        const res = await fetch(`${API_BASE}/api/v1/payment/verify?reference=${encodeURIComponent(reference)}`)
+        const res = await fetch(`${API_BASE}/api/v5/payment/verify?reference=${encodeURIComponent(reference)}`)
         const data = await res.json().catch(() => ({}))
         if (cancelled) return
 

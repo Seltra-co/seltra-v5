@@ -18,6 +18,9 @@ import { InternalOpsModule } from './internal-ops/internal-ops.module'
 import { NotificationsModule } from './notifications/notifications.module'
 import { InvoicesModule } from './invoices/invoices.module'
 import { MarketingModule } from './marketing/marketing.module'
+import { BuilderModule } from './builder/builder.module'
+import { CoreInternalModule } from './core-internal/core-internal.module'
+import { StorefrontModule } from './storefront/storefront.module'
 
 @Module({
   imports: [
@@ -36,6 +39,9 @@ import { MarketingModule } from './marketing/marketing.module'
     NotificationsModule,
     InvoicesModule,
     MarketingModule,
+    BuilderModule,
+    CoreInternalModule,
+    StorefrontModule,
     InternalOpsModule,
     HealthModule,
     KeepAliveModule,

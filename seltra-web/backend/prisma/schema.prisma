@@ -17,7 +17,12 @@ model User {
 
   application  MerchantApplication?
   tenants      Tenant[]
+  notifications UserNotification[]
+  scheduledEmails ScheduledEmail[]
+  marketingEmailUnsubscribedAt DateTime?
   plan      String   @default("free")
+  completedTours String[] @default([])
+  dismissedAnnouncements String[] @default([])
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -25,6 +30,7 @@ model User {
 
 model Tenant {
   id                    String            @id @default(uuid())
+  coreWorkspaceKey      String?           @unique
   ownerId               String?
   owner                 User? @relation(fields: [ownerId], references: [id])
   name                  String
@@ -67,6 +73,7 @@ model Tenant {
   products              Product[]
   shippingZones         ShippingZone[]
   events                TenantEvent[]
+  notifications         UserNotification[]
   invoices              Invoice[]
   agentEvents           AgentEvent[]
   pendingAgentAction    AgentPendingAction?
@@ -75,6 +82,7 @@ model Tenant {
   disbursements         Disbursement[]
   marketingMessages     MarketingMessage[]
   marketingTemplates    MarketingTemplate[]
+  apps                  TenantApp[]
 
   aiCreditsUsed         Int      @default(0)
   aiCreditsWindowStart  DateTime @default(now())
@@ -90,6 +98,43 @@ model Tenant {
   deliveryTiers        Json?
 
   @@index([ownerId])
+}
+
+model TenantApp {
+  id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  coreAppId       Int
+  name            String
+  status          String   @default("draft")
+  previewUrl      String?
+  publishedUrl    String?
+  lastCommitSha   String?
+  version         Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tenantId, coreAppId])
+  @@index([tenantId])
+}
+
+model ScheduledEmail {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign    String
+  status      String   @default("pending")
+  scheduledAt DateTime
+  claimedAt   DateTime?
+  attempts    Int      @default(0)
+  sentAt      DateTime?
+  lastError   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, campaign])
+  @@index([status, scheduledAt])
+  @@index([status, claimedAt])
 }
 
 model AgentPendingAction {
@@ -112,9 +157,27 @@ model TenantEvent {
   meta Json?
   createdAt DateTime @default(now())
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  notification UserNotification?
 
   @@index([tenantId, createdAt])
   @@index([type, createdAt])
+}
+
+model UserNotification {
+  id            String          @id @default(uuid())
+  userId        String
+  tenantId      String?
+  tenantEventId String?         @unique
+  type          TenantEventType
+  meta          Json?
+  createdAt     DateTime        @default(now())
+  readAt        DateTime?
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant        Tenant?         @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  tenantEvent   TenantEvent?    @relation(fields: [tenantEventId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([tenantId, createdAt])
 }
 
 model OpsAuditLog {

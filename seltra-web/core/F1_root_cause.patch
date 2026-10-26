@@ -1,0 +1,68 @@
+--- a/server/src/main.ts	2026-10-14 16:44:36.091690605 +0000
++++ b/server/src/main.ts	2026-10-14 16:44:36.148232096 +0000
+@@ -1263,7 +1263,7 @@
+             if (runtimeSessionId) sessionOwners.delete(runtimeSessionId);
+             eventSessions.delete(pair);
+           };
+-          runtime.on("message", (data) => {
++          runtime.on("message", (data, isBinary) => {
+             if (
+               runtime.bufferedAmount > config.GATEWAY_WS_BUFFER_LIMIT ||
+               browser.bufferedAmount > config.GATEWAY_WS_BUFFER_LIMIT
+@@ -1272,6 +1272,7 @@
+               return;
+             }
+             try {
++              if (isBinary) throw new Error("binary frame");
+               const frame = JSON.parse(data.toString()) as {
+                 channel?: string;
+                 payload?: { id?: unknown };
+@@ -1286,9 +1287,10 @@
+             } catch {
+               /* forward opaque engine events unchanged */
+             }
+-            if (browser.readyState === WebSocket.OPEN) browser.send(data);
++            if (browser.readyState === WebSocket.OPEN)
++              browser.send(data, { binary: isBinary });
+           });
+-          browser.on("message", (data) => {
++          browser.on("message", (data, isBinary) => {
+             if (
+               browser.bufferedAmount > config.GATEWAY_WS_BUFFER_LIMIT ||
+               runtime.bufferedAmount > config.GATEWAY_WS_BUFFER_LIMIT
+@@ -1296,7 +1298,8 @@
+               closeBoth(1009, "Backpressure limit exceeded");
+               return;
+             }
+-            if (runtime.readyState === WebSocket.OPEN) runtime.send(data);
++            if (runtime.readyState === WebSocket.OPEN)
++              runtime.send(data, { binary: isBinary });
+           });
+           browser.once("close", () => closeBoth());
+           runtime.once("close", () =>
+--- a/src/web/client/install_bridge.ts	2026-10-14 16:44:36.093328606 +0000
++++ b/src/web/client/install_bridge.ts	2026-10-14 16:44:36.148856581 +0000
+@@ -79,11 +79,20 @@
+     const url = new URL(`${prefix}/events`, base);
+     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+     socket = new WebSocket(url);
+-    socket.onmessage = (event) => {
++    socket.onmessage = async (event) => {
+       let frame: { channel?: string; payload?: unknown };
+       try {
+-        frame = JSON.parse(String(event.data));
+-      } catch {
++        // Defense in depth: accept Blob/ArrayBuffer frames, and never swallow
++        // parse failures silently.
++        const raw =
++          typeof event.data === "string"
++            ? event.data
++            : event.data instanceof Blob
++              ? await event.data.text()
++              : new TextDecoder().decode(event.data as ArrayBuffer);
++        frame = JSON.parse(raw);
++      } catch (error) {
++        console.error("[seltra-bridge] unparseable event frame", error);
+         return;
+       }
+       if (frame.channel === "web:session") {

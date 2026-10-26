@@ -82,7 +82,7 @@ export class InvoicesService {
         discount: new Prisma.Decimal(discount),
         total: new Prisma.Decimal(total),
         dueDate: body.dueDate ? new Date(body.dueDate) : undefined,
-        pdfUrl: `/api/v1/invoices/${number}/pdf`,
+        pdfUrl: `/api/v5/invoices/${number}/pdf`,
         items: {
           create: items.map((item) => ({
             description: item.description,

@@ -283,6 +283,29 @@ export class StoreService {
     return result.tenant
   }
 
+  async createCoreWorkspace(input: { name?: string; prompt?: string }, authorization?: string) {
+    const ownerId = await this.getUserIdFromAuth(authorization, true)
+    const user = await prisma.user.findUnique({ where: { id: ownerId }, select: { plan: true } })
+    const storeCount = await prisma.tenant.count({ where: { ownerId } })
+    const limitError = getStoreCreationError(user?.plan, storeCount)
+    if (limitError) throw new BadRequestException(limitError)
+
+    const name = input.name?.trim().slice(0, 80) || 'New store'
+    const prompt = input.prompt?.trim().slice(0, 4000) || ''
+    const baseSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'new-store'
+    const slug = await this.uniqueSlug(baseSlug)
+    return prisma.tenant.create({
+      data: {
+        ownerId,
+        name,
+        slug,
+        status: 'active',
+        canonical: { businessName: name, initialPrompt: prompt, generatedBy: 'seltra-core' },
+      },
+      include: this.storeInclude(),
+    })
+  }
+
   async checkStoreCreationLimit(authorization?: string) {
     const ownerId = await this.getUserIdFromAuth(authorization, false)
     if (!ownerId) {

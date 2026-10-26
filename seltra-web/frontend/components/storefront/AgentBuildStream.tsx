@@ -72,7 +72,7 @@ function describeProgress(step: string | null, images: string[], storeName: stri
 }
 
 function eventSourceUrl(buildId: string) {
-  return `${API_BASE}/api/v1/seltra/store/build/${encodeURIComponent(buildId)}/events`
+  return `${API_BASE}/api/v5/seltra/store/build/${encodeURIComponent(buildId)}/events`
 }
 
 function formatThoughtLabel(startedAt: number | null) {

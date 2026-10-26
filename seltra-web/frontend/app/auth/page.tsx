@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { AuthFlowModal } from '@/components/marketing/AuthFlowModal'
 
 const PRODUCTION_API_BASE = 'https://seltra-merchant-backend.onrender.com'
-const SELTRA_PROXY = '/api/seltra'
+const SELTRA_PROXY = '/api/v5'
 
 function apiBases() {
   const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '')
@@ -22,7 +22,7 @@ function apiBases() {
 }
 
 function apiUrl(base: string, path: string) {
-  if (base === SELTRA_PROXY) return `${SELTRA_PROXY}${path.replace(/^\/api\/v1/, '')}`
+  if (base === SELTRA_PROXY) return `${SELTRA_PROXY}${path.replace(/^\/api\/v5/, '')}`
   return `${base}${path}`
 }
 
@@ -38,7 +38,7 @@ function AuthContent() {
     const tryStores = async () => {
       for (const base of apiBases()) {
         try {
-          const response = await fetch(apiUrl(base, '/api/v1/seltra/store'), {
+          const response = await fetch(apiUrl(base, '/api/v5/seltra/store'), {
             headers: { Authorization: `Bearer ${token}` },
           })
           if (!response.ok) continue

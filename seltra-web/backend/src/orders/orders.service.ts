@@ -11,6 +11,7 @@ interface VerifyOrderPayload {
   tenantId: string
   customerEmail: string
   customerName?: string
+  customerPhone?: string
   cart: Array<{ product: { id: string; name: string; price: string }; quantity: number }>
   totalAmount: number
   currency: string
@@ -53,6 +54,7 @@ export class OrdersService {
         callback_url: payload.callbackUrl,
         metadata: {
           customerName: payload.customerName,
+          customerPhone: payload.customerPhone,
           tenantId: payload.tenantId,
           cart: payload.cart.map((item) => ({
             productId: item.product.id,
@@ -123,6 +125,7 @@ export class OrdersService {
           tenantId: payload.tenantId,
           customerEmail: payload.customerEmail,
           customerName: payload.customerName || '',
+          customerPhone: payload.customerPhone,
           totalAmount: payload.totalAmount,
           currency: payload.currency,
           status: 'pending',
@@ -154,6 +157,46 @@ export class OrdersService {
       console.error('[OrdersService] Failed to save order:', err)
       return { success: false, message: 'Order save failed', reference: payload.reference }
     }
+  }
+
+  /** Confirm a storefront checkout from Paystack's server response, never client totals. */
+  async confirmStorefrontCheckout(reference: string, tenantId: string) {
+    if (!this.paystackSecretKey) return { success: false, message: 'Paystack is not configured', reference }
+    const response = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+      headers: { Authorization: `Bearer ${this.paystackSecretKey}`, 'Content-Type': 'application/json' },
+    })
+    const payload = await response.json().catch(() => null) as {
+      status?: boolean
+      message?: string
+      data?: { status?: string; reference?: string; amount?: number; currency?: string; customer?: { email?: string }; metadata?: { tenantId?: string; customerName?: string; customerPhone?: string; cart?: Array<{ productId?: string; productName?: string; quantity?: number; price?: string }> } }
+    } | null
+    const payment = payload?.data
+    if (!response.ok || !payload?.status || payment?.status !== 'success' || payment.reference !== reference) {
+      return { success: false, message: payload?.message || 'Payment verification failed', reference }
+    }
+    if (payment.metadata?.tenantId !== tenantId || !payment.customer?.email || !Array.isArray(payment.metadata.cart) || !payment.metadata.cart.length) {
+      return { success: false, message: 'Payment does not match this store checkout', reference }
+    }
+    const cart = payment.metadata.cart.map((line) => ({
+      product: { id: String(line.productId || ''), name: String(line.productName || ''), price: String(line.price || '') },
+      quantity: Number(line.quantity),
+    }))
+    if (cart.some((line) => !line.product.id || !Number.isInteger(line.quantity) || line.quantity < 1 || !Number.isFinite(Number(line.product.price)))) {
+      return { success: false, message: 'Payment metadata is invalid', reference }
+    }
+    const expectedAmount = Math.round(cart.reduce((sum, line) => sum + Number(line.product.price) * line.quantity, 0) * 100)
+    if (expectedAmount !== payment.amount) return { success: false, message: 'Paid amount does not match the checkout', reference }
+    const result = await this.verifyAndSave({
+      reference,
+      tenantId,
+      customerEmail: payment.customer.email,
+      customerName: payment.metadata.customerName,
+      customerPhone: payment.metadata.customerPhone,
+      cart,
+      totalAmount: payment.amount / 100,
+      currency: payment.currency || 'GHS',
+    })
+    return { ...result, reference }
   }
 
   async handleWebhook(body: unknown, signature?: string) {

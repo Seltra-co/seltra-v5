@@ -7,6 +7,7 @@ import { Fraunces, Poppins } from 'next/font/google'
 import { ThemeProvider } from 'next-themes'
 import { Toaster } from 'sonner'
 import { StoreProvider } from '@/context/StoreContext'
+import { WorkspaceProvider } from '@/context/WorkspaceContext'
 import { SessionGuard } from '@/components/auth/SessionGuard'
 import { ScrollReveal } from '@/components/marketing/ScrollReveal'
 import { ScrollToTop } from '@/components/marketing/ScrollToTop'
@@ -122,11 +123,48 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="en"
+      data-scroll-behavior="smooth"
       suppressHydrationWarning
       className={`${GeistSans.variable} ${GeistMono.variable} ${displayFont.variable} ${menuFont.variable}`}
     >
       <head>
         <link rel="preload" href="/assets/brand/logo.png" as="image" />
+        <Script
+          id="seltra-structured-data"
+          strategy="beforeInteractive"
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              '@context': 'https://schema.org',
+              '@graph': [
+                {
+                  '@type': 'Organization',
+                  '@id': `${siteUrl}/#organization`,
+                  name: siteName,
+                  url: siteUrl,
+                  logo: `${siteUrl}/assets/brand/mark.png`,
+                },
+                {
+                  '@type': 'WebSite',
+                  '@id': `${siteUrl}/#website`,
+                  name: siteName,
+                  url: siteUrl,
+                  description: defaultDescription,
+                  publisher: { '@id': `${siteUrl}/#organization` },
+                },
+                {
+                  '@type': 'SoftwareApplication',
+                  name: siteName,
+                  applicationCategory: 'BusinessApplication',
+                  operatingSystem: 'Web',
+                  url: siteUrl,
+                  description: defaultDescription,
+                  provider: { '@id': `${siteUrl}/#organization` },
+                },
+              ],
+            }).replace(/</g, '\\u003c'),
+          }}
+        />
       </head>
       <body suppressHydrationWarning>
         <ThemeProvider
@@ -136,44 +174,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           disableTransitionOnChange
           storageKey="seltra-theme"
         >
-          <Script
-            id="seltra-jsonld"
-            type="application/ld+json"
-            dangerouslySetInnerHTML={{
-              __html: JSON.stringify({
-                '@context': 'https://schema.org',
-                '@graph': [
-                  {
-                    '@type': 'Organization',
-                    '@id': `${siteUrl}/#organization`,
-                    name: siteName,
-                    url: siteUrl,
-                    logo: `${siteUrl}/assets/brand/mark.png`,
-                  },
-                  {
-                    '@type': 'WebSite',
-                    '@id': `${siteUrl}/#website`,
-                    name: siteName,
-                    url: siteUrl,
-                    description: defaultDescription,
-                    publisher: { '@id': `${siteUrl}/#organization` },
-                  },
-                  {
-                    '@type': 'SoftwareApplication',
-                    name: siteName,
-                    applicationCategory: 'BusinessApplication',
-                    operatingSystem: 'Web',
-                    url: siteUrl,
-                    description: defaultDescription,
-                    provider: { '@id': `${siteUrl}/#organization` },
-                  },
-                ],
-              }),
-            }}
-          />
-
           <StoreProvider>
-            <SessionGuard>{children}</SessionGuard>
+            <WorkspaceProvider>
+              <SessionGuard>{children}</SessionGuard>
+            </WorkspaceProvider>
             <ScrollReveal />
             <ScrollToTop />
           </StoreProvider>

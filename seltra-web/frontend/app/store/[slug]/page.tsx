@@ -7,7 +7,7 @@ const API_BASE = process.env.API_BASE_URL ?? 'http://localhost:3001'
 
 async function getStore(slug: string) {
   try {
-    const res = await fetch(`${API_BASE}/api/v1/seltra/store/${encodeURIComponent(slug)}`, { next: { revalidate: 30 } })
+    const res = await fetch(`${API_BASE}/api/v5/seltra/store/${encodeURIComponent(slug)}`, { next: { revalidate: 30 } })
     if (!res.ok) return null
     return res.json()
   } catch { return null }

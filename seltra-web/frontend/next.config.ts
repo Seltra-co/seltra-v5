@@ -36,8 +36,8 @@ const nextConfig: NextConfig = {
       'https://seltra-merchant-backend.onrender.com'
     return [
       {
-        source: '/api/v1/:path*',
-        destination: `${api}/api/v1/:path*`,
+        source: '/api/v5/:path*',
+        destination: `${api}/api/v5/:path*`,
       },
     ]
   },

@@ -15,7 +15,7 @@ export class CloudinaryController {
   constructor(private readonly jwtService: JwtService) {}
 
   /**
-   * POST /api/v1/seltra/upload/product-image
+   * POST /api/v5/seltra/upload/product-image
    * Body: { storeId: string, productId: string, imageBase64: string, mimeType: string }
    */
   @Post('product-image')

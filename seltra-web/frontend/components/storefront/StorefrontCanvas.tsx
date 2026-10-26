@@ -1008,11 +1008,23 @@ function MicroComponentRenderer({
     </div>
   )
 
+  const renderedComponent = Component ? <Component {...props} /> : fallback
+
   return (
     <MicroErrorBoundary fallback={safeFallback}>
-      {Component ? <Component {...props} /> : fallback}
+      {stripInlineScripts(renderedComponent)}
     </MicroErrorBoundary>
   )
+}
+
+function stripInlineScripts(node: React.ReactNode): React.ReactNode {
+  return React.Children.map(node, (child) => {
+    if (!React.isValidElement(child)) return child
+    if (typeof child.type === 'string' && child.type.toLowerCase() === 'script') return null
+    const children = (child.props as { children?: React.ReactNode }).children
+    if (children === undefined) return child
+    return React.cloneElement(child, {}, stripInlineScripts(children))
+  })
 }
 
 function isHeroSection(section: ManifestSection) {

@@ -1,6 +1,7 @@
 //seltra-web/frontend/app/careers/page.tsx
 import type { Metadata } from 'next'
 import { BackgroundMark } from '@/components/marketing/BackgroundMark'
+import { CareersStats } from '@/components/marketing/CareersStats'
 import { RolesBoard } from '@/components/marketing/RolesBoard'
 import { SiteFooter } from '@/components/marketing/SiteFooter'
 import { SiteHeader } from '@/components/marketing/SiteHeader'
@@ -53,7 +54,7 @@ export default function CareersPage() {
       <section className="px-3 sm:px-6">
         <div className="careers-hero relative mx-auto flex min-h-[560px] max-w-[1400px] items-center justify-center overflow-hidden rounded-b-[2rem] px-5 pb-16 pt-32 text-center text-white sm:h-[88svh] sm:max-h-[860px] sm:rounded-b-[2.5rem] sm:pt-28">
           <div className="relative z-10 mx-auto max-w-2xl">
-            <h1 className="text-balance text-[2.1rem] font-semibold leading-[1.1] tracking-[-0.035em] sm:text-[2.75rem]">
+            <h1 className="text-balance text-[2.1rem] font-semibold leading-[1.1] tracking-[-0.035em] sm:text-[2.1rem]">
               Build commerce that runs itself.
             </h1>
             <p className="mx-auto mt-3 max-w-xl text-[15px] leading-relaxed text-white/75 sm:text-base">
@@ -67,16 +68,16 @@ export default function CareersPage() {
       </section>
 
       <main className="relative overflow-hidden">
-        <section data-reveal className="pb-14 pt-16 sm:pt-20">
-          <div className="grid items-center gap-10 lg:grid-cols-2 lg:gap-0">
+        <section data-reveal className="relative pb-14 pt-16 sm:pt-20">
+          <div className="mx-auto grid max-w-[1500px] items-center gap-10 lg:grid-cols-2 lg:gap-0">
             <div>
               <div className="mx-auto w-full max-w-[1264px] px-5 sm:px-8 lg:ml-auto lg:mr-0 lg:max-w-[632px] lg:px-10">
-                <h2 className="text-[2rem] font-semibold tracking-[-0.035em] text-[#16a34a] sm:text-[2.4rem]">Who we are.</h2>
-                <p className="mt-4 max-w-md text-[15px] leading-relaxed text-neutral-700">
+                <h2 className="text-[1.75rem] font-semibold tracking-[-0.035em] text-[#16844a] sm:text-[1.9rem]">Who we are.</h2>
+                <p className="mt-4 max-w-md text-[15px] leading-[1.65] text-neutral-700">
                   We are a tiny founding team shipping AI-native e-commerce infrastructure for the next million merchants.
                   If you want real ownership at the earliest stage, come build with us.
                 </p>
-                <p className="mt-4 max-w-md text-[15px] leading-relaxed text-neutral-700">
+                <p className="mt-4 max-w-md text-[15px] leading-[1.65] text-neutral-700">
                   We are looking for people who are excited to ship products used by thousands of merchants and millions of
                   customers — a globally remote, distributed team, moving fast.
                 </p>
@@ -85,7 +86,7 @@ export default function CareersPage() {
                 src="/assets/brand/mark.png"
                 alt=""
                 aria-hidden
-                className="page-mark-light pointer-events-none mt-8 ml-0 block h-auto w-[240px] max-w-none select-none sm:mt-10 sm:w-[360px] lg:w-[460px]"
+                className="page-mark-light pointer-events-none -mt-20 ml-0 block h-auto w-[180px] max-w-none select-none !opacity-[0.14] sm:-mt-28 sm:w-[250px] lg:absolute lg:bottom-0 lg:left-0 lg:-translate-x-[45%] lg:w-[300px]"
               />
             </div>
             <div className="mx-auto w-full max-w-[1264px] px-5 sm:px-8 lg:mr-auto lg:max-w-[632px] lg:px-10">
@@ -105,10 +106,10 @@ export default function CareersPage() {
         </section>
 
         <section data-reveal className="site-dark-card relative mx-auto grid w-[min(1264px,calc(100%-2.5rem))] items-center gap-8 rounded-[1.75rem] p-5 text-white sm:w-[min(1264px,calc(100%-4rem))] sm:p-8 lg:grid-cols-2 lg:gap-14 lg:p-10">
-          <BackgroundMark tone="dark" className="right-0 top-1/2 hidden w-[280px] -translate-y-1/2 lg:block" />
+          <BackgroundMark tone="dark" className="right-0 top-1/2 hidden w-[220px] -translate-y-1/2 !opacity-[0.13] lg:block" />
           <Photo src={perksPhoto} alt="The Seltra team at work" className="aspect-[16/10] rounded-[1.25rem]" />
           <div className="relative">
-            <h2 className="text-[2rem] font-semibold tracking-[-0.035em] sm:text-[2.4rem]">
+            <h2 className="text-[1.75rem] font-semibold tracking-[-0.035em] sm:text-[1.9rem]">
               <span className="text-[#4ade80]">Perks</span> & benefits
             </h2>
             <p className="mt-3 text-[15px] text-white/65">Here is what you get when you join.</p>
@@ -126,21 +127,12 @@ export default function CareersPage() {
         </section>
 
         <section data-reveal className="mx-auto max-w-[1264px] px-5 py-16 sm:px-8 sm:py-20">
-          <div className="grid grid-cols-2 gap-y-8 rounded-[1.5rem] border border-white/80 bg-white/85 px-4 py-8 shadow-[0_30px_70px_-40px_rgba(22,120,60,0.45)] sm:py-10 md:grid-cols-4 md:divide-x md:divide-neutral-200">
-            {STATS.map((stat) => (
-              <div key={stat.label} className="px-2 text-center sm:px-4">
-                <p className="whitespace-nowrap text-[1.45rem] font-semibold tracking-[-0.03em] text-[#16a34a] min-[375px]:text-[1.8rem] sm:text-[2.2rem]">{stat.value}</p>
-                <p className="mx-auto mt-1.5 max-w-[11rem] text-[11px] uppercase leading-snug tracking-[0.12em] text-neutral-600">
-                  {stat.label}
-                </p>
-              </div>
-            ))}
-          </div>
+          <CareersStats stats={STATS} />
         </section>
 
         <section data-reveal className="site-dark-card mx-auto mb-20 grid w-[min(1264px,calc(100%-2.5rem))] items-center gap-8 rounded-[1.75rem] px-6 py-12 text-white sm:mb-24 sm:w-[min(1264px,calc(100%-4rem))] sm:px-12 sm:py-14 lg:grid-cols-2">
           <div>
-            <h2 className="text-[2rem] font-semibold leading-tight tracking-[-0.035em] sm:text-[2.4rem]">
+            <h2 className="text-[1.75rem] font-semibold leading-tight tracking-[-0.035em] sm:text-[1.9rem]">
               We work together,
               <br />
               <span className="text-[#4ade80]">wherever we are.</span>
@@ -164,7 +156,7 @@ export default function CareersPage() {
 
       <div className="bg-[#212121] text-white">
         <section id="roles" className="mx-auto max-w-[1328px] scroll-mt-24 px-5 pb-16 pt-16 sm:px-8 sm:pt-20">
-          <h2 className="text-[2rem] font-semibold leading-tight tracking-[-0.035em] sm:text-[2.4rem]">
+          <h2 className="text-[1.75rem] font-semibold leading-tight tracking-[-0.035em] sm:text-[1.9rem]">
             Find open <span className="text-[#4ade80]">roles available.</span>
           </h2>
           <p className="mt-3 max-w-xl text-[15px] text-white/60">

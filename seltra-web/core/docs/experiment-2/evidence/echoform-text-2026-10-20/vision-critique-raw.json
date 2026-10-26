@@ -1,0 +1,47 @@
+[
+  {
+    "model": "@cf/meta/llama-3.2-11b-vision-instruct",
+    "image": "desktop",
+    "screenshotPath": "docs/experiment-2/evidence/echoform-text-2026-10-20/echoform-desktop-after.png",
+    "response": "The image shows a screenshot of a feedback form on a desktop computer. The form is titled \"EchoForm\" and has a white background with indigo accents.\n\n*   **Title and Tagline**\n    *   The title \"EchoForm\" is displayed in large, bold text at the top of the form.\n    *   Below the title, there is a tagline that reads, \"We value your thoughts. Share quick feedback and help us improve.\"\n*   **Form Fields**\n    *   The form has several fields for users to input their feedback, including:\n        *   Name\n        *   Email\n        *   Rating (with a 5-star scale)\n        *   Message\n*   **Submit Button**\n    *   At the bottom of the form, there is a blue submit button that says \"Send feedback\".\n*   **Background**\n    *   The background of the form is a light gray color, which provides a clean and neutral backdrop for the form fields and submit button.\n*   **Indigo Accent**\n    *   The indigo accent color is used throughout the form, including in the title, tagline, and submit button. This adds a touch of warmth and personality to the design.\n*   **Readability**\n    *   The text on the form is easy to read, with clear headings and concise labels for each field.\n*   **Compact Shape**\n    *   The form is designed to be compact and easy to use, with a simple layout that allows users to quickly and easily provide their feedback.\n\nOverall, the design of the EchoForm is clean, modern, and user-friendly, making it easy for users to provide feedback and help improve the product or service.",
+    "usage": {
+      "prompt_tokens": 6540,
+      "completion_tokens": 348,
+      "total_tokens": 6888,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "neurons": 50.2440659295
+    }
+  },
+  {
+    "model": "@cf/meta/llama-3.2-11b-vision-instruct",
+    "image": "tablet",
+    "screenshotPath": "docs/experiment-2/evidence/echoform-text-2026-10-20/echoform-tablet-after.png",
+    "response": "The image shows a screenshot of the EchoForm feedback form on a tablet, with a white background and indigo accents. The form is divided into sections, each with a clear label and input field.\n\n*   **Name**\n    *   The first section is for the user's name, which is required.\n    *   The input field is labeled \"Name\" and has a placeholder text \"Your name\".\n*   **Email**\n    *   The second section is for the user's email address, which is also required.\n    *   The input field is labeled \"Email\" and has a placeholder text \"you@example.com\".\n*   **Rating**\n    *   The third section is for the user to rate their experience, with a scale of 1-5 stars.\n    *   The input field is labeled \"Rating\" and has a placeholder text \"Tell us what's on your mind...\".\n*   **Message**\n    *   The fourth section is for the user to provide additional feedback or comments.\n    *   The input field is labeled \"Message\" and has a placeholder text \"Tell us what's on your mind...\".\n*   **Send Feedback**\n    *   The final section is a button to submit the feedback form.\n    *   The button is labeled \"Send feedback\" and has a purple color.\n\nOverall, the EchoForm feedback form is designed to be easy to use and understand, with clear labels and input fields. The form is also visually appealing, with a clean and simple design.",
+    "usage": {
+      "prompt_tokens": 6540,
+      "completion_tokens": 308,
+      "total_tokens": 6848,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "neurons": 47.784339219500005
+    }
+  },
+  {
+    "model": "@cf/meta/llama-3.2-11b-vision-instruct",
+    "image": "mobile",
+    "screenshotPath": "docs/experiment-2/evidence/echoform-text-2026-10-20/echoform-mobile-after.png",
+    "response": "The image shows a screenshot of a feedback form on a mobile device, with a white background and a blue button at the bottom. The form is titled \"EchoForm\" and has a subtitle that reads, \"We value your thoughts. Share quick feedback and help us improve.\"\n\nHere are the details of the form:\n\n* **Name**: A text field for entering the user's name.\n\t+ Type: Text\n\t+ Placeholder: \"Your name\"\n* **Email**: A text field for entering the user's email address.\n\t+ Type: Text\n\t+ Placeholder: \"you@example.com\"\n* **Rating**: A rating system with five stars, allowing users to rate their experience.\n\t+ Type: Rating\n\t+ Range: 1-5 stars\n* **Message**: A text area for users to provide feedback or comments.\n\t+ Type: Text area\n\t+ Placeholder: \"Tell us what's on your mind...\"\n* **Send feedback**: A blue button to submit the feedback form.\n\t+ Type: Button\n\t+ Text: \"Send feedback\"\n\nOverall, the form is designed to be simple and easy to use, with clear labels and a clean layout. The use of a rating system and a text area for comments allows users to provide detailed feedback, while the blue button makes it easy to submit the form.",
+    "usage": {
+      "prompt_tokens": 3337,
+      "completion_tokens": 272,
+      "total_tokens": 3609,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "neurons": 31.443864584375
+    }
+  }
+]

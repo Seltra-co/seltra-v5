@@ -24,36 +24,56 @@ export type TenantEventType =
 export class TenantEventsService {
   private readonly logger = new Logger(TenantEventsService.name)
 
-async recordForTenant(
-  tenantId: string | null | undefined,
-  type: TenantEventType,
-   meta?: Prisma.InputJsonValue,
-) {
-  if (!tenantId) return
+  async recordForTenant(tenantId: string | null | undefined, type: TenantEventType, meta?: Prisma.InputJsonValue) {
+    if (!tenantId) return
 
-  const exists = await prisma.tenant.findUnique({
-    where: {
-      id: tenantId,
-    },
-    select: {
-      id: true,
-    },
-  })
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, ownerId: true },
+    })
+    if (!tenant) {
+      this.logger.warn(`Tenant ${tenantId} not found. Skipping ${type}.`)
+      return
+    }
 
-  if (!exists) {
-    this.logger.warn(
-      `Tenant ${tenantId} not found. Skipping ${type}.`,
-    )
-    return
+    await prisma.$transaction(async (tx) => {
+      const event = await tx.tenantEvent.create({ data: { tenantId, type, meta: meta as Prisma.InputJsonValue } })
+      if (tenant.ownerId) {
+        await tx.userNotification.create({
+          data: {
+            userId: tenant.ownerId,
+            tenantId,
+            tenantEventId: event.id,
+            type,
+            meta: meta as Prisma.InputJsonValue,
+          },
+        })
+      }
+    })
   }
 
-  await prisma.tenantEvent.create({
-    data: {
-      tenantId,
-      type,
-      meta: meta as Prisma.InputJsonValue,
-    },
-  })
-}
+  async recordForUser(userId: string, type: TenantEventType, meta?: Prisma.InputJsonValue, requestedTenantId?: string | null) {
+    const tenant = requestedTenantId
+      ? await prisma.tenant.findFirst({ where: { id: requestedTenantId, ownerId: userId }, select: { id: true } })
+      : null
+    if (requestedTenantId && !tenant) {
+      this.logger.warn(`Tenant ${requestedTenantId} is not owned by user ${userId}. Saving ${type} to the user inbox only.`)
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const event = tenant
+        ? await tx.tenantEvent.create({ data: { tenantId: tenant.id, type, meta: meta as Prisma.InputJsonValue } })
+        : null
+      await tx.userNotification.create({
+        data: {
+          userId,
+          tenantId: tenant?.id,
+          tenantEventId: event?.id,
+          type,
+          meta: meta as Prisma.InputJsonValue,
+        },
+      })
+    })
+  }
 
 }

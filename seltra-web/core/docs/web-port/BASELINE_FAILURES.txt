@@ -1,0 +1,7 @@
+Baseline run recorded in BASELINE.md on 2026-10-14:
+
+Node test stage: 55 passed, 0 failed.
+Vitest: 35 files failed; 804 passed, 6 skipped; 54 tests failed, 10,043 passed, 54 skipped; 3 hook errors.
+Duration: 2,840.95 seconds.
+
+The baseline capture did not retain the individual failed test names. Categories recorded at the time were slow hybrid UI/hook timeouts (including Supabase integration setup), Windows symlink/process cleanup limits, external service requests, and an obsolete security-review snapshot. These are not exact names and must not be used as a name-for-name comparison against a final full-suite run.

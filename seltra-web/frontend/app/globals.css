@@ -460,17 +460,15 @@
 }
 
 .landing-hero-wash {
-  background-color: #e5fbe9;
+  background-color: #dfffea;
   background-image:
-    radial-gradient(ellipse 80% 70% at 18% 18%, rgba(190, 242, 100, 0.92), transparent 60%),
-    radial-gradient(ellipse 70% 60% at 82% 8%, rgba(52, 211, 153, 0.78), transparent 56%),
-    radial-gradient(ellipse 60% 50% at 50% 88%, rgba(34, 197, 94, 0.42), transparent 62%),
-    url('/seltra/hero/hero-background.png');
+    radial-gradient(ellipse 48% 62% at 50% 52%, rgba(225, 255, 187, 0.96) 0%, rgba(219, 255, 202, 0.74) 50%, transparent 100%),
+    radial-gradient(ellipse 70% 78% at 0% 100%, rgba(111, 231, 87, 0.98) 0%, rgba(138, 239, 112, 0.82) 44%, transparent 100%),
+    radial-gradient(ellipse 62% 72% at 100% 0%, rgba(111, 229, 202, 0.94) 0%, rgba(170, 244, 224, 0.78) 50%, transparent 100%),
+    linear-gradient(135deg, #d5faec 0%, #e4ffd8 50%, #e8fff0 100%);
   background-position: center;
   background-repeat: no-repeat;
   background-size: cover;
-  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 72%, transparent 100%);
-  mask-image: linear-gradient(180deg, #000 0%, #000 72%, transparent 100%);
 }
 
 .landing-aurora-light,
@@ -817,6 +815,18 @@ html {
   color: #ffffff;
 }
 
+.auth-page {
+  background:
+    radial-gradient(ellipse at 16% 18%, rgba(74, 222, 128, 0.28), transparent 38%),
+    radial-gradient(ellipse at 86% 22%, rgba(45, 212, 191, 0.24), transparent 40%),
+    radial-gradient(ellipse at 54% 100%, rgba(34, 197, 94, 0.18), transparent 48%),
+    linear-gradient(135deg, #eaf7ef 0%, #f8fcf9 48%, #e8f8f2 100%);
+}
+.auth-glow { position: absolute; width: min(44vw, 520px); aspect-ratio: 1; border-radius: 9999px; filter: blur(90px); opacity: .52; pointer-events: none; }
+.auth-glow-one { left: -10%; top: -22%; background: rgba(34, 197, 94, .26); }
+.auth-glow-two { right: -9%; bottom: -28%; background: rgba(45, 212, 191, .28); }
+.auth-grid { position: absolute; inset: 0; opacity: .16; pointer-events: none; background-image: linear-gradient(rgba(20, 83, 45, .12) 1px, transparent 1px), linear-gradient(90deg, rgba(20, 83, 45, .12) 1px, transparent 1px); background-size: 42px 42px; mask-image: radial-gradient(ellipse at center, black 0%, transparent 76%); }
+
 .signup-page .signup-orb {
   position: absolute;
   border-radius: 9999px;
@@ -944,8 +954,8 @@ html {
 .landing-prompt {
   background: #ffffff;
   border: 1px solid rgba(0, 0, 0, 0.06);
-  border-radius: 24px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  border-radius: 30px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 .landing-composer-halo {
@@ -1329,6 +1339,9 @@ html {
 }
 
 .composer-textarea-light {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   scrollbar-color: rgba(15, 23, 15, 0.2) transparent;
 }
 .composer-textarea-light::-webkit-scrollbar-thumb {
@@ -1577,9 +1590,10 @@ html {
 }
 
 .dash-nav-item.is-active {
-  background: #1b8a45;
-  color: #fff;
-  box-shadow: inset 0 0 0 1px rgba(134, 239, 172, 0.35);
+  background: rgba(34, 197, 94, 0.10);
+  color: #22c582;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.08);
 }
 
 .dash-canvas.is-chat {

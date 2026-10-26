@@ -72,9 +72,9 @@ export class ConversationsService {
     )
   }
 
-  async create(title: string, authorization?: string, fallbackUserId?: string) {
+  async create(title: string, authorization?: string) {
     await this.ensureTables()
-    const userId = await this.userId(authorization, fallbackUserId)
+    const userId = await this.userId(authorization)
     const rows = await prisma.$queryRawUnsafe<ConversationRow[]>(
       `INSERT INTO "Conversation" (id, title, user_id)
        VALUES ($1, $2, $3)
@@ -112,11 +112,11 @@ export class ConversationsService {
 
 async createMessage(
   conversationId: string,
-  body: { user_id?: string; role: 'user' | 'assistant'; content: string },
+  body: { role: 'user' | 'assistant'; content: string },
   authorization?: string,
 ) {
   await this.ensureTables()
-  const userId = await this.userId(authorization, body.user_id)
+  const userId = await this.userId(authorization)
 
   // Guard: verify the conversation exists before inserting the message
   const convExists = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
@@ -146,7 +146,7 @@ async createMessage(
   return rows[0]
 }
 
-  private async userId(authorization?: string, fallbackUserId?: string) {
+  private async userId(authorization?: string) {
     const token = authorization?.replace(/^Bearer\s+/i, '')
     if (token) {
       try {
@@ -158,7 +158,6 @@ async createMessage(
         throw new UnauthorizedException('Invalid bearer token')
       }
     }
-    if (fallbackUserId) return fallbackUserId
     throw new UnauthorizedException('Missing bearer token')
   }
 }

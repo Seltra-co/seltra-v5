@@ -16,7 +16,7 @@ export class KeepAliveService {
   @Cron('0 */14 * * * *') // every 14 minutes
   async keepAlive() {
     const baseUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 8000}`
-    const url = `${baseUrl}/api/v1/health`
+    const url = `${baseUrl}/api/v5/health`
 
     try {
       const controller = new AbortController()

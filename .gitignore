@@ -16,3 +16,13 @@ bin-release/
 # Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
 # should NOT be excluded as they contain compiler settings and other important
 # information for Eclipse / Flash Builder.
+# Seltra core private environment and generated runtime state
+**/.env*
+!**/.env.example
+!**/.env.web.example
+seltra-web/core/.web-dev/
+seltra-web/core/out/
+
+# Local integration planning documents
+/SELTRA-CORE-INTEGRATION-FINAL.md
+/AI-CORE-INTEGRATION-ARCHITECTURE.md

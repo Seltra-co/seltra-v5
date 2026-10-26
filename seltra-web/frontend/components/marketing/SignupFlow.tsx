@@ -9,17 +9,17 @@ import { cn } from '@/lib/utils'
 
 const PRODUCTION_API_BASE = 'https://seltra-merchant-backend.onrender.com'
 /** Same-origin proxy that does not forward browser Origin (avoids Render CORS 500s). */
-const SELTRA_PROXY_PREFIX = '/api/seltra'
+const SELTRA_PROXY_PREFIX = '/api/v5'
 
 function submitUrls(): string[] {
   const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '')
-  const urls = [`${SELTRA_PROXY_PREFIX}/application/submit`]
-  if (fromEnv) urls.push(`${fromEnv}/api/v1/application/submit`)
-  urls.push(`${PRODUCTION_API_BASE}/api/v1/application/submit`)
+  const urls = [`${SELTRA_PROXY_PREFIX}/auth/signup`]
+  if (fromEnv) urls.push(`${fromEnv}/api/v5/auth/signup`)
+  urls.push(`${PRODUCTION_API_BASE}/api/v5/auth/signup`)
   if (typeof window !== 'undefined') {
     const host = window.location.hostname
     if (host === 'localhost' || host === '127.0.0.1') {
-      urls.push('http://127.0.0.1:3001/api/v1/application/submit', 'http://localhost:3001/api/v1/application/submit')
+      urls.push('http://127.0.0.1:3001/api/v5/auth/signup', 'http://localhost:3001/api/v5/auth/signup')
     }
   }
   return Array.from(new Set(urls))
@@ -88,6 +88,7 @@ const STEPS = [
   { title: 'Your store', hint: 'Where are you now?' },
   { title: 'You and AI', hint: 'Have you tried AI before?' },
   { title: 'Seltra agents', hint: 'How hands-off do you want to be?' },
+  { title: 'Secure your account', hint: 'Create a password to protect your Seltra workspace' },
 ]
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -99,6 +100,10 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
   const [done, setDone] = useState(false)
   const [region, setRegion] = useState('')
   const [country, setCountry] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [merchantId, setMerchantId] = useState('')
+  const [welcomeEmailSent, setWelcomeEmailSent] = useState(true)
   const [city, setCity] = useState('')
   const [data, setData] = useState<Omit<FormData, 'based_in'>>({
     full_name: '',
@@ -176,10 +181,19 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
       toast.error(parsed.error.issues[0].message)
       return
     }
+    if (password.length < 10 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) {
+      toast.error('Use at least 10 characters with uppercase, lowercase, and a number.')
+      return
+    }
+    if (password !== confirmPassword) {
+      toast.error('Your passwords do not match.')
+      return
+    }
     setLoading(true)
     try {
       let lastMessage = SUBMIT_RETRY_MESSAGE
       let submitted = false
+      let didSendWelcomeEmail = true
 
       for (const url of submitUrls()) {
         try {
@@ -188,7 +202,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
           const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(parsed.data),
+            body: JSON.stringify({ ...parsed.data, password }),
             signal: controller.signal,
           })
           window.clearTimeout(timer)
@@ -202,6 +216,9 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
             lastMessage = SUBMIT_RETRY_MESSAGE
             continue
           }
+          setMerchantId(String(json.merchantId || ''))
+          didSendWelcomeEmail = json.welcomeEmailSent !== false
+          setWelcomeEmailSent(didSendWelcomeEmail)
           submitted = true
           break
         } catch (error) {
@@ -214,6 +231,8 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
 
       if (!submitted) throw new Error(lastMessage)
 
+      if (didSendWelcomeEmail) toast.success('Your Seltra account is ready. Check your email for your merchant ID.')
+      else toast('Your account is ready', { description: 'Email delivery is delayed. Save the merchant ID shown here.' })
       setDone(true)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (error) {
@@ -260,7 +279,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
 
             <div className="signup-card relative z-10 mt-4 overflow-hidden rounded-2xl p-4 sm:p-5">
               {done ? (
-                <Complete />
+                <Complete merchantId={merchantId} welcomeEmailSent={welcomeEmailSent} />
               ) : (
                 <>
                   <div className="flex items-center gap-1.5">
@@ -401,6 +420,17 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
                         </Field>
                       </div>
                     )}
+                    {step === 6 && (
+                      <div className="space-y-3">
+                        <Field label="Create password *">
+                          <TextField type="password" autoComplete="new-password" value={password} onChange={setPassword} placeholder="At least 10 characters" />
+                        </Field>
+                        <Field label="Confirm password *">
+                          <TextField type="password" autoComplete="new-password" value={confirmPassword} onChange={setConfirmPassword} placeholder="Enter the same password again" />
+                        </Field>
+                        <p className="text-xs leading-relaxed text-white/55">Use uppercase and lowercase letters plus a number. We hash and protect your password.</p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="mt-4 flex items-center justify-between border-t border-white/[0.08] pt-3 [@media(max-height:600px)]:mt-3 [@media(max-height:600px)]:pt-2">
@@ -427,7 +457,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
                         onClick={() => void submit()}
                         className="btn btn-primary"
                       >
-                        {loading ? 'Submitting...' : (<>Submit <ArrowRight className="h-3.5 w-3.5" /></>)}
+                        {loading ? 'Creating account...' : (<>Create account <ArrowRight className="h-3.5 w-3.5" /></>)}
                       </button>
                     )}
                   </div>
@@ -441,7 +471,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
   )
 }
 
-function Complete() {
+function Complete({ merchantId, welcomeEmailSent }: { merchantId: string; welcomeEmailSent: boolean }) {
   return (
     <div className="relative flex flex-col items-center justify-center px-2 py-8 text-center sm:px-8">
       <span className="relative z-10 inline-flex">
@@ -451,12 +481,13 @@ function Complete() {
           <Check className="h-3.5 w-3.5 text-white" strokeWidth={3} />
         </span>
       </span>
-      <p className="relative z-10 mt-7 max-w-[15rem] text-[16px] font-medium leading-snug text-white">
-        Your application has been received.
+      <p className="relative z-10 mt-7 max-w-[20rem] text-[16px] font-medium leading-snug text-white">
+        Your Seltra account is ready.
       </p>
-      <p className="relative z-10 mt-5 text-[13px] text-white/60">We&apos;ll email you as soon as your account is ready.</p>
-      <Link href="/" className="btn btn-lg btn-primary relative z-10 mt-6 w-full max-w-[330px]">
-        Back to home
+      <p className="relative z-10 mt-3 text-[13px] text-white/65">{welcomeEmailSent ? 'We sent a welcome email with your merchant ID. Keep it safe for account recovery.' : 'Email delivery is delayed. Save your merchant ID below; you can use it to sign in.'}</p>
+      {merchantId ? <p className="relative z-10 mt-4 rounded-lg border border-[#4ade80]/30 bg-black/20 px-4 py-3 font-mono text-sm font-semibold tracking-wider text-[#86efac]">{merchantId}</p> : null}
+      <Link href="/auth?next=%2Fdashboard" className="btn btn-lg btn-primary relative z-10 mt-6 w-full max-w-[330px]">
+        Continue to log in
       </Link>
       <div aria-hidden className="absolute -bottom-12 left-1/2 z-0 w-52 -translate-x-1/2 opacity-30">
         <div className="signup-deco w-full" />

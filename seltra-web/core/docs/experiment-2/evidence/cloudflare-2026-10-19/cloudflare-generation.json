@@ -1,0 +1,35 @@
+{
+  "status": "partial",
+  "provider": "cloudflare",
+  "modelId": "@cf/moonshotai/kimi-k2.7-code",
+  "promptSha256": "a9c2c5f6d2a6660cd93ff273988ec1a0280887343dda00d43a5becd8a176c845",
+  "figmaImportHttpStatus": 200,
+  "generatedThroughDyadRuntime": true,
+  "generatedPreviewResponsiveStatus": "passed",
+  "projectedDyadModelRequests": 16,
+  "gatewayUsage": {
+    "requests": 17,
+    "succeeded": 17,
+    "failed": 0,
+    "inputTokens": 660789,
+    "outputTokens": 22237
+  },
+  "gatewayUsageDeltaReconciled": true,
+  "responsiveReport": "responsive-report.json",
+  "visualInspection": {
+    "completed": true,
+    "finding": "Desktop and mobile layouts are coherent, readable, and match the light/blue/gear direction. The hero uses a CSS terminal-and-gear illustration instead of the Figma profile photo; image assets were not imported."
+  },
+  "humanReview": {
+    "reviewer": "user",
+    "overallVisualScore": 5,
+    "scale": "1-5",
+    "scope": "Saved 15-screenshot set; not itemized by route or viewport.",
+    "blockingDefectsReported": null,
+    "reviewedAt": "2026-10-20"
+  },
+  "remaining": [
+    "Complete scored visual and functional evaluation, including the reference profile image and all required workflows.",
+    "Complete the critique, repair, recheck, commerce/non-commerce evaluation, and release review."
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "seltra-runtime-native",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Native modules built for the Node ABI used by the Seltra runtime",
+  "dependencies": {
+    "@vscode/ripgrep": "1.17.0",
+    "better-sqlite3": "12.6.2",
+    "dugite": "3.0.0",
+    "node-pty": "1.1.0",
+    "ssh2": "1.17.0"
+  }
+}

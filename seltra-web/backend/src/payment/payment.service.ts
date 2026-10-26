@@ -678,8 +678,8 @@ function activeProvider(): 'moolre' | 'paystack' {
 }
 
 const baseUrl = process.env.SELTRA_BASE_URL || 'http://localhost:3001'
-const moolreCallbackUrl = `${baseUrl}/api/v1/webhooks/moolre`   // POST webhook
-const moolreRedirectUrl = `${baseUrl}/api/v1/webhooks/moolre`   // GET redirect (backend bounces to frontend)
+const moolreCallbackUrl = `${baseUrl}/api/v5/webhooks/moolre`   // POST webhook
+const moolreRedirectUrl = `${baseUrl}/api/v5/webhooks/moolre`   // GET redirect (backend bounces to frontend)
 
 @Injectable()
 export class PaymentService {
@@ -736,7 +736,7 @@ export class PaymentService {
 
     // Build our callback URL for Moolre to POST to when payment completes
     const baseUrl = process.env.SELTRA_BASE_URL || 'http://localhost:3001'
-    const moolreCallbackUrl = `${baseUrl}/api/v1/webhooks/moolre`
+    const moolreCallbackUrl = `${baseUrl}/api/v5/webhooks/moolre`
 
     // Store metadata in the reference lookup — we can't pass arbitrary metadata
     // to Moolre's payment link, so we persist the order as pending immediately

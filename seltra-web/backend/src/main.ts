@@ -1,14 +1,37 @@
 //seltra-web/backend/src/main.ts
 import { NestFactory } from '@nestjs/core'
-import { Logger, RequestMethod } from '@nestjs/common'
+import { Logger, ValidationPipe } from '@nestjs/common'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 import { AppModule } from './app.module'
 import * as bodyParser from 'body-parser'
+import type { NextFunction, Request, Response } from 'express'
 import { InternalOpsModule } from './internal-ops/internal-ops.module'
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap')
+  if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32 || process.env.JWT_SECRET === 'change-me')) {
+    throw new Error('JWT_SECRET must be configured with at least 32 characters in production.')
+  }
   const app = await NestFactory.create(AppModule)
+  app.getHttpAdapter().getInstance().set('trust proxy', 1)
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const requestedUrl = req.url
+    if (/^\/api\/v1(?:\/|\?|$)/.test(requestedUrl)) {
+      req.url = requestedUrl.replace(/^\/api\/v1(?=\/|\?|$)/, '/api/v5')
+    } else if (/^\/internal\/(?:ops|core)(?:\/|\?|$)/.test(requestedUrl)) {
+      req.url = `/api/v5${requestedUrl}`
+    }
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('X-Frame-Options', 'DENY')
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+    res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), payment=(), usb=()')
+    if (req.url.startsWith('/api/v5/')) {
+      res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+    }
+    if (process.env.NODE_ENV === 'production') res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+    next()
+  })
+  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
 
   //Raise JSON + raw body limits to handle base64 image uploads
   app.use(bodyParser.json({ limit: '15mb' }))
@@ -71,12 +94,7 @@ async function bootstrap() {
     credentials: true,
   })
 
-  app.setGlobalPrefix('api/v1', {
-    exclude: [
-      { path: 'internal/ops', method: RequestMethod.ALL },
-      { path: 'internal/ops/(.*)', method: RequestMethod.ALL },
-    ],
-  })
+  app.setGlobalPrefix('api/v5')
 
   // Graceful shutdown
   app.enableShutdownHooks()
@@ -155,7 +173,7 @@ async function bootstrap() {
     `http://localhost:${port}`
 
   logger.log(`Seltra API is running on port ${port}`)
-  logger.log(`Health endpoint: ${baseUrl}/api/v1/health`)
+  logger.log(`Health endpoint: ${baseUrl}/api/v5/health`)
   logger.log(`Internal ops Swagger: ${baseUrl}/internal/docs`)
   logger.log(`[Config] SELTRA_HERO_SECONDARY_CARD = ${process.env.SELTRA_HERO_SECONDARY_CARD}`)
   logger.log(`Keep-alive cron: self-ping every 14 minutes`)

@@ -1,6 +1,6 @@
 //seltra-web/frontend/context/StoreContext.tsx
 'use client'
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { StoreData } from '@/components/storefront/StorefrontPreview'
 
 const KEY = 'seltra:active_store'
@@ -15,7 +15,11 @@ function read(): StoreData | null {
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [store, setStoreState] = useState<StoreData | null>(() => read())
+  // Keep the server and first browser render identical. The persisted store
+  // is restored after hydration so pages don't render different business
+  // copy (or project state) on the two sides of the boundary.
+  const [store, setStoreState] = useState<StoreData | null>(null)
+  useEffect(() => { setStoreState(read()) }, [])
   const value = useMemo<Ctx>(() => ({
     activeStore: store,
     setActiveStore: (s) => {

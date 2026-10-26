@@ -15,7 +15,7 @@ function upstreamBase() {
 
 async function proxy(req: NextRequest, path: string[]) {
   // Never forward browser Origin — Render CORS rejects some Vercel preview hosts.
-  const target = `${upstreamBase()}/api/v1/${path.join('/')}${req.nextUrl.search}`
+  const target = `${upstreamBase()}/api/v5/${path.join('/')}${req.nextUrl.search}`
   const headers = new Headers()
   const contentType = req.headers.get('content-type')
   const authorization = req.headers.get('authorization')

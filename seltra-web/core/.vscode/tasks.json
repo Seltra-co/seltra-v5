@@ -1,0 +1,12 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Validate preview auth recovery",
+			"type": "shell",
+			"command": "npm run web:build; if ($LASTEXITCODE -eq 0) { npm test -- src/preview_iframe/usePreviewIframe.test.tsx src/components/preview_panel/PreviewErrorBanner.test.tsx; if ($LASTEXITCODE -eq 0) { node scripts/web/test-gateway.mjs } }",
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}

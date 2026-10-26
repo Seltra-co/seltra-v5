@@ -27,6 +27,7 @@ import { SiX } from "@icons-pack/react-simple-icons";
 import { Input } from '@/components/ui/input'
 import { toast } from '@/hooks/use-toast'
 import { PromptCTA } from '@/components/marketing/PromptCTA'
+import { MarketingComposer } from '@/components/marketing/MarketingComposer'
 import { TypewriterPlaceholder } from '@/components/marketing/TypewriterPlaceholder'
 import { AuthFlowModal } from '@/components/marketing/AuthFlowModal'
 import { Aurora } from '@/components/marketing/Aurora'
@@ -46,7 +47,7 @@ async function listStores() {
   const token = getToken()
   if (!token) return []
   try {
-    const res = await fetch(`${API_BASE}/api/v1/seltra/store`, {
+    const res = await fetch(`${API_BASE}/api/v5/seltra/store`, {
       headers: { Authorization: `Bearer ${token}` },
     })
     const json = await res.json().catch(() => [])
@@ -170,7 +171,7 @@ const customerQuotes = [
 ]
 
 const seltraStats = [
-  { value: '150+', label: 'Merchants' },
+  { value: '0', label: 'Merchants' },
   { value: '15 min', label: 'Average time from prompt to live store' },
   { value: '100%', label: 'Storefronts generated with zero manual design' },
 ]
@@ -340,108 +341,23 @@ function SimpleModal({
   )
 }
 
-const sectionTitle = 'text-balance text-[1.9rem] font-semibold leading-[1.08] tracking-[-0.035em] sm:text-[2.6rem]'
+const sectionTitle = 'text-balance text-[2.1rem] font-semibold leading-[1.12] tracking-[-0.035em]'
 
 // ─── Hero ─────────────────────────────────────────────────────────────────────
-function Hero({ onNeedAuth }: { onNeedAuth: () => void }) {
-  const [chatInput, setChatInput] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const router = useRouter()
-
-  const handleRun = async () => {
-    setIsLoading(true)
-    const prompt = chatInput.trim()
-    if (prompt) sessionStorage.setItem('seltra:pending_prompt', prompt)
-
-    if (!getToken()) {
-      setIsLoading(false)
-      onNeedAuth()
-      return
-    }
-
-    if (prompt) {
-      router.push('/dashboard')
-      return
-    }
-
-    const existing = await listStores()
-    router.push(existing.length > 0 ? '/dashboard' : '/onboarding')
-  }
-
+function Hero({ onNeedAuth: _onNeedAuth }: { onNeedAuth: () => void }) {
   return (
-    <section className="landing-hero-wash relative flex min-h-[66svh] justify-center overflow-hidden px-5 pb-16 pt-[max(7rem,20svh)] sm:min-h-[78svh] sm:px-6 sm:pb-20 sm:pt-[max(8rem,26svh)] lg:min-h-[100svh] lg:pb-24 lg:pt-[max(9rem,33vh)]">
-      <Aurora tone="hero" />
+    <section className="landing-hero-wash relative flex min-h-[66svh] items-center justify-center overflow-visible px-5 py-16 sm:min-h-[78svh] sm:px-6 lg:min-h-[100svh]">
       <div className="relative z-10 mx-auto w-full max-w-3xl text-center">
         <div className="fade-in w-full">
-          <h1 className="text-balance text-[2.35rem] font-semibold leading-[1.08] tracking-[-0.04em] text-neutral-900 sm:text-5xl md:text-[3.5rem]">
+          <h1 className="text-balance text-[2.1rem] font-semibold leading-[1.12] tracking-[-0.035em] text-neutral-900 sm:text-[2.1rem] md:text-[2.1rem]">
             Build your online store
           </h1>
 
-          <p className="text-balance mx-auto mt-2 max-w-xl text-[16px] font-normal leading-relaxed text-neutral-600 sm:text-lg">
+          <p className="text-balance mx-auto mt-2 max-w-xl text-[16px] font-normal leading-relaxed text-[#555b59] sm:text-base">
             Create a storefront by describing what you need.
           </p>
 
-          <div className="mx-auto mt-8 w-full max-w-[686px] sm:mt-[38px]">
-            <div className="landing-prompt group flex min-h-[111px] flex-col justify-between overflow-hidden text-left">
-              <div className="relative px-5 pt-4 sm:px-6">
-                <TypewriterPlaceholder
-                  prompts={composerPrompts}
-                  typingSpeed={35}
-                  deleteSpeed={18}
-                  pauseDuration={1600}
-                  active={chatInput.length === 0}
-                  resumeDelay={200}
-                  className="pointer-events-none absolute inset-x-5 top-4 text-[15px] leading-6 text-neutral-400 sm:inset-x-6 sm:text-base"
-                />
-                <textarea
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault()
-                      void handleRun()
-                    }
-                  }}
-                  aria-label="Describe your business and what you want to sell"
-                  placeholder=""
-                  wrap="off"
-                  rows={1}
-                  className={cn(
-                    'composer-textarea composer-textarea-light relative z-10 h-6 w-full resize-none overflow-x-auto whitespace-pre bg-transparent text-[15px] leading-6 text-neutral-900 focus:outline-none sm:text-base',
-                    chatInput.length === 0 && 'caret-transparent',
-                  )}
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-3 px-4 pb-3.5 pt-2.5 sm:px-5 sm:pb-4 sm:pt-3">
-                <button type="button" className="flex h-8 w-8 items-center justify-center rounded-full border border-black/[0.08] bg-white text-neutral-400 transition-colors hover:border-black/15 hover:text-neutral-700 sm:h-9 sm:w-9" title="Attach files">
-                  <Plus className="h-4 w-4" />
-                </button>
-
-                <div className="flex items-center gap-1.5">
-                  <button type="button" className="hidden items-center gap-1 rounded-full px-3 py-2 text-sm font-medium text-neutral-500 transition-colors hover:bg-neutral-50 hover:text-neutral-800 sm:inline-flex">
-                    Build <ChevronDown className="h-4 w-4" />
-                  </button>
-                  <button type="button" className="flex h-8 w-8 items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-neutral-50 hover:text-neutral-700 sm:h-9 sm:w-9" title="Voice prompt">
-                    <Mic className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleRun()}
-                    className="flex h-8 w-8 items-center justify-center rounded-full bg-[#16a34a] text-white transition-colors hover:bg-[#15803d] disabled:pointer-events-none disabled:opacity-100 sm:h-9 sm:w-9"
-                    disabled={!chatInput.trim() || isLoading}
-                    title="Build store"
-                  >
-                    {isLoading ? (
-                      <span className="block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                    ) : (
-                      <img src="/seltra/icons/send.png" alt="" className="h-[18px] w-[18px] object-contain" />
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+          <div className="mx-auto mt-8 w-full sm:mt-[38px]"><MarketingComposer prompts={composerPrompts} hero /></div>
         </div>
       </div>
     </section>
@@ -457,7 +373,7 @@ function TrustLogos() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6">
         <div className="mx-auto mb-10 max-w-3xl text-center">
           <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-primary">merchant trust</p>
-          <h2 className="mt-4 text-2xl font-semibold tracking-tight text-foreground sm:text-4xl">
+          <h2 className={cn(sectionTitle, 'mt-4 text-foreground')}>
             Seltra powers merchants everywhere, from first sale to scaling brand
           </h2>
         </div>
@@ -846,7 +762,7 @@ function PlatformCarousel() {
       <div className="container mx-auto px-4 sm:px-6">
         <div className="mb-12 max-w-2xl sm:mb-16">
           <p className="mb-3 font-mono text-xs text-primary">{'// platform'}</p>
-          <h2 className="mb-4 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl md:text-5xl">
+          <h2 className={cn(sectionTitle, 'mb-4')}>
             One platform, not six tabs.
           </h2>
           <p className="text-base text-muted-foreground sm:text-lg">
@@ -936,7 +852,7 @@ function DashboardProof() {
       <div className="container mx-auto px-4 sm:px-6">
           <div className="mx-auto mb-16 max-w-3xl text-center sm:mb-24">
                 <p className="mb-3 font-mono text-xs text-primary">{'// inside seltra'}</p>
-                <h2 className="text-3xl font-semibold tracking-[-0.035em] sm:text-4xl md:text-5xl lg:whitespace-nowrap">
+                <h2 className={cn(sectionTitle, 'lg:whitespace-nowrap')}>
                   Built by agents. Run by agents.
                 </h2>
                 <p className="mt-4 text-base text-muted-foreground sm:text-lg">
@@ -995,10 +911,10 @@ function WhySeltra() {
         className="landing-diamond pointer-events-none absolute left-0 top-6 z-0 h-[88px] w-auto select-none sm:top-8 sm:h-[120px]"
       />
       <div className="relative z-10">
-        <p data-reveal className="text-center text-[1.7rem] font-semibold leading-[1.15] tracking-[-0.03em] text-[#3ddc84] sm:text-[2.15rem] lg:text-[2.4rem]">
+        <p data-reveal className="text-center text-[2.1rem] font-semibold leading-[1.12] tracking-[-0.035em] text-[#3ddc84]">
           Why Seltra exists.
         </p>
-        <h2 data-reveal className="mx-auto mt-4 max-w-[40rem] text-balance text-center text-[1.7rem] font-semibold leading-[1.15] tracking-[-0.03em] text-white sm:mt-5 sm:text-[2.15rem] lg:text-[2.4rem]">
+        <h2 data-reveal className={cn(sectionTitle, 'mx-auto mt-4 max-w-[40rem] text-center text-white sm:mt-5')}>
           “Commerce is becoming autonomous and AI-first.”
         </h2>
         <div data-reveal className="landing-glass-dark relative mx-auto mt-8 max-w-3xl overflow-hidden rounded-[1.5rem] px-6 py-7 sm:mt-10 sm:px-8 sm:py-8">
@@ -1095,6 +1011,23 @@ function Testimonials() {
 }
 
 function Stats() {
+  const [merchantCount, setMerchantCount] = useState(2)
+  useEffect(() => {
+    let alive = true
+    const refresh = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/v5/public/metrics`, { cache: 'no-store' })
+        if (!response.ok) return
+        const metrics = await response.json()
+        if (alive && Number.isFinite(metrics.merchants)) setMerchantCount(metrics.merchants)
+      } catch { /* retain the loading value while the API is unavailable */ }
+    }
+    void refresh()
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') void refresh() }
+    const timer = window.setInterval(refreshWhenVisible, 10_000)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => { alive = false; window.clearInterval(timer); document.removeEventListener('visibilitychange', refreshWhenVisible) }
+  }, [])
   return (
     <section
       id="stats"
@@ -1118,7 +1051,7 @@ function Stats() {
                   index > 0 && 'border-t border-[#22c55e]/25 pt-8 sm:border-l sm:border-t-0 sm:pt-0',
                 )}
               >
-                <p className="text-[2rem] font-semibold tracking-[-0.03em] text-white sm:text-[2.4rem]">{stat.value}</p>
+                <p className="text-[2rem] font-semibold tracking-[-0.03em] text-white sm:text-[2.4rem]">{index === 0 ? `${merchantCount.toLocaleString()}+` : stat.value}</p>
                 <p className="mt-2 max-w-[15rem] text-[14px] leading-snug text-white/65">{stat.label}</p>
               </div>
             ))}

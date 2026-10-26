@@ -9,15 +9,19 @@ export class NotificationsService {
   constructor(private readonly jwtService: JwtService) {}
 
   async list(authorization?: string, tenantId?: string) {
-    const resolvedTenantId = await this.resolveTenantId(authorization, tenantId)
-    const events = await prisma.tenantEvent.findMany({
-      where: { tenantId: resolvedTenantId },
+    const userId = await this.userIdFromAuth(authorization)
+    if (tenantId) {
+      const tenant = await prisma.tenant.findFirst({ where: { id: tenantId, ownerId: userId }, select: { id: true } })
+      if (!tenant) throw new NotFoundException('Store not found')
+    }
+    const notifications = await prisma.userNotification.findMany({
+      where: { userId, ...(tenantId ? { OR: [{ tenantId }, { tenantId: null }] } : {}) },
       orderBy: { createdAt: 'desc' },
       take: 50,
     })
 
-    return events.map((event) => {
-      const meta = (event.meta ?? {}) as NotificationMeta
+    return notifications.map((notification) => {
+      const meta = (notification.meta ?? {}) as NotificationMeta
       const rawAmount = typeof meta.amount === 'string' || typeof meta.amount === 'number' ? meta.amount : undefined
       const amount = rawAmount !== undefined ? Number(rawAmount).toFixed(2) : undefined
       const currency = typeof meta.currency === 'string' ? meta.currency : 'GHS'
@@ -27,76 +31,82 @@ export class NotificationsService {
           ? meta.customerEmail
           : 'Customer'
 
-      if (event.type === 'order_placed') {
+      if (notification.type === 'order_placed') {
         return {
-          id: event.id,
+          id: notification.id,
           type: 'order',
           title: 'New order',
           body: `${customer} placed an order${amount ? ` for ${currency} ${amount}` : ''}.`,
-          createdAt: event.createdAt,
+          createdAt: notification.createdAt,
+          readAt: notification.readAt,
+          tenantId: notification.tenantId,
           meta,
         }
       }
 
-      if (event.type === 'payment_received') {
+      if (notification.type === 'payment_received') {
         return {
-          id: event.id,
+          id: notification.id,
           type: 'payment',
-          title: 'New order',
-          body: `${customer} placed an order${amount ? ` for ${currency} ${amount}` : ''}.`,
-          createdAt: event.createdAt,
+          title: 'Payment received',
+          body: `${customer} completed a payment${amount ? ` of ${currency} ${amount}` : ''}.`,
+          createdAt: notification.createdAt,
+          readAt: notification.readAt,
+          tenantId: notification.tenantId,
           meta,
         }
       }
 
-      if (event.type === 'login') {
+      if (notification.type === 'login') {
         return {
-          id: event.id,
+          id: notification.id,
           type: 'security',
           title: 'Merchant login',
           body: `A dashboard login was recorded${typeof meta.email === 'string' ? ` for ${meta.email}` : ''}.`,
-          createdAt: event.createdAt,
+          createdAt: notification.createdAt,
+          readAt: notification.readAt,
+          tenantId: notification.tenantId,
           meta,
         }
       }
 
-      if (event.type === 'order_status_updated') {
+      if (notification.type === 'order_status_updated') {
         return {
-          id: event.id,
+          id: notification.id,
           type: 'order',
           title: 'Order status updated',
           body: `Order ${typeof meta.orderId === 'string' ? meta.orderId.slice(0, 8) : ''} moved to ${meta.status ?? 'a new status'}.`,
-          createdAt: event.createdAt,
+          createdAt: notification.createdAt,
+          readAt: notification.readAt,
+          tenantId: notification.tenantId,
           meta,
         }
       }
 
       return {
-        id: event.id,
+        id: notification.id,
         type: 'announcement',
-        title: event.type.replace(/_/g, ' '),
+        title: notification.type.replace(/_/g, ' '),
         body: 'Seltra updated your workspace.',
-        createdAt: event.createdAt,
+        createdAt: notification.createdAt,
+        readAt: notification.readAt,
+        tenantId: notification.tenantId,
         meta,
       }
     })
   }
 
-  private async resolveTenantId(authorization?: string, requestedTenantId?: string) {
+  async markAllRead(authorization?: string, tenantId?: string) {
     const userId = await this.userIdFromAuth(authorization)
-    if (requestedTenantId) {
-      const tenant = await prisma.tenant.findFirst({ where: { id: requestedTenantId, ownerId: userId }, select: { id: true } })
+    if (tenantId) {
+      const tenant = await prisma.tenant.findFirst({ where: { id: tenantId, ownerId: userId }, select: { id: true } })
       if (!tenant) throw new NotFoundException('Store not found')
-      return tenant.id
     }
-
-    const tenant = await prisma.tenant.findFirst({
-      where: { ownerId: userId },
-      orderBy: { updatedAt: 'desc' },
-      select: { id: true },
+    await prisma.userNotification.updateMany({
+      where: { userId, ...(tenantId ? { OR: [{ tenantId }, { tenantId: null }] } : {}) , readAt: null },
+      data: { readAt: new Date() },
     })
-    if (!tenant) throw new NotFoundException('No store found for this merchant')
-    return tenant.id
+    return { success: true }
   }
 
   private async userIdFromAuth(authorization?: string) {

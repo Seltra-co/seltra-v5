@@ -1,15 +1,21 @@
 //backend/src/conversations/conversations.controller.ts
 import { Body, Controller, Delete, Get, Headers, Param, Post, Query } from '@nestjs/common'
+import { IsIn, IsString, MaxLength, MinLength } from 'class-validator'
 import { ConversationsService } from './conversations.service'
 
 class CreateConversationDto {
-  user_id?: string
+  @IsString()
+  @MaxLength(60)
   title!: string
 }
 
 class CreateMessageDto {
-  user_id?: string
+  @IsIn(['user', 'assistant'])
   role!: 'user' | 'assistant'
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(100_000)
   content!: string
 }
 
@@ -24,7 +30,7 @@ export class ConversationsController {
 
   @Post()
   create(@Body() body: CreateConversationDto, @Headers('authorization') authorization?: string) {
-    return this.conversationsService.create(body.title, authorization, body.user_id)
+    return this.conversationsService.create(body.title, authorization)
   }
 
   @Get(':id/messages')

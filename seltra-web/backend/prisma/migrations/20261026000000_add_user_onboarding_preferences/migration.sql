@@ -1,0 +1,3 @@
+ALTER TABLE "User"
+  ADD COLUMN "completedTours" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  ADD COLUMN "dismissedAnnouncements" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

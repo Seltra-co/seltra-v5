@@ -1,0 +1,512 @@
+import {
+  parseSubscriptionBillingError,
+  SUBSCRIPTION_BILLING_ERRORS,
+} from "@/shared/subscription_billing_error";
+import { ipc } from "@/ipc/types";
+import { useFreeAgentQuota } from "@/hooks/useFreeAgentQuota";
+import { useFreeModelQuota } from "@/hooks/useFreeModelQuota";
+import { useUserBudgetInfo } from "@/hooks/useUserBudgetInfo";
+import { AI_STREAMING_ERROR_MESSAGE_PREFIX } from "@/shared/texts";
+import {
+  X,
+  ExternalLink as ExternalLinkIcon,
+  CircleArrowUp,
+  MessageSquarePlus,
+  ArrowRight,
+  Clock3,
+  Sparkles,
+} from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+
+export function ChatErrorBox({
+  onDismiss,
+  error,
+  isDyadProEnabled,
+  onStartNewChat,
+  onSwitchToBuildMode,
+}: {
+  onDismiss: () => void;
+  error: string;
+  isDyadProEnabled: boolean;
+  onStartNewChat?: () => void;
+  onSwitchToBuildMode?: () => void;
+}) {
+  const fallbackPrefix = "Fallbacks=[{";
+  const normalizedError = error.includes(fallbackPrefix)
+    ? error.split(fallbackPrefix)[0]
+    : error;
+  const freeAgentQuotaError = parseFreeAgentQuotaError(normalizedError);
+  const isFreeModelQuotaError =
+    normalizedError.includes("dyad_free_model_quota_exceeded") ||
+    normalizedError.includes("FREE_MODEL_QUOTA_EXCEEDED") ||
+    normalizedError.includes("Seltra Free has reached its daily limit.") ||
+    normalizedError.includes("Seltra Free limit");
+  const { messagesLimit, resetTime } = useFreeAgentQuota();
+  const {
+    messagesLimit: freeModelMessagesLimit,
+    resetTime: freeModelResetTime,
+  } = useFreeModelQuota({ enabled: isFreeModelQuotaError });
+  const { userBudget } = useUserBudgetInfo();
+  // Trial Pro users cannot use the Free model (it is hidden from the picker and
+  // rejected by the engine), so don't suggest it to them.
+  const canSuggestFreeModel = userBudget?.isTrial === false;
+
+  if (
+    normalizedError.includes("Seltra workspace token budget exceeded") ||
+    normalizedError.includes("Seltra run token budget exceeded")
+  ) {
+    const workspaceLimit = normalizedError.includes(
+      "Seltra workspace token budget exceeded",
+    );
+    const resetAt = nextUtcBudgetReset();
+    const resetText = new Intl.DateTimeFormat(undefined, {
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: "UTC",
+      timeZoneName: "short",
+    }).format(resetAt);
+
+    return (
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open) onDismiss();
+        }}
+      >
+        <DialogContent
+          overlayClassName="bg-black/45 backdrop-blur-[2px]"
+          className="max-w-[min(30rem,calc(100%-2rem))] gap-0 overflow-hidden rounded-3xl border border-white/10 bg-[#242424] p-8 text-white shadow-2xl sm:max-w-[30rem]"
+          data-testid="seltra-budget-limit-dialog"
+        >
+          <DialogHeader className="items-center gap-4 text-center">
+            <div className="flex size-[4.5rem] items-center justify-center rounded-[1.4rem] bg-[#143d2d] text-[#43c98d] shadow-inner">
+              <Sparkles className="size-9" strokeWidth={1.7} />
+            </div>
+            <DialogTitle className="text-[1.65rem] font-semibold leading-tight tracking-tight text-white">
+              {workspaceLimit
+                ? "Your daily Seltra build limit has been reached"
+                : "This Seltra build has reached its token limit"}
+            </DialogTitle>
+            <DialogDescription className="max-w-[24rem] text-base leading-6 text-white/75">
+              {workspaceLimit
+                ? "Your workspace has used its available AI tokens for today. Your projects and saved changes are safe."
+                : "This build has used its available conversation tokens. Your projects and saved changes are safe."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-7 rounded-2xl border border-white/8 bg-[#1b1b1b] p-4">
+            <div className="flex items-center gap-3">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white/6 text-[#43c98d]">
+                <Clock3 className="size-5" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm text-white/60">
+                  Daily token allowance resets
+                </p>
+                <p className="mt-1 font-medium text-white">{resetText}</p>
+              </div>
+            </div>
+          </div>
+
+          <p className="mt-5 text-center text-sm leading-5 text-white/55">
+            {workspaceLimit
+              ? "You can continue building after the daily reset."
+              : "You can start a new build now, as long as your workspace has tokens remaining."}
+          </p>
+
+          <DialogFooter className="mt-7 sm:justify-center">
+            <Button
+              type="button"
+              onClick={onDismiss}
+              className="min-w-32 rounded-xl bg-[#168456] text-white hover:bg-[#11754b]"
+            >
+              Got it
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  const billingError =
+    parseSubscriptionBillingError(normalizedError) ??
+    (error.includes("LiteLLM Virtual Key expected")
+      ? SUBSCRIPTION_BILLING_ERRORS.KEY_REJECTED
+      : null);
+  if (billingError) {
+    return (
+      <BillingNotice
+        onDismiss={onDismiss}
+        title={billingError.title}
+        message={billingError.description}
+        action={billingError.action}
+        href={billingError.url}
+      />
+    );
+  }
+
+  if (error.includes("doesn't have a free quota tier")) {
+    return (
+      <ChatErrorContainer onDismiss={onDismiss}>
+        {error}
+        <span className="ml-1">
+          <ExternalLink
+            href="https://seltra.example/pro?utm_source=seltra-app&utm_medium=app&utm_campaign=free-quota-error"
+            variant="primary"
+          >
+            Access with Seltra Pro
+          </ExternalLink>
+        </span>{" "}
+        or switch to another model.
+      </ChatErrorContainer>
+    );
+  }
+
+  // Important, this needs to come after the "free quota tier" check
+  // because it also includes this URL in the error message
+  //
+  // Sometimes Seltra Pro can return rate limit errors and we do not want to
+  // show the upgrade to Seltra Pro link in that case because they are
+  // already on the Seltra Pro plan.
+  if (
+    !isDyadProEnabled &&
+    (error.includes("Resource has been exhausted") ||
+      error.includes("https://ai.google.dev/gemini-api/docs/rate-limits") ||
+      error.includes("Provider returned error"))
+  ) {
+    return (
+      <ChatErrorContainer onDismiss={onDismiss}>
+        {error}
+        <div className="mt-2 space-y-2 space-x-2">
+          <ExternalLink
+            href="https://seltra.example/pro?utm_source=seltra-app&utm_medium=app&utm_campaign=rate-limit-error"
+            variant="primary"
+          >
+            Upgrade to Seltra Pro
+          </ExternalLink>
+
+          <ExternalLink href="https://seltra.example/docs/help/ai-rate-limit">
+            Troubleshooting guide
+          </ExternalLink>
+        </div>
+      </ChatErrorContainer>
+    );
+  }
+
+  if (isDyadProEnabled && error.includes("ExceededBudget:")) {
+    return (
+      <BillingNotice
+        onDismiss={onDismiss}
+        title={SUBSCRIPTION_BILLING_ERRORS.OUT_OF_CREDITS.title}
+        message={
+          canSuggestFreeModel
+            ? `Switch to the Free model for ${freeModelMessagesLimit} free messages per day, or add credits to continue.`
+            : "Add credits to continue."
+        }
+        action={SUBSCRIPTION_BILLING_ERRORS.OUT_OF_CREDITS.action}
+        href={SUBSCRIPTION_BILLING_ERRORS.OUT_OF_CREDITS.url}
+      />
+    );
+  }
+  // This is a very long list of model fallbacks that clutters the error message.
+  //
+  // We are matching "Fallbacks=[{" and not just "Fallbacks=" because the fallback
+  // model itself can error and we want to include the fallback model error in the error message.
+  // Example: https://seltra.example/report/issues/1849#issuecomment-3590685911
+  if (error.includes(fallbackPrefix)) {
+    error = normalizedError;
+  }
+  // Handle FREE_AGENT_QUOTA_EXCEEDED error (Basic Agent mode quota exceeded)
+  if (freeAgentQuotaError) {
+    const authoritativeResetTime = freeAgentQuotaError.resetTime ?? resetTime;
+    const resetText = authoritativeResetTime
+      ? ` Your quota resets at ${new Intl.DateTimeFormat(undefined, {
+          hour: "numeric",
+          minute: "2-digit",
+          timeZoneName: "short",
+        }).format(new Date(authoritativeResetTime))}.`
+      : "";
+
+    return (
+      <ChatErrorContainer onDismiss={onDismiss}>
+        You have used all {messagesLimit} free Basic Agent messages for today.
+        {resetText} This message was not sent. Upgrade to Seltra Pro for unlimited
+        Agent access
+        {onSwitchToBuildMode
+          ? ", or switch this chat to Build mode and send it again."
+          : ". To use Build mode, first choose a model other than Seltra Free, then send it again."}
+        <div className="mt-2 flex flex-wrap gap-2">
+          <ExternalLink
+            href="https://seltra.example/pro?utm_source=seltra-app&utm_medium=app&utm_campaign=free-agent-quota-exceeded"
+            variant="primary"
+          >
+            Upgrade to Seltra Pro
+          </ExternalLink>
+          {onSwitchToBuildMode && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onSwitchToBuildMode}
+              className="gap-1.5"
+            >
+              Switch to Build
+              <ArrowRight size={16} />
+            </Button>
+          )}
+        </div>
+      </ChatErrorContainer>
+    );
+  }
+
+  if (isFreeModelQuotaError) {
+    const resetText = freeModelResetTime
+      ? ` Your quota resets at ${new Intl.DateTimeFormat(undefined, {
+          hour: "numeric",
+          minute: "2-digit",
+          timeZoneName: "short",
+        }).format(new Date(freeModelResetTime))}.`
+      : "";
+
+    return (
+      <ChatErrorContainer onDismiss={onDismiss}>
+        <span>
+          You have reached the {freeModelMessagesLimit}-message Seltra Free model
+          limit.
+          {resetText} Switch to paid models.{" "}
+          <ExternalLink
+            href="https://seltra.example/account/subscription?utm_source=seltra-app&utm_medium=app&utm_campaign=exceeded-budget-error"
+            variant="primary"
+          >
+            Get more AI credits
+          </ExternalLink>
+        </span>
+      </ChatErrorContainer>
+    );
+  }
+
+  return (
+    <ChatErrorContainer onDismiss={onDismiss}>
+      <div className="max-h-64 overflow-y-auto scrollbar-on-hover">
+        <ErrorMarkdown>{error}</ErrorMarkdown>
+      </div>
+      <div className="mt-2 space-y-2 space-x-2">
+        {!isDyadProEnabled &&
+          error.includes(AI_STREAMING_ERROR_MESSAGE_PREFIX) &&
+          !error.includes("TypeError: terminated") && (
+            <ExternalLink
+              href="https://seltra.example/pro?utm_source=seltra-app&utm_medium=app&utm_campaign=general-error"
+              variant="primary"
+            >
+              Upgrade to Seltra Pro
+            </ExternalLink>
+          )}
+        {isDyadProEnabled && onStartNewChat && (
+          <Tooltip>
+            <TooltipTrigger
+              onClick={onStartNewChat}
+              className="cursor-pointer inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium shadow-sm focus:outline-none focus:ring-2 bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500"
+            >
+              <span>Start new chat</span>
+              <MessageSquarePlus size={18} />
+            </TooltipTrigger>
+            <TooltipContent>
+              Starting a new chat can fix some issues
+            </TooltipContent>
+          </Tooltip>
+        )}
+        {window.__SELTRA_WEB__ !== true && (
+          <ExternalLink href="https://seltra.example/docs/faq">
+            Read docs
+          </ExternalLink>
+        )}
+      </div>
+    </ChatErrorContainer>
+  );
+}
+
+function nextUtcBudgetReset(now = new Date()): Date {
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1),
+  );
+}
+
+function parseFreeAgentQuotaError(
+  error: string,
+): { resetTime?: number | null } | null {
+  try {
+    const parsed: unknown = JSON.parse(error);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "type" in parsed &&
+      parsed.type === "FREE_AGENT_QUOTA_EXCEEDED"
+    ) {
+      const resetTime = "resetTime" in parsed ? parsed.resetTime : undefined;
+      return {
+        resetTime:
+          typeof resetTime === "number" && Number.isFinite(resetTime)
+            ? resetTime
+            : null,
+      };
+    }
+  } catch {
+    // Fall through to the legacy string marker check below.
+  }
+  return error.includes("FREE_AGENT_QUOTA_EXCEEDED") ? {} : null;
+}
+
+function ExternalLink({
+  href,
+  children,
+  variant = "secondary",
+  icon,
+}: {
+  href: string;
+  children: React.ReactNode;
+  variant?: "primary" | "secondary";
+  icon?: React.ReactNode;
+}) {
+  const baseClasses =
+    "cursor-pointer inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium shadow-sm focus:outline-none focus:ring-2";
+  const primaryClasses =
+    "bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500";
+  const secondaryClasses =
+    "bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 hover:border-blue-300 focus:ring-blue-200";
+  const iconElement =
+    icon ??
+    (variant === "primary" ? (
+      <CircleArrowUp size={18} />
+    ) : (
+      <ExternalLinkIcon size={14} />
+    ));
+
+  return (
+    <a
+      className={`${baseClasses} ${variant === "primary" ? primaryClasses : secondaryClasses}`}
+      onClick={() => ipc.system.openExternalUrl(href)}
+    >
+      <span>{children}</span>
+      {iconElement}
+    </a>
+  );
+}
+
+function ChatErrorContainer({
+  onDismiss,
+  children,
+}: {
+  onDismiss: () => void;
+  children: React.ReactNode | string;
+}) {
+  return (
+    <div
+      data-testid="chat-error-box"
+      className="relative mt-2 bg-red-50 border border-red-200 rounded-md shadow-sm p-2 mx-4"
+    >
+      <button
+        onClick={onDismiss}
+        className="absolute top-2.5 left-2 p-1 hover:bg-red-100 rounded"
+      >
+        <X size={14} className="text-red-500" />
+      </button>
+      <div className="pl-8 py-1 text-sm">
+        <div className="text-red-700 text-wrap">
+          {typeof children === "string" ? (
+            <ErrorMarkdown>{children}</ErrorMarkdown>
+          ) : (
+            children
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ErrorMarkdown({ children }: { children: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ children: linkChildren, ...props }) => (
+          <a
+            {...props}
+            onClick={(e) => {
+              e.preventDefault();
+              if (props.href) {
+                ipc.system.openExternalUrl(props.href);
+              }
+            }}
+            className="text-blue-500 hover:text-blue-700"
+          >
+            {linkChildren}
+          </a>
+        ),
+      }}
+    >
+      {children}
+    </ReactMarkdown>
+  );
+}
+
+function BillingNotice({
+  onDismiss,
+  title,
+  message,
+  action,
+  href,
+}: {
+  onDismiss: () => void;
+  title: string;
+  message: string;
+  action: string;
+  href: string;
+}) {
+  return (
+    <div className="relative mx-4 mt-2 rounded-lg border border-sky-200/60 bg-sky-50 p-4 text-sky-900 dark:border-sky-800/60 dark:bg-sky-950/40 dark:text-sky-100">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        aria-label="Dismiss billing notice"
+        onClick={onDismiss}
+        className="absolute right-2 top-2 size-7 text-sky-700 hover:bg-sky-100 hover:text-sky-900 dark:text-sky-300 dark:hover:bg-sky-900 dark:hover:text-sky-100"
+      >
+        <X className="size-4" />
+      </Button>
+      <div className="space-y-1 pr-6">
+        <p className="text-sm font-semibold leading-5">{title}</p>
+        <p className="text-sm leading-5 text-sky-800 dark:text-sky-200">
+          {message}
+        </p>
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        onClick={() => ipc.system.openExternalUrl(href)}
+        className="mt-3 bg-blue-600 text-white shadow-none hover:bg-blue-700"
+      >
+        {action}
+        <ExternalLinkIcon className="size-3.5" />
+      </Button>
+    </div>
+  );
+}

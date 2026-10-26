@@ -11,6 +11,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useStore } from '@/context/StoreContext'
 import type { StoreData } from '@/components/storefront/StorefrontPreview'
+import { takePendingBuild } from '@/lib/builder/pending'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001'
 
@@ -78,16 +79,29 @@ export default function OnboardingPage() {
   const [revenue, setRevenue] = useState('')
   const [prompt, setPrompt] = useState('')
   const [creating, setCreating] = useState(false)
+  const [pendingBuild, setPendingBuild] = useState<Awaited<ReturnType<typeof takePendingBuild>>>(null)
   // Ref-based guard so HMR reloads don't reset the in-flight lock
   const creatingRef = useRef(false)
 
   useEffect(() => {
     const init = async () => {
       if (!getToken()) { router.replace('/auth?next=/onboarding'); return }
-      const { data } = await apiFetch<StoreData[]>('/api/v1/seltra/store')
+      const { data } = await apiFetch<StoreData[]>('/api/v5/seltra/store')
+      const queued = await takePendingBuild().catch(() => null)
+      setPendingBuild(queued)
+      const legacyPrompt = sessionStorage.getItem('seltra:pending_prompt')
+      if (legacyPrompt) { setPrompt(legacyPrompt); sessionStorage.removeItem('seltra:pending_prompt') }
+      if (queued) setPrompt(queued.prompt)
       if (Array.isArray(data) && data.length > 0) {
         setActiveStore(data[0])
-        window.location.href = '/dashboard'
+        if (queued) {
+          (window as Window & { __seltraBuilderFiles?: File[] }).__seltraBuilderFiles = queued.files
+          const params = new URLSearchParams({ mode: queued.mode })
+          if (queued.prompt) params.set('prompt', queued.prompt)
+          if (queued.figma) params.set('figma', '1')
+          else params.set('autostart', '1')
+          window.location.href = `/dashboard?${params.toString()}`
+        } else window.location.href = '/dashboard'
         return
       }
       const user = getUser()
@@ -96,8 +110,6 @@ export default function OnboardingPage() {
       if (userName) setName(String(userName).split(' ')[0])
     }
     void init()
-    const pending = sessionStorage.getItem('seltra:pending_prompt')
-    if (pending) setPrompt(pending)
   }, [router, setActiveStore])
 
   const idx = order.indexOf(step)
@@ -113,18 +125,10 @@ export default function OnboardingPage() {
     creatingRef.current = true
     setCreating(true)
 
-    const { data, error } = await apiFetch<{ store: StoreData }>('/api/v1/seltra/store', {
+    const { data, error } = await apiFetch<{ store: StoreData }>('/api/v5/seltra/store/core-workspace', {
       method: 'POST',
       body: JSON.stringify({
         name: storeNameFromPrompt(text, business),
-        businessType: business,
-        targetAudience: [
-          productLabels[product] ?? product,
-          revenue ? `monthly revenue: ${revenue}` : '',
-          privacy === 'share'
-            ? 'conversation sharing: anonymized improvement ok'
-            : 'conversation sharing: private',
-        ].filter(Boolean).join('; '),
         prompt: text,
       }),
     })
@@ -138,7 +142,11 @@ export default function OnboardingPage() {
 
     setActiveStore(data.store)
     // Hard navigate — avoids any race between router, StoreContext, and HMR
-    window.location.href = '/dashboard'
+    if (pendingBuild) (window as Window & { __seltraBuilderFiles?: File[] }).__seltraBuilderFiles = pendingBuild.files
+    const params = new URLSearchParams({ mode: pendingBuild?.mode ?? 'build', prompt: text })
+    if (pendingBuild?.figma) params.set('figma', '1')
+    else params.set('autostart', '1')
+    window.location.href = `/dashboard?${params.toString()}`
   }
 
   return (

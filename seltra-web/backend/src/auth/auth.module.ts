@@ -14,6 +14,6 @@ import { ResendService } from '../resend/resend.service'
   ],
   controllers: [AuthController],
   providers: [AuthService, TenantEventsService, ResendService],
-  exports: [AuthService],
+  exports: [AuthService, JwtModule],
 })
 export class AuthModule {}

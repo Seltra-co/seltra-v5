@@ -1,0 +1,110 @@
+{
+  "status": "partial",
+  "verificationDate": "2026-10-20",
+  "source": "Dyad-generated EchoForm from a written prompt; no Figma import",
+  "provider": "cloudflare",
+  "builderDefault": "@cf/moonshotai/kimi-k2.7-code",
+  "visionModel": "@cf/meta/llama-3.2-11b-vision-instruct",
+  "route": "/",
+  "viewports": [
+    {
+      "name": "desktop",
+      "width": 1440,
+      "height": 900,
+      "httpStatus": 200,
+      "documentWidth": 1440,
+      "fontsStatus": "loaded",
+      "brokenImages": 0,
+      "screenshotBefore": "echoform-desktop.png",
+      "screenshotAfter": "echoform-desktop-after.png"
+    },
+    {
+      "name": "tablet",
+      "width": 768,
+      "height": 1024,
+      "httpStatus": 200,
+      "documentWidth": 768,
+      "fontsStatus": "loaded",
+      "brokenImages": 0,
+      "screenshotBefore": "echoform-tablet.png",
+      "screenshotAfter": "echoform-tablet-after.png"
+    },
+    {
+      "name": "mobile",
+      "width": 390,
+      "height": 844,
+      "httpStatus": 200,
+      "documentWidth": 390,
+      "fontsStatus": "loaded",
+      "brokenImages": 0,
+      "screenshotBefore": "echoform-mobile.png",
+      "screenshotAfter": "echoform-mobile-after.png"
+    }
+  ],
+  "interactionChecks": {
+    "requiredFieldErrors": "passed",
+    "successfulSubmission": "passed",
+    "keyboardRatingArrowNavigation": "passed",
+    "browserAndConsoleErrors": []
+  },
+  "targetedRepair": [
+    "Use a warmer stone-50 page background.",
+    "Expose required semantics on text inputs, message, and rating group.",
+    "Increase placeholder contrast from slate-400 to slate-500."
+  ],
+  "interactionStateScreenshots": [
+    "echoform-mobile-validation-after.png",
+    "echoform-mobile-success-after.png",
+    "echoform-mobile-validation-rerun.png",
+    "echoform-mobile-validation-recheck.png",
+    "echoform-mobile-success-recheck.png"
+  ],
+  "latestGeneratedBuild": {
+    "sourceApp": ".web-dev/apps/echoform-text-2026-10-20-rerun/",
+    "origin": "Second text-only generation through the existing Dyad runtime; no Figma import",
+    "repair": [
+      "Change the page background from slate-50 to stone-50.",
+      "Raise input and message placeholder contrast from slate-400 to slate-500."
+    ],
+    "productionBuild": "passed",
+    "focusedBrowserRecheck": "passed",
+    "viewports": ["1440x900", "768x1024", "390x844"],
+    "interactionChecks": [
+      "required field errors",
+      "ArrowRight changes the selected rating",
+      "valid submission shows the accessible success status"
+    ],
+    "browserAndConsoleErrors": [],
+    "beforeScreenshots": [
+      "echoform-desktop.png",
+      "echoform-tablet.png",
+      "echoform-mobile.png"
+    ],
+    "afterScreenshots": [
+      "echoform-desktop-recheck.png",
+      "echoform-tablet-recheck.png",
+      "echoform-mobile-recheck.png"
+    ],
+    "dyadHostAttachedVerificationReport": false
+  },
+  "liveDyadE2E": "The full run generated the app and passed responsive and required-field browser assertions, then timed out because its rating selector did not match the generated radio button. The selector has been corrected; the focused replay passed against the preserved and repaired production build. The full generation test was not repeated.",
+  "latestVisionCritique": {
+    "status": "unstructured_and_inconsistent",
+    "model": "@cf/meta/llama-3.2-11b-vision-instruct",
+    "rawOutput": "vision-critique-latest.json",
+    "notes": "HTTP 200 for all three screenshots. Desktop and tablet responses included textual dimension scores; mobile omitted numeric scores. Responses also contained generic or unsupported claims, so they are retained as model output but not accepted as the required structured scorecard."
+  },
+  "dyadHostAttachedScreenshotReport": false,
+  "visionCritique": "Descriptive image review returned by the configured vision model; its requested numeric JSON scorecard was not followed. Raw responses are preserved in vision-critique-raw.json.",
+  "humanVisualReview": {
+    "status": "complete",
+    "score": 4,
+    "feedback": "Good, minor polish needed.",
+    "blockingDefect": "None specified by the reviewer.",
+    "reviewedScreenshots": [
+      "echoform-desktop-recheck.png",
+      "echoform-tablet-recheck.png",
+      "echoform-mobile-recheck.png"
+    ]
+  }
+}

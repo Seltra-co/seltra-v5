@@ -1,0 +1,158 @@
+﻿{
+    "kind":  "verification_report",
+    "status":  "needs_review",
+    "content":  {
+                    "status":  "needs_review",
+                    "routes":  [
+                                   {
+                                       "path":  "/",
+                                       "status":  "passed",
+                                       "evidence":  [
+                                                        "Dyad run-app succeeded and the authenticated preview URL returned HTTP 200.",
+                                                        "Feedback form required-field errors, keyboard rating navigation, and valid submission passed."
+                                                    ]
+                                   }
+                               ],
+                    "viewports":  [
+                                      {
+                                          "name":  "1440x900",
+                                          "route":  "/",
+                                          "width":  1440,
+                                          "height":  900,
+                                          "status":  "passed",
+                                          "screenshotPath":  "docs\\experiment-2\\evidence\\phase4-echoform-2026-10-22\\echoform-desktop.png"
+                                      },
+                                      {
+                                          "name":  "768x1024",
+                                          "route":  "/",
+                                          "width":  768,
+                                          "height":  1024,
+                                          "status":  "passed",
+                                          "screenshotPath":  "docs\\experiment-2\\evidence\\phase4-echoform-2026-10-22\\echoform-tablet.png"
+                                      },
+                                      {
+                                          "name":  "390x844",
+                                          "route":  "/",
+                                          "width":  390,
+                                          "height":  844,
+                                          "status":  "passed",
+                                          "screenshotPath":  "docs\\experiment-2\\evidence\\phase4-echoform-2026-10-22\\echoform-mobile.png"
+                                      }
+                                  ],
+                    "findings":  [
+
+                                 ],
+                    "automatedTests":  [
+                                           {
+                                               "specPath":  "e2e-web/experiment4-echoform-verification.spec.ts",
+                                               "status":  "passed",
+                                               "total":  1,
+                                               "passed":  1,
+                                               "failed":  0,
+                                               "blocked":  0,
+                                               "skipped":  0
+                                           }
+                                       ],
+                    "attachedScreenshotPaths":  [
+                                                    "docs\\experiment-2\\evidence\\phase4-echoform-2026-10-22\\echoform-desktop.png",
+                                                    "docs\\experiment-2\\evidence\\phase4-echoform-2026-10-22\\echoform-tablet.png",
+                                                    "docs\\experiment-2\\evidence\\phase4-echoform-2026-10-22\\echoform-mobile.png"
+                                                ],
+                    "limitations":  [
+                                        "This Playwright run exercised Dyad\u0027s real authenticated preview, but it was launched directly by the repository E2E harness rather than the Local Agent run_tests tool.",
+                                        "Automated browser evidence does not grant human visual approval. The prior human 4/5 review covered the same repaired EchoForm source; visual status remains needs_review."
+                                    ]
+                },
+    "runEvidence":  {
+                        "appId":  1,
+                        "chatId":  1,
+                        "promptVersion":  "Phase 4 deterministic browser replay; no generation prompt sent",
+                        "generationModelId":  null,
+                        "previewUrl":  "http://app-1.localhost:8081/",
+                        "previewReadiness":  "passed (HTTP 200)",
+                        "runAppRpcStatus":  200,
+                        "browserEvidence":  [
+                                                {
+                                                    "route":  "/",
+                                                    "documentReady":  true,
+                                                    "bodyHasContent":  true,
+                                                    "viewportWidth":  1440,
+                                                    "documentWidth":  1440,
+                                                    "horizontalOverflow":  false,
+                                                    "brokenImageCount":  0,
+                                                    "fontsReady":  true,
+                                                    "width":  1440,
+                                                    "height":  900,
+                                                    "httpStatus":  200,
+                                                    "consoleErrorCount":  0,
+                                                    "runtimeErrorCount":  0,
+                                                    "failedRequestCount":  0,
+                                                    "screenshotPath":  "docs\\experiment-2\\evidence\\phase4-echoform-2026-10-22\\echoform-desktop.png"
+                                                },
+                                                {
+                                                    "route":  "/",
+                                                    "documentReady":  true,
+                                                    "bodyHasContent":  true,
+                                                    "viewportWidth":  768,
+                                                    "documentWidth":  768,
+                                                    "horizontalOverflow":  false,
+                                                    "brokenImageCount":  0,
+                                                    "fontsReady":  true,
+                                                    "width":  768,
+                                                    "height":  1024,
+                                                    "httpStatus":  200,
+                                                    "consoleErrorCount":  0,
+                                                    "runtimeErrorCount":  0,
+                                                    "failedRequestCount":  0,
+                                                    "screenshotPath":  "docs\\experiment-2\\evidence\\phase4-echoform-2026-10-22\\echoform-tablet.png"
+                                                },
+                                                {
+                                                    "route":  "/",
+                                                    "documentReady":  true,
+                                                    "bodyHasContent":  true,
+                                                    "viewportWidth":  390,
+                                                    "documentWidth":  390,
+                                                    "horizontalOverflow":  false,
+                                                    "brokenImageCount":  0,
+                                                    "fontsReady":  true,
+                                                    "width":  390,
+                                                    "height":  844,
+                                                    "httpStatus":  200,
+                                                    "consoleErrorCount":  0,
+                                                    "runtimeErrorCount":  0,
+                                                    "failedRequestCount":  0,
+                                                    "screenshotPath":  "docs\\experiment-2\\evidence\\phase4-echoform-2026-10-22\\echoform-mobile.png"
+                                                }
+                                            ],
+                        "formValidation":  "passed",
+                        "keyboardRatingNavigation":  "passed",
+                        "successfulSubmission":  "passed",
+                        "beforeAfterEvidence":  {
+                                                    "before":  [
+                                                                   "docs/experiment-2/evidence/echoform-text-2026-10-20/echoform-desktop.png",
+                                                                   "docs/experiment-2/evidence/echoform-text-2026-10-20/echoform-tablet.png",
+                                                                   "docs/experiment-2/evidence/echoform-text-2026-10-20/echoform-mobile.png"
+                                                               ],
+                                                    "after":  [
+                                                                  "docs\\experiment-2\\evidence\\phase4-echoform-2026-10-22\\echoform-desktop.png",
+                                                                  "docs\\experiment-2\\evidence\\phase4-echoform-2026-10-22\\echoform-tablet.png",
+                                                                  "docs\\experiment-2\\evidence\\phase4-echoform-2026-10-22\\echoform-mobile.png"
+                                                              ],
+                                                    "repairFromPriorRun":  [
+                                                                               "Warm the background with stone-50.",
+                                                                               "Raise input and message placeholder contrast to slate-500.",
+                                                                               "Add required input and rating semantics."
+                                                                           ]
+                                                },
+                        "consoleErrors":  [
+
+                                          ],
+                        "runtimeErrors":  [
+
+                                          ],
+                        "failedRequests":  [
+
+                                           ],
+                        "visualStatus":  "needs_review"
+                    }
+}

@@ -1819,7 +1819,7 @@ export class AgentService {
         customerEmail: payload.customerEmail,
         subtotal: new Prisma.Decimal(subtotal),
         total: new Prisma.Decimal(subtotal),
-        pdfUrl: '/api/v1/invoices/' + number + '/pdf',
+        pdfUrl: '/api/v5/invoices/' + number + '/pdf',
         items: {
           create: items.map((item) => ({
             description: item.description,

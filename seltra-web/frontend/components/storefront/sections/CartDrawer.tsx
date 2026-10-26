@@ -72,7 +72,7 @@ export function CartDrawer({
     setLoading(true)
     try {
       const tok = typeof window !== 'undefined' ? localStorage.getItem('seltra:token') : null
-      const res = await fetch(`${API_BASE}/api/v1/payment/initialize`, {
+      const res = await fetch(`${API_BASE}/api/v5/payment/initialize`, {
         method:'POST', headers:{ 'Content-Type':'application/json', ...(tok?{Authorization:`Bearer ${tok}`}:{}) },
         body: JSON.stringify({
           tenantId:storeId,
