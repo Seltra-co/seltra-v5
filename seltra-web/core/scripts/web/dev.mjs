@@ -246,9 +246,10 @@ try {
     });
   }
   const gatewayPort = Number(config.GATEWAY_PORT || 8080);
-  const gatewayHost =
-    config.GATEWAY_HOST ||
-    (process.env.RENDER === "true" ? "0.0.0.0" : "127.0.0.1");
+  const isRenderDeployment = process.env.RENDER === "true";
+  const gatewayHost = isRenderDeployment
+    ? "0.0.0.0"
+    : config.GATEWAY_HOST || "127.0.0.1";
   const gatewayPublicHosts = [
     config.GATEWAY_PUBLIC_HOSTS,
     process.env.RENDER_EXTERNAL_HOSTNAME,
@@ -472,7 +473,9 @@ try {
     gatewayStartupTimeoutMs,
   );
   if (signalReceived) throw new Error("Startup interrupted.");
-  console.log(`Seltra web is running at ${gatewayOrigin}`);
+  console.log(
+    `Seltra web gateway is listening on ${gatewayHost}:${gatewayPort}.`,
+  );
 
   const childExit = new Promise((resolve) => {
     gateway.once("exit", (code) => resolve({ name: "Gateway", code }));
