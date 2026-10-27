@@ -246,12 +246,22 @@ try {
     });
   }
   const gatewayPort = Number(config.GATEWAY_PORT || 8080);
+  const gatewayHost =
+    config.GATEWAY_HOST ||
+    (process.env.RENDER === "true" ? "0.0.0.0" : "127.0.0.1");
+  const gatewayPublicHosts = [
+    config.GATEWAY_PUBLIC_HOSTS,
+    process.env.RENDER_EXTERNAL_HOSTNAME,
+  ]
+    .map((value) => value?.trim())
+    .filter(Boolean)
+    .join(",");
   const gatewayOrigin = `http://localhost:${gatewayPort}`;
   if (gatewayPort !== 8080 && config.SELTRA_WEB_E2E !== "1")
     throw new Error(
       "M1 requires GATEWAY_PORT=8080 outside the isolated E2E harness.",
     );
-  if (!(await portIsFree(gatewayPort, config.GATEWAY_HOST || "127.0.0.1"))) {
+  if (!(await portIsFree(gatewayPort, gatewayHost))) {
     throw new Error(`Gateway port ${gatewayPort} is already in use.`);
   }
 
@@ -376,8 +386,8 @@ try {
   const gatewayEnv = {
     ...runtimeEnv,
     NODE_ENV: config.NODE_ENV || "development",
-    GATEWAY_HOST: config.GATEWAY_HOST || "127.0.0.1",
-    GATEWAY_PUBLIC_HOSTS: config.GATEWAY_PUBLIC_HOSTS || "",
+    GATEWAY_HOST: gatewayHost,
+    GATEWAY_PUBLIC_HOSTS: gatewayPublicHosts,
     GATEWAY_PORT: String(gatewayPort),
     GATEWAY_ALLOWED_ORIGINS: config.GATEWAY_ALLOWED_ORIGINS || gatewayOrigin,
     CORE_TOKEN_SECRET: config.CORE_TOKEN_SECRET,
