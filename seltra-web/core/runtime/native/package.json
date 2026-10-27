@@ -3,6 +3,14 @@
   "private": true,
   "version": "1.0.0",
   "description": "Native modules built for the Node ABI used by the Seltra runtime",
+  "allowScripts": {
+    "@vscode/ripgrep@1.17.0": true,
+    "better-sqlite3@12.6.2": true,
+    "cpu-features@0.0.10": true,
+    "dugite@3.0.0": true,
+    "node-pty@1.1.0": true,
+    "ssh2@1.17.0": true
+  },
   "dependencies": {
     "@vscode/ripgrep": "1.17.0",
     "better-sqlite3": "12.6.2",

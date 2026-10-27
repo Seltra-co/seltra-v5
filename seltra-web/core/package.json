@@ -23,7 +23,7 @@
     "web:build": "node scripts/web/build.mjs",
     "web:test": "node scripts/web/test.mjs",
     "web:e2e": "playwright test --config e2e-web/playwright.web.config.ts",
-    "render:build": "npm ci --include=dev && npm ci --include=dev --prefix server && npm --prefix server exec prisma generate -- --schema server/prisma/schema.prisma && npm install --prefix runtime/native --no-audit --no-fund && node scripts/build-runtime.mjs && node scripts/web/build-gateway.mjs && NODE_OPTIONS=--max-old-space-size=3072 vite build --config vite.web.config.mts",
+    "render:build": "npm ci --include=dev && npm ci --include=dev --prefix server && npm --prefix server exec prisma generate -- --schema server/prisma/schema.prisma && npm install --prefix runtime/native --no-audit --no-fund && npm rebuild --prefix runtime/native --no-audit --no-fund && node scripts/build-runtime.mjs && node scripts/web/build-gateway.mjs && NODE_OPTIONS=--max-old-space-size=3072 vite build --config vite.web.config.mts",
     "render:start": "touch .env.web && SKIP_ELECTRON_ABI_CHECK=1 DYAD_WEB_SKIP_BUILD=1 node scripts/web/dev.mjs",
     "start:onboarding": "node scripts/start-onboarding.mjs",
     "start:out-of-quota": "cross-env NODE_ENV=development DYAD_SIMULATE_FREE_AGENT_QUOTA_EXCEEDED=true npm start",
