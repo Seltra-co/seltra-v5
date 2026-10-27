@@ -204,6 +204,7 @@ export class AuthService {
         to: job.user.email,
         firstName: job.user.name?.trim().split(/\s+/)[0] || 'there',
         userId: job.user.id,
+        scheduledEmailId: job.id,
         loginUrl: new URL('/auth', appUrl).toString(),
         unsubscribeUrl: unsubscribeUrl.toString(),
       })

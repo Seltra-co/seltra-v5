@@ -171,6 +171,7 @@ export class ResendService {
     to: string
     firstName: string
     userId: string
+    scheduledEmailId: string
     loginUrl: string
     unsubscribeUrl: string
   }) {
@@ -187,7 +188,7 @@ export class ResendService {
         'List-Unsubscribe': `<${input.unsubscribeUrl}>`,
         'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
       },
-    }, { idempotencyKey: `seltra-v5-introduction/${input.userId}` })
+    }, { idempotencyKey: `seltra-v5-introduction/${input.scheduledEmailId}` })
     if (result.error) throw result.error
   }
 
