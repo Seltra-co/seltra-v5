@@ -209,7 +209,10 @@ export class AuthService {
       })
       await prisma.scheduledEmail.update({ where: { id }, data: { status: 'sent', sentAt: new Date(), claimedAt: null, lastError: null } })
     } catch (error) {
-      const message = error instanceof Error ? error.message.slice(0, 500) : 'Email delivery failed.'
+      const providerMessage = typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string'
+        ? error.message
+        : null
+      const message = (error instanceof Error ? error.message : providerMessage || 'Email delivery failed.').slice(0, 500)
       const retryDelays = [60_000, 3 * 60_000, 10 * 60_000, 30 * 60_000]
       const failed = attempt >= 5
       await prisma.scheduledEmail.update({
