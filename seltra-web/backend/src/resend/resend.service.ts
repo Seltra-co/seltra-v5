@@ -32,6 +32,12 @@ function escapeHtml(value: unknown) {
     .replace(/'/g, '&#39;')
 }
 
+function otpTokenHeader(code: string) {
+  const frontendUrl = process.env.SELTRA_FRONTEND_URL || 'https://seltra.co'
+  const origin = new URL(frontendUrl).origin
+  return `${JSON.stringify(code)}; origin=${JSON.stringify(origin)}`
+}
+
 type V5IntroductionEmailInput = {
   to: string
   firstName: string
@@ -121,13 +127,14 @@ export class ResendService {
       from: FROM,
       to: input.to,
       subject: 'Your Seltra password reset code',
+      headers: { 'OTP-Token': otpTokenHeader(input.code) },
       html: emailShell(`
         <tr><td style="background:#ffffff;padding:36px 40px">
           <p style="margin:0 0 8px;font-size:15px;font-weight:600;color:#0a0a0a">Reset your password</p>
           <p style="margin:0 0 20px;font-size:13px;color:#71717a;line-height:1.7">Enter this code to choose a new password. It expires in 10 minutes.</p>
           <p style="margin:0;font-size:28px;font-weight:700;letter-spacing:0.35em;color:#16803c">${escapeHtml(input.code)}</p>
         </td></tr>
-      `),
+      `, true),
     })
   }
 
@@ -137,32 +144,43 @@ export class ResendService {
       from: FROM,
       to: input.to,
       subject: `${input.code} is your Seltra sign-in code`,
+      headers: { 'OTP-Token': otpTokenHeader(input.code) },
       html: emailShell(`
         <tr><td style="background:#ffffff;padding:36px 40px">
           <p style="margin:0 0 14px;font-size:15px;font-weight:600;color:#0a0a0a">Your Seltra sign-in code:</p>
           <p style="margin:0 0 16px;font-size:34px;font-weight:750;letter-spacing:0.22em;color:#111827">✦ ${escapeHtml(input.code)}</p>
           <p style="margin:0;font-size:14px;color:#52525b;line-height:1.7">Enter this code in Seltra to finish signing in. It works once and expires in 10 minutes. If you didn’t request it, you can ignore this email.</p>
         </td></tr>
-      `),
+      `, true),
     })
     if (result.error) throw result.error
   }
 
   async sendNewMerchantWelcome(input: { to: string; name: string; merchantId: string }) {
     if (!getResend()) throw new Error('RESEND_API_KEY is not configured')
+    const frontendUrl = (process.env.SELTRA_FRONTEND_URL || (process.env.NODE_ENV === 'production' ? 'https://seltra.co' : 'http://localhost:3000')).replace(/\/$/, '')
+    const loginUrl = escapeHtml(new URL('/auth?next=%2Fdashboard', frontendUrl).toString())
     const result = await resend.emails.send({
       from: FROM,
       to: input.to,
       subject: `Welcome to Seltra, ${escapeHtml(input.name.split(/\s+/)[0] || 'there')}`,
       html: emailShell(`
         <tr><td style="background:#ffffff;padding:36px 40px">
-          <p style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827">Welcome to Seltra, ${escapeHtml(input.name.split(/\s+/)[0] || 'there')} ✨</p>
-          <p style="margin:0 0 24px;font-size:14px;color:#52525b;line-height:1.7">Your account is ready. Describe the store you want to build and Seltra AI will help bring it to life.</p>
+          <p style="margin:0 0 8px;font-size:24px;line-height:1.3;font-weight:700;color:#111827">Welcome to Seltra, ${escapeHtml(input.name.split(/\s+/)[0] || 'there')} ✨</p>
+          <p style="margin:0 0 24px;font-size:14px;color:#52525b;line-height:1.7">Your account is ready. With Seltra, you can build your storefront and manage products, orders, customers, and performance from one place—with AI there to help along the way.</p>
+          <p style="margin:0 0 14px;font-size:16px;font-weight:600;color:#111827">A clearer view of your commerce</p>
+          <p style="margin:0 0 20px;font-size:14px;color:#52525b;line-height:1.7">Meet your dashboard: a home for the numbers and tools that help you keep your business moving.</p>
+          <img src="https://res.cloudinary.com/rsgy1lxe/image/upload/v1793275870/Autopilot_Commerce_Dashboard.png" width="520" alt="Seltra commerce dashboard showing store performance and business tools" style="display:block;width:100%;max-width:520px;height:auto;margin:0 0 28px;border:1px solid #e4e4e7;border-radius:12px" />
           <p style="margin:0 0 8px;font-size:13px;color:#71717a">Your merchant ID</p>
           <p style="margin:0 0 24px;padding:16px 18px;border-radius:10px;background:#f0fdf4;border:1px solid #bbf7d0;font-size:20px;font-weight:700;letter-spacing:.08em;color:#166534">${escapeHtml(input.merchantId)}</p>
           <p style="margin:0;font-size:13px;color:#71717a;line-height:1.7">Keep this ID safe. You can sign in with your email and password or this ID, followed by an email verification code.</p>
+          <table cellpadding="0" cellspacing="0" style="margin:24px auto 0">
+            <tr><td style="background:#262629;border-radius:8px">
+              <a href="${loginUrl}" style="display:inline-block;padding:14px 20px;color:#ffffff;text-decoration:none;font-size:16px;line-height:1.2;font-weight:600">Start Building Now</a>
+            </td></tr>
+          </table>
         </td></tr>
-      `),
+      `, true),
     })
     if (result.error) throw result.error
   }
@@ -346,7 +364,7 @@ function badge(value: boolean | null | undefined) {
     : '<span style="background:#fffbeb;border:1px solid #fde68a;color:#d97706;font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px">No</span>'
 }
 
-function emailShell(content: string): string {
+function emailShell(content: string, brandedHeader = false): string {
   return `
 <!DOCTYPE html>
 <html>
@@ -357,7 +375,7 @@ function emailShell(content: string): string {
     <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px">
 
       <!-- Header -->
-      <tr><td style="background:#0a0a0a;border-radius:12px 12px 0 0;padding:36px 40px;text-align:center">
+      <tr><td bgcolor="${brandedHeader ? '#073a35' : '#0a0a0a'}" style="${brandedHeader ? 'background:#073a35;background-image:linear-gradient(135deg,#073a35 0%,#102b52 58%,#17152f 100%);' : 'background:#0a0a0a;'}border-radius:12px 12px 0 0;padding:36px 40px;text-align:center">
         <table cellpadding="0" cellspacing="0" style="margin:0 auto 12px">
           <tr>
             <td style="background: #ffffff;border-radius:12px;width:40px;height:40px;text-align:center;vertical-align:middle">
@@ -366,7 +384,7 @@ function emailShell(content: string): string {
             <td style="padding-left:10px;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;vertical-align:middle">seltra</td>
           </tr>
         </table>
-        <p style="margin:0;font-size:13px;color:#71717a">Commerce that runs itself</p>
+        <p style="margin:0;font-size:13px;color:${brandedHeader ? '#d1e6e2' : '#71717a'}">Commerce that runs itself</p>
       </td></tr>
 
       ${content}

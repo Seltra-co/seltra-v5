@@ -102,7 +102,6 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
   const [country, setCountry] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [merchantId, setMerchantId] = useState('')
   const [welcomeEmailSent, setWelcomeEmailSent] = useState(true)
   const [city, setCity] = useState('')
   const [data, setData] = useState<Omit<FormData, 'based_in'>>({
@@ -216,7 +215,6 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
             lastMessage = SUBMIT_RETRY_MESSAGE
             continue
           }
-          setMerchantId(String(json.merchantId || ''))
           didSendWelcomeEmail = json.welcomeEmailSent !== false
           setWelcomeEmailSent(didSendWelcomeEmail)
           submitted = true
@@ -232,7 +230,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
       if (!submitted) throw new Error(lastMessage)
 
       if (didSendWelcomeEmail) toast.success('Your Seltra account is ready. Check your email for your merchant ID.')
-      else toast('Your account is ready', { description: 'Email delivery is delayed. Save the merchant ID shown here.' })
+      else toast('Your account is ready', { description: 'Email delivery is delayed. Please check your inbox shortly for your merchant ID.' })
       setDone(true)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (error) {
@@ -279,7 +277,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
 
             <div className="signup-card relative z-10 mt-4 overflow-hidden rounded-2xl p-4 sm:p-5">
               {done ? (
-                <Complete merchantId={merchantId} welcomeEmailSent={welcomeEmailSent} />
+                <Complete welcomeEmailSent={welcomeEmailSent} />
               ) : (
                 <>
                   <div className="flex items-center gap-1.5">
@@ -471,7 +469,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
   )
 }
 
-function Complete({ merchantId, welcomeEmailSent }: { merchantId: string; welcomeEmailSent: boolean }) {
+function Complete({ welcomeEmailSent }: { welcomeEmailSent: boolean }) {
   return (
     <div className="relative flex flex-col items-center justify-center px-2 py-8 text-center sm:px-8">
       <span className="relative z-10 inline-flex">
@@ -484,8 +482,7 @@ function Complete({ merchantId, welcomeEmailSent }: { merchantId: string; welcom
       <p className="relative z-10 mt-7 max-w-[20rem] text-[16px] font-medium leading-snug text-white">
         Your Seltra account is ready.
       </p>
-      <p className="relative z-10 mt-3 text-[13px] text-white/65">{welcomeEmailSent ? 'We sent a welcome email with your merchant ID. Keep it safe for account recovery.' : 'Email delivery is delayed. Save your merchant ID below; you can use it to sign in.'}</p>
-      {merchantId ? <p className="relative z-10 mt-4 rounded-lg border border-[#4ade80]/30 bg-black/20 px-4 py-3 font-mono text-sm font-semibold tracking-wider text-[#86efac]">{merchantId}</p> : null}
+      <p className="relative z-10 mt-3 text-[13px] text-white/65">{welcomeEmailSent ? 'We sent a welcome email with your merchant ID. Keep it safe for account recovery.' : 'Email delivery is delayed. Please check your inbox shortly for your merchant ID.'}</p>
       <Link href="/auth?next=%2Fdashboard" className="btn btn-lg btn-primary relative z-10 mt-6 w-full max-w-[330px]">
         Continue to log in
       </Link>

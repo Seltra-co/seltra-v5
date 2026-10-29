@@ -14,6 +14,8 @@ const GENERIC_LOGIN_ERROR = 'That email or password is incorrect.'
 const MERCHANT_ID_PATTERN = /^(SELTRA-[A-Z0-9]+-[0-9A-Z]+|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i
 const LOGIN_LIMIT = 3
 const LOGIN_WINDOW_MS = 60_000
+const SCHEDULED_EMAIL_DB_RETRY_BASE_MS = 60_000
+const SCHEDULED_EMAIL_DB_RETRY_MAX_MS = 5 * 60_000
 
 type MerchantLoginInput = {
   email: string
@@ -31,6 +33,9 @@ export class AuthService {
   private readonly loginAttempts = new Map<string, LoginAttemptWindow>()
   private readonly logger = new Logger(AuthService.name)
   private dispatchingV5Introductions = false
+  private scheduledV5DbFailureCount = 0
+  private scheduledV5DbRetryAt = 0
+  private scheduledV5DbUnavailable = false
 
   constructor(
     private readonly jwtService: JwtService,
@@ -123,6 +128,7 @@ export class AuthService {
 
   @Cron('*/30 * * * * *')
   async dispatchScheduledV5Introductions() {
+    if (Date.now() < this.scheduledV5DbRetryAt) return
     // A slow database query or email provider must not let successive cron
     // ticks queue duplicate work and consume the remaining Prisma pool.
     if (this.dispatchingV5Introductions) return
@@ -156,8 +162,26 @@ export class AuthService {
       }
 
       for (const item of claimed) await this.sendClaimedV5Introduction(item.id, item.attempt)
+      if (this.scheduledV5DbUnavailable) {
+        this.logger.log('Database connection restored; resuming scheduled Seltra v5 introduction emails.')
+      }
+      this.scheduledV5DbFailureCount = 0
+      this.scheduledV5DbRetryAt = 0
+      this.scheduledV5DbUnavailable = false
     } catch (error) {
-      this.logger.error('Could not process scheduled Seltra v5 introduction emails', error instanceof Error ? error.stack : undefined)
+      const retryDelay = Math.min(
+        SCHEDULED_EMAIL_DB_RETRY_BASE_MS * 2 ** this.scheduledV5DbFailureCount,
+        SCHEDULED_EMAIL_DB_RETRY_MAX_MS,
+      )
+      this.scheduledV5DbFailureCount += 1
+      this.scheduledV5DbRetryAt = Date.now() + retryDelay
+      if (!this.scheduledV5DbUnavailable) {
+        this.scheduledV5DbUnavailable = true
+        this.logger.error(
+          `Could not process scheduled Seltra v5 introduction emails. Retrying in ${Math.round(retryDelay / 1000)} seconds.`,
+          error instanceof Error ? error.stack : undefined,
+        )
+      }
     } finally {
       this.dispatchingV5Introductions = false
     }
