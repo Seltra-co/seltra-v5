@@ -31,15 +31,19 @@ export class SeltraEngineService implements OnModuleInit {
     const bootstrap = process.env.SELTRA_ENGINE_BOOTSTRAP_KEY
     if (bootstrap) {
       if (process.env.NODE_ENV === 'production' && process.env.SELTRA_ENGINE_ALLOW_BOOTSTRAP !== 'true') {
-        throw new Error('SELTRA_ENGINE_BOOTSTRAP_KEY is disabled in production unless SELTRA_ENGINE_ALLOW_BOOTSTRAP=true.')
-      }
-      const keyHash = this.hashKey(bootstrap)
-      if (!(await prisma.seltraEngineApiKey.findUnique({ where: { keyHash } }))) {
-        const workspaceId = process.env.SELTRA_ENGINE_BOOTSTRAP_WORKSPACE ?? 'local-dev'
-        // This workspace exists only to keep the legacy API-key foreign key.
-        // Account allowances live in user_credits and are mirrored per user.
-        await prisma.workspaceCredit.upsert({ where: { workspaceId }, update: {}, create: { workspaceId } })
-        await prisma.seltraEngineApiKey.create({ data: { workspaceId, label: 'Local development bootstrap', keyHash } })
+        // A bootstrap key is only for local development/initial provisioning.
+        // Render may inherit it from a shared env group; ignore it safely in
+        // production instead of taking the whole API down during startup.
+        this.logger.warn('SELTRA_ENGINE_BOOTSTRAP_KEY is set but bootstrap seeding is disabled in production; ignoring it.')
+      } else {
+        const keyHash = this.hashKey(bootstrap)
+        if (!(await prisma.seltraEngineApiKey.findUnique({ where: { keyHash } }))) {
+          const workspaceId = process.env.SELTRA_ENGINE_BOOTSTRAP_WORKSPACE ?? 'local-dev'
+          // This workspace exists only to keep the legacy API-key foreign key.
+          // Account allowances live in user_credits and are mirrored per user.
+          await prisma.workspaceCredit.upsert({ where: { workspaceId }, update: {}, create: { workspaceId } })
+          await prisma.seltraEngineApiKey.create({ data: { workspaceId, label: 'Local development bootstrap', keyHash } })
+        }
       }
     }
   }
