@@ -17,6 +17,7 @@ import { VALID_FONTS } from '../ai/agents/critic.agent'
 import { patchHeroSourceText } from '../ai/agents/hero-source-patcher'
 import { getRecentAgentTurns } from '../ai/agent-memory'
 import { deleteProductKnowledgeChunks, retrieveKnowledgeChunks, storeKnowledgeChunk } from '../ai/retrieval/store-knowledge.service'
+import { logStructuredError } from '../common/structured-logger'
 
 export type ActionError = { action: string; message: string }
 type PendingAgentAction = { kind: string; payload: unknown; expiresAt: Date }
@@ -841,7 +842,12 @@ export class AgentService {
           ].filter(Boolean).join('\n\n'),
         },
       ], { maxTokens: 500 })
-    } catch {
+    } catch (error) {
+      logStructuredError('agent_ai_chat_failed', {
+        storeId,
+        conversationId: nextConversationId,
+        messageLength: message.length,
+      }, error)
       return {
         reply: 'I saved the conversation for ' + store.name + '. The AI provider is offline but will reconnect shortly.',
         conversationId: nextConversationId,

@@ -333,6 +333,11 @@ export async function cfChat(
     try {
       return await callCloudflare(messages, { model, maxTokens, temperature, timeoutMs: remainingMs })
     } catch (e) {
+      logStructuredError('cloudflare_chat_candidate_failed', {
+        model,
+        maxTokens,
+        chainBudgetRemainingMs: remainingMs,
+      }, e)
       console.warn(
         `[CF] cfChat failed on ${model.split('/').pop()}:`,
         (e as Error).message?.slice(0, 80),
@@ -416,6 +421,11 @@ export async function cfCodegen(
       )
       return result
     } catch (e) {
+      logStructuredError('cloudflare_codegen_candidate_failed', {
+        model,
+        role: options.role ?? 'generic',
+        maxTokens,
+      }, e)
       console.warn(
         `[CF] cfCodegen failed on ${model.split('/').pop()}:`,
         (e as Error).message?.slice(0, 80),
