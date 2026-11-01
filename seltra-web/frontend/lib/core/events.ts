@@ -54,7 +54,7 @@ export class CoreEvents {
       }
       socket.onclose = () => {
         this.onStatus(false)
-        if (!this.stopped) this.onError('The Seltra Core connection closed. Reconnecting…')
+        if (!this.stopped) this.onError('Seltra  connection closed. Reconnecting…')
         if (!this.stopped) {
           const delay = this.retry
           this.retry = Math.min(this.retry * 2, 10_000)

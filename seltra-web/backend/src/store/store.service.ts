@@ -12,6 +12,7 @@ import type { CanonicalStore, GeneratedProduct } from '../types'
 import type { StoreDNA } from '../types/store-dna'
 import type { BuildContext } from './build-events.service'
 import { getStoreCreationError, planLimits } from '../common/plan-limits'
+import { CreditsService } from '../credits/credits.service'
 import * as crypto from 'crypto'
 
 type PlannerAnswers = {
@@ -260,11 +261,22 @@ function normalizeAndValidateSlug(rawSlug: string): string {
   return slug
 }
 
+function coreWorkspaceTenantName(name: string | undefined, prompt: string) {
+  // Build prompts often include structured merchant details after the initial
+  // instruction. Prefer the actual merchant/store name over a slug such as
+  // "build-a-premium-beauty-store" derived from that instruction.
+  const labeledName = prompt.match(
+    /(?:Store\s+Name|Business\s+Name)\s*:\s*(.*?)(?=\s+(?:Store\s+Name|Business\s+Name|Industry|Location|Business\s+Type|Target\s+Audience|Website|Products?)\s*:|[\n#]|$)/i,
+  )?.[1]?.trim().replace(/[\s.,;]+$/, '')
+  return (labeledName || name?.trim() || 'New store').slice(0, 80)
+}
+
 @Injectable()
 export class StoreService {
   constructor(
     private readonly jwtService: JwtService,
     private readonly tenantEvents: TenantEventsService,
+    private readonly credits: CreditsService,
   ) {}
 
   async create(input: CreateStoreInput, authorization?: string, ctx?: BuildContext) {
@@ -286,19 +298,22 @@ export class StoreService {
   async createCoreWorkspace(input: { name?: string; prompt?: string }, authorization?: string) {
     const ownerId = await this.getUserIdFromAuth(authorization, true)
     const user = await prisma.user.findUnique({ where: { id: ownerId }, select: { plan: true } })
+    await this.credits.ensureAccount(ownerId, user?.plan)
     const storeCount = await prisma.tenant.count({ where: { ownerId } })
     const limitError = getStoreCreationError(user?.plan, storeCount)
     if (limitError) throw new BadRequestException(limitError)
 
-    const name = input.name?.trim().slice(0, 80) || 'New store'
     const prompt = input.prompt?.trim().slice(0, 4000) || ''
+    const name = coreWorkspaceTenantName(input.name, prompt)
     const baseSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'new-store'
     const slug = await this.uniqueSlug(baseSlug)
     return prisma.tenant.create({
       data: {
         ownerId,
+        creditWorkspaceId: ownerId,
         name,
         slug,
+        storeUrl: `${slug}.seltra.co`,
         status: 'active',
         canonical: { businessName: name, initialPrompt: prompt, generatedBy: 'seltra-core' },
       },
@@ -321,6 +336,9 @@ export class StoreService {
     return {
       allowed: !reason,
       reason: reason ?? undefined,
+      currentStoreCount,
+      maxStores: planLimits(owner?.plan).maxStores,
+      plan: planLimits(owner?.plan).tier,
     }
   }
 
@@ -705,6 +723,7 @@ export class StoreService {
     storefrontCode?: string,
   ) {
     const slug = await this.uniqueSlug(blueprint.storeSlug)
+    if (ownerId) await this.credits.ensureWorkspaceMirror(ownerId)
 
     console.log(
       `[Store] Creating tenant "${blueprint.businessName}" with slug "${slug}" and ${products.length} products`,
@@ -714,6 +733,7 @@ export class StoreService {
       const tenant = await prisma.tenant.create({
         data: {
           ownerId,
+          creditWorkspaceId: ownerId,
           name: blueprint.businessName,
           slug,
           businessType: blueprint.businessType,
@@ -832,11 +852,39 @@ export class StoreService {
 
   async findMine(authorization?: string) {
     const ownerId = await this.getUserIdFromAuth(authorization, true)
-    return prisma.tenant.findMany({
+    const stores = await prisma.tenant.findMany({
       where: { ownerId },
       include: this.storeInclude(),
       orderBy: { updatedAt: 'desc' },
     })
+    if (stores.length === 0) return stores
+
+    // Older builds may have a completed run but a stale TenantApp status from
+    // before build completion was persisted as Draft. Reconcile cards from the
+    // durable app lifecycle events so existing projects get the same semantics.
+    const buildEvents = await prisma.agentEvent.findMany({
+      where: { tenantId: { in: stores.map((store) => store.id) }, type: { in: ['app.build.completed', 'app.build.incomplete', 'app.build.failed'] } },
+      orderBy: { createdAt: 'desc' },
+      select: { tenantId: true, type: true, payload: true },
+    })
+    const latestByApp = new Map<string, 'app.build.completed' | 'app.build.incomplete' | 'app.build.failed'>()
+    for (const event of buildEvents) {
+      const payload = event.payload
+      const appId = payload && typeof payload === 'object' && 'appId' in payload ? payload.appId : undefined
+      if (!event.tenantId || typeof appId !== 'number') continue
+      const key = `${event.tenantId}:${appId}`
+      if (!latestByApp.has(key)) latestByApp.set(key, event.type as 'app.build.completed' | 'app.build.incomplete' | 'app.build.failed')
+    }
+    return stores.map((store) => ({
+      ...store,
+      apps: store.apps.map((app) => {
+        const lifecycle = latestByApp.get(`${store.id}:${app.coreAppId}`)
+        if (!lifecycle) return app
+        if (lifecycle === 'app.build.completed') return { ...app, status: 'draft', version: Math.max(1, app.version) }
+        if (lifecycle === 'app.build.incomplete') return { ...app, status: 'building' }
+        return { ...app, status: 'failed' }
+      }),
+    }))
   }
 
   async update(
@@ -939,7 +987,40 @@ export class StoreService {
     if (!tenant || tenant.ownerId !== ownerId) {
       throw new NotFoundException(`Store "${id}" not found`)
     }
-    await prisma.tenant.delete({ where: { id } })
+
+    await prisma.$transaction(async (tx) => {
+      const projectFiles = await tx.projectFile.findMany({
+        where: { projectId: tenant.id },
+        select: { contentHash: true },
+      })
+      const candidateBlobHashes = [...new Set(projectFiles.map((file) => file.contentHash))]
+
+      // These project tables intentionally have no Tenant foreign key, so
+      // remove them explicitly. Leave user and credit accounts intact; retain
+      // their billing history but detach its optional project/run references.
+      await tx.userNotification.deleteMany({ where: { tenantId: tenant.id } })
+      await tx.paystackEvent.deleteMany({ where: { tenantId: tenant.id } })
+      await tx.projectAsset.deleteMany({ where: { projectId: tenant.id } })
+      await tx.projectSnapshot.deleteMany({ where: { projectId: tenant.id } })
+      await tx.projectFile.deleteMany({ where: { projectId: tenant.id } })
+      await tx.run.deleteMany({ where: { projectId: tenant.id } })
+      await tx.creditLedger.updateMany({ where: { projectId: tenant.id }, data: { projectId: null, runId: null } })
+      await tx.userCreditLedger.updateMany({ where: { projectId: tenant.id }, data: { projectId: null, runId: null } })
+      await tx.tenant.delete({ where: { id: tenant.id } })
+
+      // File blobs are content-addressed and may be shared by another project.
+      // Delete only this project's now-unreferenced hashes.
+      if (candidateBlobHashes.length) {
+        await tx.$executeRaw`
+          DELETE FROM file_blobs AS blob
+          WHERE blob.hash IN (${Prisma.join(candidateBlobHashes)})
+            AND NOT EXISTS (
+              SELECT 1 FROM project_files AS project_file
+              WHERE project_file."contentHash" = blob.hash
+            )
+        `
+      }
+    }, { timeout: 30_000 })
     return { success: true }
   }
 
@@ -989,6 +1070,9 @@ export class StoreService {
       categories: true,
       paymentProviders: true,
       shippingZones: true,
+      // Dashboard project cards need the Core app identity and its actual
+      // deployment/build state alongside the tenant workspace.
+      apps: { select: { coreAppId: true, name: true, status: true, previewUrl: true, publishedUrl: true, version: true, blueprint: true, updatedAt: true } },
     } as const
   }
 }

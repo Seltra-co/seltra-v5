@@ -1,6 +1,6 @@
 {
-  "name": "seltra-web-modern",
-  "version": "4.0.0",
+  "name": "seltra-web-merchant-frontend",
+  "version": "5.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "dev:backend": "cd backend && npm run start:dev",
-    "dev:all": "concurrently \"npm run dev\" \"npm run dev:backend\""
+    "dev:frontend": "next dev",
+    "dev:all": "concurrently --names frontend,backend --prefix name --restart-tries -1 --restart-after 1000 \"npm run dev:frontend\" \"npm run dev:backend\""
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -24,7 +25,6 @@
     "@radix-ui/react-tabs": "^1.1.12",
     "@radix-ui/react-toast": "^1.2.14",
     "@radix-ui/react-tooltip": "^1.2.7",
-    "@supabase/supabase-js": "^2.118.0",
     "@tanstack/react-query": "^5.83.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

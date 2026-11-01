@@ -42,10 +42,12 @@ it("brands only the copied blank app when called by the web template path", asyn
       path.join(appPath, "src", "components", "made-with-dyad.tsx"),
       "utf8",
     ),
-  ).toContain("Made with Seltra");
+  ).toContain("MadeWithDyad = () => null");
   const html = await fs.readFile(path.join(appPath, "index.html"), "utf8");
   expect(html).toContain('href="/seltra-mark.png"');
-  expect(html).toContain("Built with Seltra");
+  expect(html).toContain("Powered by Seltra");
+  expect(html).toContain('id="seltra-startup-loader"');
+  expect(html).toContain('__seltra_plan")==="premium"');
   expect(html).toContain('id="seltra-attribution-close"');
   expect(html).toContain('"seltra:build-complete"');
   expect(html).toContain("seltra-attribution-seen");

@@ -5,7 +5,6 @@ import * as bcrypt from 'bcryptjs'
 import { randomBytes } from 'crypto'
 import { prisma } from '../../db'
 import { ResendService } from '../../resend/resend.service'
-import { getSupabaseAdmin } from '../../supabase/supabase.client'
 import { parseBasedIn, slugify } from '../constants'
 import { ApplicationsQueryDto } from '../dto/applications-query.dto'
 import { TenantEventsService } from '../events/tenant-events.service'
@@ -138,8 +137,6 @@ export class ApplicationsService {
     }
   })
 
-  await this.provisionSupabaseAuth(application.email, tempPassword, application.fullName)
-
   let credentialsSent = false
 
   try {
@@ -220,8 +217,6 @@ export class ApplicationsService {
 
       return { user, merchantId }
     })
-
-    await this.provisionSupabaseAuth(application.email, tempPassword, application.fullName)
 
     let credentialsSent = false
     try {
@@ -326,45 +321,6 @@ export class ApplicationsService {
   }
 
 
-
-  private async provisionSupabaseAuth(email: string, password: string, name: string) {
-    const admin = getSupabaseAdmin()
-    if (!admin) {
-      console.warn('[Supabase] SERVICE_ROLE_KEY missing; auth user not created for', email)
-      return
-    }
-
-    const metadata = { name, full_name: name }
-    const { error: createError } = await admin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: metadata,
-    })
-
-    if (!createError) return
-    if (!/already|registered|exists/i.test(createError.message)) {
-      console.error('[Supabase] createUser failed', createError.message)
-      return
-    }
-
-    const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
-      type: 'recovery',
-      email,
-    })
-    const userId = linkData?.user?.id
-    if (linkError || !userId) {
-      console.error('[Supabase] lookup user failed', linkError?.message)
-      return
-    }
-
-    const { error: updateError } = await admin.auth.admin.updateUserById(userId, {
-      password,
-      email_confirm: true,
-      user_metadata: metadata,
-    })
-    if (updateError) console.error('[Supabase] updateUser failed', updateError.message)
-  }
 
 //Helper function to generate a unique merchant ID
 private async generateMerchantId(tx: PrismaClient | any): Promise<string> {

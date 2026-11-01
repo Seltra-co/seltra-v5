@@ -5,7 +5,7 @@ import log from "electron-log";
 import type { LanguageModelV3Usage } from "@ai-sdk/provider";
 import { readSettings } from "@/main/settings";
 import { isDyadProEnabled } from "@/lib/schemas";
-import { getDyadEngineBaseUrl } from "@/ipc/utils/dyad_engine_url";
+import { getSeltraEngineBaseUrl } from "@/ipc/utils/seltra_engine_url";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
 import type { SubscriptionTokens } from "@/lib/subscriptionUsage";
 import {
@@ -118,7 +118,7 @@ export async function finishExternalModelUsageBatch(
       try {
         const tokens = normalizeExternalModelUsage(usage);
         const response = await fetch(
-          `${getDyadEngineBaseUrl().replace(/\/$/, "")}/track-usage`,
+          `${getSeltraEngineBaseUrl().replace(/\/$/, "")}/track-usage`,
           {
             method: "POST",
             redirect: "error",

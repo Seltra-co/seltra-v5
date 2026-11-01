@@ -493,6 +493,7 @@ const BaseUserSettingsFields = {
   // One API token does two jobs: Dyad uses it to set up Workers and deploy
   // rules, and Cloudflare's build service deploys with it after each push.
   cloudflareAccessToken: SecretSchema.optional(),
+  seltraEngineApiKey: SecretSchema.optional(),
   coolify: CoolifySchema.optional(),
   supabase: SupabaseSchema.optional(),
   neon: NeonSchema.optional(),
@@ -660,6 +661,15 @@ export function migrateStoredSettings(
   stored: StoredUserSettings,
 ): UserSettings {
   const activeSettings = { ...stored };
+  const legacyEngineSecret = stored.providerSettings?.auto?.apiKey;
+  const legacyEngineKey = legacyEngineSecret?.value;
+  if (
+    !stored.seltraEngineApiKey &&
+    typeof legacyEngineKey === "string" &&
+    legacyEngineKey.startsWith("sk_seltra_")
+  ) {
+    activeSettings.seltraEngineApiKey = legacyEngineSecret;
+  }
   delete activeSettings.enableNativeGit;
   delete activeSettings.enableAutoFixProblems;
   delete activeSettings.thinkingBudget;

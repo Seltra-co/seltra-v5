@@ -71,6 +71,15 @@ describe("StoredUserSettingsSchema lastKnownPerformance", () => {
 });
 
 describe("migrateStoredSettings", () => {
+  it("migrates a Seltra Engine key stored in the legacy auto provider slot", () => {
+    const legacyKey = { value: "sk_seltra_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG", encryptionType: "plaintext" as const };
+    const migrated = migrateStoredSettings(StoredUserSettingsSchema.parse({
+      ...baseSettings,
+      providerSettings: { auto: { apiKey: legacyKey } },
+    }));
+    expect(migrated.seltraEngineApiKey).toEqual(legacyKey);
+  });
+
   it("accepts and removes the deprecated native Git setting", () => {
     const stored = StoredUserSettingsSchema.parse({
       ...baseSettings,

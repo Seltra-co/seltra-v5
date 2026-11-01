@@ -15,7 +15,7 @@ import type { ModelSelection, UserSettings } from "@/lib/schemas";
 import { createDyadEngine } from "@/ipc/utils/llm_engine_provider";
 import { fastTextOutput } from "@/ipc/utils/stream_text_utils";
 import { IS_TEST_BUILD } from "@/ipc/utils/test_utils";
-import { getDyadEngineBaseUrl } from "@/ipc/utils/dyad_engine_url";
+import { getSeltraEngineBaseUrl } from "@/ipc/utils/seltra_engine_url";
 import { getTestFetchOption } from "@/ipc/utils/test_fetch_override";
 import { getOpenRouterAppAttributionHeaders } from "@/ipc/utils/openrouter_attribution";
 import { GPT_5_6_LUNA_MODEL_NAME } from "@/ipc/shared/language_model_constants";
@@ -142,7 +142,7 @@ async function createValidationModel(
       const dyad = createDyadEngine({
         apiKey,
         modelSelection: DYAD_VALIDATION_MODEL,
-        baseURL: getDyadEngineBaseUrl(),
+        baseURL: getSeltraEngineBaseUrl(),
         ...getTestFetchOption(),
         dyadOptions: {
           enableLazyEdits: false,

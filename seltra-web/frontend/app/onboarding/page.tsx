@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { useStore } from '@/context/StoreContext'
 import type { StoreData } from '@/components/storefront/StorefrontPreview'
 import { takePendingBuild } from '@/lib/builder/pending'
+import { fetchWithSeltraAuth } from '@/lib/auth-session'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001'
 
@@ -49,7 +50,7 @@ async function apiFetch<T>(path: string, opts: RequestInit = {}) {
   }
   if (token) headers.Authorization = `Bearer ${token}`
   try {
-    const res = await fetch(`${API_BASE}${path}`, { ...opts, headers })
+    const res = await fetchWithSeltraAuth(`${API_BASE}${path}`, { ...opts, headers })
     const json = await res.json().catch(() => ({}))
     if (res.status === 401) {
       ;['seltra:token', 'seltra:user', 'seltra:active_store'].forEach((key) => localStorage.removeItem(key))

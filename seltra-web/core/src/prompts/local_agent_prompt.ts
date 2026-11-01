@@ -587,11 +587,11 @@ ${flow}
 }
 
 // ============================================================================
-// Image Generation Block (Pro mode only)
+// Shared image generation guidance for Seltra Core build modes.
 // ============================================================================
 
 const IMAGE_GENERATION_BLOCK = `<image_generation_guidelines>
-When a user explicitly requests custom images, illustrations, or visual media for their app:
+For a new app or substantial visual redesign, use generated imagery when it materially improves the result (especially hero photography and product imagery). Generate only the few assets that matter most, and keep them specific to the user's business. Also use this tool when the user explicitly requests custom images, illustrations, or visual media:
 - Use the \`generate_image\` tool instead of using placeholder images or broken external URLs
 - For a new app or visual redesign, first align asset requests with the current DesignSpec and ContentAssetPlan: generate only assets that materially improve this product's visual story, and make every prompt specific to the brand, audience, content, palette, crop, and placement.
 - When a designer specialist is available through Dyad's existing subagent tools, ask for a concise asset plan and prompts, then keep generation and application file edits serialized through the root agent. Do not invent a parallel runtime or let specialists race on app files.
@@ -599,8 +599,15 @@ When a user explicitly requests custom images, illustrations, or visual media fo
 - Write detailed prompts that specify subject, style, colors, composition, mood, and aspect ratio
 - After generating, use \`copy_file\` to move the image from \`.dyad/media/\` to the project's public/static directory, giving it a descriptive filename (e.g., \`public/assets/hero-banner.png\`)
 - Reference the copied path in code (e.g., \`<img src="/assets/hero-banner.png" />\`)
-- Do not assume the \`AI_MODEL_IMAGE\` chat-model alias configures Dyad's separate \`/images/generations\` tool endpoint. Use it only when the active runtime confirms that routing; if Cloudflare image generation is unavailable, report the gap instead of claiming a local model generated the file or silently substituting another provider.
+- The Seltra runtime exposes \`/images/generations\` through the configured \`AI_MODEL_IMAGE\` role. Use \`generate_image\` when available; if the endpoint reports a configuration or provider error, surface that specific error instead of claiming success or silently substituting another provider.
+- If an approved blueprint explicitly plans photo assets (hero, product, portfolio, team, or location photography), generate and integrate those assets when no suitable customer-supplied or catalog images exist. Save actual raster output such as PNG or WebP in the app's public assets and reference it in the rendered page. A prompt/asset-plan database row, SVG, CSS treatment, or placeholder file is not a generated photo and does not complete that asset task.
 </image_generation_guidelines>`;
+
+const SELTRA_BUILD_COMPLETENESS_BLOCK = `<seltra_build_completeness>
+For new applications, treat the approved blueprint and the user's requested customer journey as the acceptance criteria. Keep the todo list honest: mark a task completed only after its files and behavior exist. Before ending the build turn, review every outstanding todo, inspect the app's routes and data source, and verify the main user journey with the available build or browser tools. Check that every local import resolves to a file before declaring the app ready. When a preview is blank, shows a Vite/runtime overlay, or browser errors appear, call \`repair_app\` to capture browser/network/server evidence and get a screenshot reviewed by the configured vision role; then apply the smallest supported code fix with the file tools and verify it. If typecheck or build reports a code error, classify it, make the smallest targeted fix, and rerun verification; allow at most two repair passes for one failure, and stop if the normalized failure repeats or the issue is external infrastructure. Use screenshot/vision inspection for visual defects when an actual preview screenshot is available, not for compiler/import errors. Do not call the build complete while required work remains; summarize the unfinished items so the user can continue.
+
+For Seltra-generated apps, do not call the legacy \`https://api.seltra.co/api/v1/storefront/:slug/products\` endpoint or other unconfigured Seltra merchant APIs. Core projects do not automatically have legacy storefront records. Use a clearly labeled local demo catalog and real app routes when no configured integration is available; make every navigation link resolve to a real route or section, including collection/category links. Never leave links pointing to routes that return 404.
+</seltra_build_completeness>`;
 
 const SELTRA_DESIGN_INTELLIGENCE_BLOCK = `<seltra_design_intelligence>
 For a new app, a major visual redesign, or a request where presentation materially affects success, form a concise business-specific design brief before editing. Include the audience and intended feeling; primary user journey and page hierarchy; distinct composition for each important page; typography roles, semantic color use, spacing rhythm, image direction and placement; responsive behavior; accessibility; interaction states; primary action; and testable visual acceptance criteria. Name visual anti-patterns to avoid. Keep decorative graphics out of text-safe areas at every viewport, especially behind mobile headings, labels, and controls. Make choices serve the actual business and workflow; do not fall back to a generic hero-and-card layout or force a fixed template. Keep the brief concise and use it as working context for the current task; do not claim it is saved as a durable artifact.
@@ -684,6 +691,7 @@ ${proDevelopmentWorkflowBlock({ enableAppBlueprint, hasAppBlueprint, planningQue
 [[SERVER_LAYER]]
 ${testingEnabled ? `${AGENT_TEST_WRITING_GUIDANCE}\n` : ""}
 ${IMAGE_GENERATION_BLOCK}
+${SELTRA_BUILD_COMPLETENESS_BLOCK}
 ${enableAppBlueprint ? `\n${appBlueprintBlock({ hasAppBlueprint, planningQuestionnaireAvailable, appBlueprintQuestionnaireCompleted, appBlueprint })}\n` : ""}
 ${AI_RULES_BLOCK}
 `;
@@ -725,6 +733,8 @@ ${BASIC_FILE_EDITING_TOOL_SELECTION_BLOCK}
 ${basicDevelopmentWorkflowBlock(enableAppBlueprint, hasAppBlueprint, planningQuestionnaireAvailable, appBlueprintQuestionnaireCompleted, testingEnabled, preCommitHookAvailable, runBuildToolAvailable)}
 [[SERVER_LAYER]]
 ${testingEnabled ? `${AGENT_TEST_WRITING_GUIDANCE}\n` : ""}${enableAppBlueprint ? `\n${appBlueprintBlock({ hasAppBlueprint, planningQuestionnaireAvailable, appBlueprintQuestionnaireCompleted, appBlueprint })}\n` : ""}
+${IMAGE_GENERATION_BLOCK}
+${SELTRA_BUILD_COMPLETENESS_BLOCK}
 ${AI_RULES_BLOCK}
 `;
 }
@@ -783,6 +793,8 @@ ${BASIC_FILE_EDITING_TOOL_SELECTION_BLOCK}
 ${developmentWorkflow}
 </development_workflow>
 [[SERVER_LAYER]]
+${IMAGE_GENERATION_BLOCK}
+${SELTRA_BUILD_COMPLETENESS_BLOCK}
 ${enableAppBlueprint ? `\n${appBlueprintBlock({ hasAppBlueprint, planningQuestionnaireAvailable, appBlueprintQuestionnaireCompleted, appBlueprint })}\n` : ""}
 ${AI_RULES_BLOCK}
 `;

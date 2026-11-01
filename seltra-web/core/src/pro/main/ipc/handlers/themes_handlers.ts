@@ -38,7 +38,7 @@ import {
   resolveBuiltinModelAlias,
 } from "@/ipc/shared/remote_language_model_catalog";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
-import { getDyadEngineBaseUrl } from "@/ipc/utils/dyad_engine_url";
+import { getSeltraEngineBaseUrl } from "@/ipc/utils/seltra_engine_url";
 
 const logger = log.scope("themes_handlers");
 const handle = createLoggedHandler(logger);
@@ -857,7 +857,7 @@ Modern theme extracted from website for testing.
       let crawlResponse: Response;
       try {
         crawlResponse = await fetch(
-          `${getDyadEngineBaseUrl()}/tools/web-crawl`,
+          `${getSeltraEngineBaseUrl()}/tools/web-crawl`,
           {
             method: "POST",
             headers: {

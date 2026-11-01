@@ -1,11 +1,12 @@
 //seltra-web/backend/src/main.ts
 import { NestFactory } from '@nestjs/core'
-import { Logger, ValidationPipe } from '@nestjs/common'
+import { Logger, RequestMethod, ValidationPipe } from '@nestjs/common'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 import { AppModule } from './app.module'
 import * as bodyParser from 'body-parser'
 import type { NextFunction, Request, Response } from 'express'
 import { InternalOpsModule } from './internal-ops/internal-ops.module'
+import { randomUUID } from 'node:crypto'
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap')
@@ -14,6 +15,13 @@ async function bootstrap() {
   }
   const app = await NestFactory.create(AppModule)
   app.getHttpAdapter().getInstance().set('trust proxy', 1)
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const candidate = req.header('x-request-id') ?? req.header('x-dyad-request-id')
+    const requestId = candidate && /^[A-Za-z0-9._:-]{1,128}$/.test(candidate) ? candidate : randomUUID()
+    req.headers['x-request-id'] = requestId
+    res.setHeader('X-Request-ID', requestId)
+    next()
+  })
   app.use((req: Request, res: Response, next: NextFunction) => {
     const requestedUrl = req.url
     if (/^\/api\/v1(?:\/|\?|$)/.test(requestedUrl)) {
@@ -34,7 +42,7 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
 
   //Raise JSON + raw body limits to handle base64 image uploads
-  app.use(bodyParser.json({ limit: '15mb' }))
+  app.use(bodyParser.json({ limit: `${process.env.SELTRA_ENGINE_MAX_BODY_MB || 20}mb` }))
   app.use(bodyParser.urlencoded({ limit: '15mb', extended: true }))
 
   // Static allowlist for known non-tenant origins (marketing site, admin dashboard, local dev)
@@ -90,11 +98,17 @@ async function bootstrap() {
       'Authorization',
       'x-internal-api-key',
       'x-ops-actor',
+      'Idempotency-Key',
+      'Last-Event-ID',
+      'X-Request-ID',
+      'X-Dyad-Request-Id',
     ],
     credentials: true,
   })
 
-  app.setGlobalPrefix('api/v5')
+  app.setGlobalPrefix('api/v5', {
+    exclude: [{ path: 'v1/(.*)', method: RequestMethod.ALL }],
+  })
 
   // Graceful shutdown
   app.enableShutdownHooks()
@@ -162,8 +176,8 @@ async function bootstrap() {
 
   SwaggerModule.setup('internal/docs', app, opsDocument)
 
-  const port = process.env.PORT
-    ? parseInt(process.env.PORT, 10)
+  const port = process.env.SELTRA_ENGINE_PORT || process.env.PORT
+    ? parseInt(process.env.SELTRA_ENGINE_PORT || process.env.PORT || '3001', 10)
     : 3001
 
   await app.listen(port)
@@ -174,6 +188,7 @@ async function bootstrap() {
 
   logger.log(`Seltra API is running on port ${port}`)
   logger.log(`Health endpoint: ${baseUrl}/api/v5/health`)
+  logger.log(`Seltra Engine endpoint: http://localhost:${port}/v1 (API key present: ${Boolean(process.env.SELTRA_ENGINE_BOOTSTRAP_KEY) ? 'yes' : 'no bootstrap key'})`)
   logger.log(`Internal ops Swagger: ${baseUrl}/internal/docs`)
   logger.log(`[Config] SELTRA_HERO_SECONDARY_CARD = ${process.env.SELTRA_HERO_SECONDARY_CARD}`)
   logger.log(`Keep-alive cron: self-ping every 14 minutes`)

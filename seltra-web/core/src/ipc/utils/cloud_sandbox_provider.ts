@@ -12,7 +12,7 @@ import {
 import { IS_TEST_BUILD } from "./test_utils";
 import { z } from "zod";
 import { isPathIgnoredByGitIgnore } from "./gitignore_utils";
-import { getDyadEngineBaseUrl } from "./dyad_engine_url";
+import { getSeltraEngineBaseUrl } from "./seltra_engine_url";
 
 const logger = log.scope("cloud_sandbox_provider");
 
@@ -255,7 +255,7 @@ async function cloudSandboxFetch(
     headers.set("Authorization", `Bearer ${apiKey}`);
   }
 
-  const response = await fetch(`${getDyadEngineBaseUrl()}${endpoint}`, {
+  const response = await fetch(`${getSeltraEngineBaseUrl()}${endpoint}`, {
     ...init,
     headers,
   });

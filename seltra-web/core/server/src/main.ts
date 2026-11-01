@@ -33,10 +33,49 @@ import {
 } from "../../src/web/figma_reference.js";
 
 const encoder = new TextEncoder();
-const MAX_RPC_BODY_BYTES = 1024 * 1024;
+// Chat attachments are sent as base64 in the distributed-machine intent.
+// The UI permits 25 MiB of source files, which expands to ~33.4 MiB on the
+// wire before the prompt and RPC envelope are added.
+const MAX_RPC_BODY_BYTES = 40 * 1024 * 1024;
+const MAX_RPC_WEBSOCKET_PAYLOAD_BYTES = 1024 * 1024;
 const MAX_MODEL_BODY_BYTES = 10 * 1024 * 1024;
+const MAX_WORKSPACE_SYNC_BODY_BYTES = 10 * 1024 * 1024;
+const WORKSPACE_SYNC_IGNORED_NAMES = new Set([
+  ".git",
+  ".next",
+  "build",
+  "dist",
+  "logs",
+  "node_modules",
+  "runtime-secrets.key",
+  "temp",
+  "userdata",
+]);
 
-type SessionClaims = { sub: string; email: string; workspaceId: string; coreWorkspaceKey: string; storeSlug: string; plan: string };
+function isWorkspaceSyncPathAllowed(relativePath: string): boolean {
+  const normalized = relativePath.replaceAll("\\", "/");
+  const segments = normalized.split("/");
+  const mediaParts = normalized.split("/").filter(Boolean);
+  const dyadIndex = mediaParts.lastIndexOf(".dyad");
+  const isDyadRoot = dyadIndex >= 0 && mediaParts.length === dyadIndex + 1;
+  const isDyadMedia = dyadIndex >= 0 && mediaParts[dyadIndex + 1] === "media";
+  const mediaContainer = isDyadRoot || (isDyadMedia && mediaParts.length <= dyadIndex + 2);
+  const mediaImage = isDyadMedia && /\.(?:png|jpe?g|webp|gif|avif)$/i.test(normalized);
+  if (segments.some((segment) => segment.startsWith(".")) && !mediaContainer && !mediaImage) return false;
+  return segments.every((segment) => {
+    const name = segment.toLowerCase();
+    return !WORKSPACE_SYNC_IGNORED_NAMES.has(name) &&
+      !/^\.env(?:\.|$)/i.test(name) &&
+      !/\.(?:key|pem|p12|pfx)$/i.test(name) &&
+      !/^(?:credentials|service-account)(?:\.|$)/i.test(name);
+  });
+}
+
+function isRasterImagePath(relativePath: string): boolean {
+  return /\.(?:png|jpe?g|webp|gif|avif)$/i.test(relativePath);
+}
+
+type SessionClaims = { sub: string; email: string; workspaceId: string; creditWorkspaceId?: string; coreWorkspaceKey: string; storeSlug: string; plan: string };
 type PreviewClaims = {
   sub: string;
   email: string;
@@ -52,9 +91,71 @@ type UsageBucket = { requests: number; tokens: number; startedAt: number };
 type BudgetState = {
   inFlight: number;
   runs: Map<string, UsageBucket>;
+  dayKey: string;
   day: UsageBucket;
 };
 type EventSession = { userId: string; workspaceId: string; browser: WebSocket; runtime: WebSocket };
+// A workspace may have more than one browser/RPC socket. Share one durable
+// file snapshot sync across those sockets to avoid duplicate blob inserts and
+// connection-pool pressure. The periodic sync will pick up edits made mid-run.
+const workspaceFileSyncs = new Map<string, Promise<void>>();
+
+async function syncWorkspaceFileBatches(
+  config: GatewayConfig,
+  claims: Pick<SessionClaims, "workspaceId" | "creditWorkspaceId">,
+  files: Array<{ path: string; content: string }>,
+  appId?: number,
+): Promise<void> {
+  const key = claims.workspaceId;
+  const active = workspaceFileSyncs.get(key);
+  if (active) return active;
+  const operation = performWorkspaceFileBatches(config, claims, files, appId);
+  workspaceFileSyncs.set(key, operation);
+  try {
+    await operation;
+  } finally {
+    if (workspaceFileSyncs.get(key) === operation) workspaceFileSyncs.delete(key);
+  }
+}
+
+async function performWorkspaceFileBatches(
+  config: GatewayConfig,
+  claims: Pick<SessionClaims, "workspaceId" | "creditWorkspaceId">,
+  files: Array<{ path: string; content: string }>,
+  appId?: number,
+): Promise<void> {
+  const batches: Array<Array<{ path: string; content: string }>> = [];
+  let batch: Array<{ path: string; content: string }> = [];
+  for (const file of files) {
+    const candidate = [...batch, file];
+    const body = JSON.stringify({ tenantId: claims.workspaceId, workspaceId: claims.creditWorkspaceId ?? claims.workspaceId, ...(appId ? { coreAppId: appId } : {}), files: candidate });
+    if (Buffer.byteLength(body, "utf8") > MAX_WORKSPACE_SYNC_BODY_BYTES) {
+      if (batch.length) batches.push(batch);
+      batch = [file];
+      const singleFileBody = JSON.stringify({ tenantId: claims.workspaceId, workspaceId: claims.creditWorkspaceId ?? claims.workspaceId, ...(appId ? { coreAppId: appId } : {}), files: batch });
+      if (Buffer.byteLength(singleFileBody, "utf8") > MAX_WORKSPACE_SYNC_BODY_BYTES) {
+        batch = [];
+        console.error(JSON.stringify({ event: "workspace_file_sync_skipped", tenantId: claims.workspaceId, path: file.path, reason: "file_exceeds_sync_payload_limit" }));
+      }
+    } else {
+      batch = candidate;
+    }
+  }
+  if (batch.length) batches.push(batch);
+
+  for (const filesBatch of batches) {
+    const response = await fetch(`${config.NEST_INTERNAL_URL.replace(/\/+$/, "")}/api/v5/builder/workspace/files-sync`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-core-service-secret": config.CORE_SERVICE_SECRET },
+      body: JSON.stringify({ tenantId: claims.workspaceId, workspaceId: claims.creditWorkspaceId ?? claims.workspaceId, ...(appId ? { coreAppId: appId } : {}), files: filesBatch }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) {
+      console.error(JSON.stringify({ event: "workspace_files_sync_failed", tenantId: claims.workspaceId, appId, status: response.status }));
+      return;
+    }
+  }
+}
 
 class HttpError extends Error {
   constructor(
@@ -189,6 +290,39 @@ function tokenCount(value: unknown): number {
   } catch {
     return 0;
   }
+}
+
+// Image payloads are transported as base64, but their encoded byte count is
+// not a useful estimate of vision tokens. Count a conservative allowance per
+// image and estimate the rest of the request from its serialized text.
+const IMAGE_CONTEXT_TOKEN_ESTIMATE = 16_384;
+function modelInputTokenCount(value: unknown): number {
+  let imageCount = 0;
+  try {
+    const serialized = JSON.stringify(value, (key, child: unknown) => {
+      if (typeof child !== "string") return child;
+      const isImageDataUrl = /^data:image\/[^;,]+;base64,/i.test(child);
+      const isRawImagePayload = key === "image" && child.length > 4_096;
+      if (isImageDataUrl || isRawImagePayload) {
+        imageCount += 1;
+        return "[image content]";
+      }
+      return child;
+    });
+    return Math.ceil(serialized.length / 4) + imageCount * IMAGE_CONTEXT_TOKEN_ESTIMATE;
+  } catch {
+    return tokenCount(value);
+  }
+}
+
+function containsImageInput(value: unknown): boolean {
+  if (typeof value === "string") return /^data:image\//i.test(value);
+  if (!value || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some(containsImageInput);
+  const item = value as Record<string, unknown>;
+  if (typeof item.type === "string" && /^(image|image_url|input_image)$/i.test(item.type)) return true;
+  if (typeof item.image_url === "string" || typeof item.image === "string") return true;
+  return Object.values(item).some(containsImageInput);
 }
 
 function modelContextWindow(model: string, configured: number): number {
@@ -349,6 +483,10 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  const engineUrl = process.env.SELTRA_ENGINE_URL ?? process.env.DYAD_ENGINE_URL;
+  console.info(
+    `Seltra Engine configured: ${engineUrl ?? "<not configured>"} (key present: ${Boolean(process.env.SELTRA_ENGINE_API_KEY ?? process.env.DYAD_PRO_API_KEY) ? "yes" : "no"})`,
+  );
 
   const controlDirectory = path.resolve(
     config.CONTROL_DIR ?? ".web-dev/control",
@@ -484,7 +622,7 @@ async function main(): Promise<void> {
   const server = nest.getHttpServer() as Server;
   const wss = new WebSocketServer({
     noServer: true,
-    maxPayload: MAX_RPC_BODY_BYTES,
+    maxPayload: MAX_RPC_WEBSOCKET_PAYLOAD_BYTES,
   });
 
   previewProxy.on("proxyReq", (proxyRequest) => {
@@ -540,7 +678,7 @@ async function main(): Promise<void> {
         !/^[a-f0-9]{12}$/.test(payload.coreWorkspaceKey) || typeof payload.storeSlug !== "string" ||
         !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(payload.storeSlug) || typeof payload.plan !== "string") return null;
       const claims = payload as SessionClaims;
-      await assertEntitlement(claims);
+      await assertEntitlement(claims, true);
       await store.getOrCreateWorkspace(claims.sub, claims.workspaceId, claims.email);
       return claims;
     } catch (error) {
@@ -551,7 +689,7 @@ async function main(): Promise<void> {
     }
   }
 
-  async function assertEntitlement(claims: SessionClaims) {
+  async function assertEntitlement(claims: SessionClaims, allowExhausted = false) {
     const cached = entitlementCache.get(claims.workspaceId);
     let result = cached && cached.expiresAt > Date.now() ? cached : undefined;
     if (!result) {
@@ -565,15 +703,15 @@ async function main(): Promise<void> {
         throw new HttpError(503, "ENTITLEMENT_UNAVAILABLE", "Seltra could not verify builder access.");
       }
       if (!response.ok) throw new HttpError(503, "ENTITLEMENT_UNAVAILABLE", "Seltra could not verify builder access.");
-      const entitlement = await response.json() as { active?: boolean; reason?: string; userId?: string; coreWorkspaceKey?: string; storeSlug?: string };
+      const entitlement = await response.json() as { active?: boolean; reason?: string; userId?: string; creditWorkspaceId?: string; coreWorkspaceKey?: string; storeSlug?: string };
       if (entitlement.userId !== claims.sub || entitlement.coreWorkspaceKey !== claims.coreWorkspaceKey || entitlement.storeSlug !== claims.storeSlug)
         throw new HttpError(403, "WORKSPACE_FORBIDDEN", "Builder token does not match this workspace.");
       result = { active: entitlement.active === true, reason: entitlement.reason, expiresAt: Date.now() + 60_000 };
       entitlementCache.set(claims.workspaceId, result);
     }
+    if (result.reason === "credits_exhausted" && !allowExhausted)
+        throw new HttpError(402, "CREDITS_EXHAUSTED", "Seltra daily account token allowance is used. Your project and saved changes are safe; credits are shared across your projects and reset at midnight UTC.");
     if (!result.active) {
-      if (result.reason === "credits_exhausted")
-        throw new HttpError(402, "CREDITS_EXHAUSTED", "This workspace has used its AI credits for this period.");
       throw new HttpError(403, "WORKSPACE_INACTIVE", "Builder access is not active for this workspace.");
     }
   }
@@ -581,7 +719,7 @@ async function main(): Promise<void> {
   async function runtimeFor(claims: Pick<SessionClaims, "sub" | "email" | "plan" | "workspaceId" | "coreWorkspaceKey" | "storeSlug">): Promise<WorkspaceRuntime> {
     let runtime: WorkspaceRuntime;
     try {
-      runtime = await supervisor.get(claims.workspaceId, claims.coreWorkspaceKey, claims.storeSlug);
+      runtime = await supervisor.get(claims.workspaceId, claims.coreWorkspaceKey, claims.storeSlug, claims.sub);
     } catch (error) {
       const status = Number((error as { status?: number }).status) || 503;
       throw new HttpError(status, String((error as { code?: string }).code ?? "WORKSPACE_RUNTIME_UNAVAILABLE"), (error as Error).message || "Workspace runtime is unavailable.");
@@ -785,7 +923,7 @@ async function main(): Promise<void> {
     const queryToken = url.searchParams.get("preview_token") ?? undefined;
     const queryClaims = await validPreviewToken(queryToken, label, ["preview"]);
     if (queryClaims) {
-      await assertEntitlement(queryClaims);
+      await assertEntitlement(queryClaims, true);
       const sessionToken = await issuePreviewSessionToken(label, queryClaims);
       url.searchParams.delete("preview_token");
       response.setHeader("Set-Cookie", previewCookie(sessionToken));
@@ -800,7 +938,7 @@ async function main(): Promise<void> {
       "preview_session",
     ]);
     if (!cookieClaims) return null;
-    await assertEntitlement(cookieClaims);
+    await assertEntitlement(cookieClaims, true);
 
     if (url.searchParams.has("preview_token")) {
       url.searchParams.delete("preview_token");
@@ -821,13 +959,19 @@ async function main(): Promise<void> {
 
   function budgetState(workspaceId: string): BudgetState {
     let state = budgetStates.get(workspaceId);
+    const today = utcDay();
     if (!state) {
       state = {
         inFlight: 0,
         runs: new Map(),
+        dayKey: today,
         day: { requests: 0, tokens: 0, startedAt: Date.now() },
       };
       budgetStates.set(workspaceId, state);
+    } else if (state.dayKey !== today) {
+      state.dayKey = today;
+      state.runs.clear();
+      state.day = { requests: 0, tokens: 0, startedAt: Date.now() };
     }
     return state;
   }
@@ -917,6 +1061,7 @@ async function main(): Promise<void> {
           config.AI_MODEL_REASONING || config.AI_MODEL_DEFAULT,
           config.AI_MODEL_FAST || config.AI_MODEL_DEFAULT,
           config.AI_MODEL_VISION,
+          config.AI_MODEL_IMAGE,
         ]
           .filter((id): id is string => Boolean(id))
           .map((id) => ({
@@ -955,6 +1100,29 @@ async function main(): Promise<void> {
       openAiError(response, err.status, err.code, err.message);
       return;
     }
+    // Tool requests use the explicitly configured tool model. In Seltra web
+    // deployments this is set to the same DeepSeek model as the builder, so
+    // tool-enabled build turns stay on the configured provider/key instead of
+    // silently switching to an unrelated fallback model.
+    if (
+      mapping.role === "builder" &&
+      Array.isArray(body.tools) &&
+      body.tools.length > 0 &&
+      config.AI_MODEL_TOOL?.trim()
+    ) {
+      mapping = { ...mapping, model: config.AI_MODEL_TOOL.trim(), setting: "AI_MODEL_TOOL" };
+    }
+    // Builder turns containing image attachments must use the configured
+    // vision model. DeepSeek V4 Flash 0731 and GLM 4.7 Flash support tools,
+    // but they reject image inputs. Keep text-only requests on the builder.
+    const hasImageInput = containsImageInput(body.messages);
+    if (mapping.role === "builder" && hasImageInput) {
+      if (!config.AI_MODEL_VISION?.trim()) {
+        openAiError(response, 503, "VISION_MODEL_NOT_CONFIGURED", "Seltra image requests need a vision-capable model. Configure AI_MODEL_VISION and retry.");
+        return;
+      }
+      mapping = { ...mapping, model: config.AI_MODEL_VISION.trim(), setting: "AI_MODEL_VISION" };
+    }
     if (!config.MODEL_API_KEY || !config.modelBaseUrl) {
       openAiError(
         response,
@@ -965,7 +1133,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    const inputTokensEstimate = tokenCount(body.messages);
+    const inputTokensEstimate = modelInputTokenCount(body.messages);
     const contextSafetyMargin = 512;
     const availableOutputTokens = Math.min(
       mapping.maxOutputTokens,
@@ -994,9 +1162,15 @@ async function main(): Promise<void> {
         ? runIdHeader
         : undefined;
     const runId = explicitRunId ?? claimsWorkspace + "-" + utcDay();
-    const state = budgetState(claimsWorkspace);
+    const creditAccountId = modelClaims.creditWorkspaceId ?? modelClaims.sub;
+    const state = budgetState(creditAccountId);
+    const configuredWorkspaceLimit = config.MODEL_MAX_TOKENS_PER_WORKSPACE;
+    const configuredProLimit = Number(process.env.SELTRA_PRO_MAX_TOKENS_PER_WORKSPACE ?? configuredWorkspaceLimit * 5);
+    const accountTokenLimit = modelClaims.plan === 'premium' || modelClaims.plan === 'pro'
+      ? (Number.isFinite(configuredProLimit) && configuredProLimit > 0 ? Math.floor(configuredProLimit) : configuredWorkspaceLimit * 5)
+      : configuredWorkspaceLimit;
     const bucket = budgetBucket(state, runId);
-    const requestTokens = tokenCount(body.messages);
+    const requestTokens = inputTokensEstimate;
     if (state.inFlight >= config.MODEL_MAX_CONCURRENT_REQUESTS) {
       openAiError(
         response,
@@ -1032,14 +1206,13 @@ async function main(): Promise<void> {
       return;
     }
     if (
-      state.day.tokens + requestTokens >
-      config.MODEL_MAX_TOKENS_PER_WORKSPACE
+      state.day.tokens + requestTokens > accountTokenLimit
     ) {
       openAiError(
         response,
         429,
         "budget_exceeded",
-        `Seltra workspace token budget exceeded (${state.day.tokens.toLocaleString()} estimated input tokens used; daily limit ${config.MODEL_MAX_TOKENS_PER_WORKSPACE.toLocaleString()}). Try again after the workspace budget resets.`,
+        `Seltra workspace token budget exceeded (${state.day.tokens.toLocaleString()} estimated input tokens used; daily account limit ${accountTokenLimit.toLocaleString()}). Try again after the account budget resets.`,
       );
       return;
     }
@@ -1094,9 +1267,11 @@ async function main(): Promise<void> {
         .map((model) => model.trim())
         .filter(Boolean),
     );
-    const compatibleFallbacks = Array.isArray(body.tools) && body.tools.length
-      ? fallbacks.filter((model) => toolFallbacks.has(model))
-      : fallbacks;
+    const compatibleFallbacks = hasImageInput
+      ? []
+      : Array.isArray(body.tools) && body.tools.length
+        ? fallbacks.filter((model) => toolFallbacks.has(model))
+        : fallbacks;
     const candidateModels = [mapping.model, ...compatibleFallbacks].filter(
       (model, index, models) => models.indexOf(model) === index,
     );
@@ -1365,11 +1540,111 @@ async function main(): Promise<void> {
       await fetch(`${config.NEST_INTERNAL_URL.replace(/\/+$/, "")}/api/v5/internal/core/usage`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-core-service-secret": config.CORE_SERVICE_SECRET },
-        body: JSON.stringify({ tenantId: claimsWorkspace, userId: modelClaims.sub, role: mapping.role, model: usedModel, tokens: inputTokens + outputTokens, cached: cachedInputTokens > 0, ok: succeeded, runId }),
+        body: JSON.stringify({ tenantId: claimsWorkspace, workspaceId: modelClaims.creditWorkspaceId ?? claimsWorkspace, userId: modelClaims.sub, role: mapping.role, model: usedModel, tokensIn: inputTokens, tokensOut: outputTokens, cached: cachedInputTokens > 0, ok: succeeded, runId }),
         signal: AbortSignal.timeout(5_000),
       }).then((result) => {
         if (!result.ok) console.error(JSON.stringify({ event: "usage_report_failed", status: result.status }));
       }).catch(() => console.error(JSON.stringify({ event: "usage_report_failed" })));
+      // The next model request must observe the just-committed account balance.
+      entitlementCache.delete(claimsWorkspace);
+    }
+  }
+
+  async function handleImageGenerationRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    const bearer = request.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1] ?? "";
+    const modelClaims = modelTokens.get(bearer);
+    const activeRuntime = modelClaims ? supervisor.getByKey(modelClaims.coreWorkspaceKey) : null;
+    if (!bearer || !modelClaims || !activeRuntime || activeRuntime.modelToken !== bearer)
+      throw new HttpError(401, "UNAUTHORIZED", "Invalid workspace model token.");
+    await assertEntitlement(modelClaims);
+
+    let body: Record<string, unknown>;
+    try {
+      body = JSON.parse((await readBody(request, 32 * 1024)).toString("utf8")) as Record<string, unknown>;
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+    }
+    if (typeof body.prompt !== "string" || !body.prompt.trim() || body.prompt.length > 2048)
+      throw new HttpError(400, "INVALID_REQUEST", "A non-empty image prompt of at most 2048 characters is required.");
+    if (!config.AI_MODEL_IMAGE)
+      throw new HttpError(503, "IMAGE_MODEL_NOT_CONFIGURED", "Image generation is unavailable: configure AI_MODEL_IMAGE.");
+    if (!config.MODEL_API_KEY || !config.MODEL_ACCOUNT_ID)
+      throw new HttpError(503, "MODEL_PROVIDER_NOT_CONFIGURED", "Image generation is unavailable: configure MODEL_API_KEY and MODEL_ACCOUNT_ID.");
+
+    const model = config.AI_MODEL_IMAGE;
+    const endpoint = `https://api.cloudflare.com/client/v4/accounts/${config.MODEL_ACCOUNT_ID}/ai/run/${model}`;
+    const multipart = /flux-2-(?:dev|klein)/i.test(model);
+    const init: RequestInit = multipart
+      ? (() => {
+          const form = new FormData();
+          form.append("prompt", body.prompt as string);
+          form.append("width", "1024");
+          form.append("height", "1024");
+          if (model.endsWith("flux-2-dev")) form.append("steps", "25");
+          return { method: "POST", headers: { Authorization: `Bearer ${config.MODEL_API_KEY}` }, body: form };
+        })()
+      : {
+          method: "POST",
+          headers: { Authorization: `Bearer ${config.MODEL_API_KEY}`, "content-type": "application/json" },
+          body: JSON.stringify({ prompt: body.prompt }),
+        };
+
+    const startedAt = Date.now();
+    let ok = false;
+    let errorClass: string | undefined;
+    try {
+      const upstream = await fetch(endpoint, { ...init, signal: AbortSignal.timeout(90_000) });
+      if (!upstream.ok) {
+        const detail = (await upstream.text().catch(() => "")).slice(0, 500);
+        errorClass = upstream.status === 429 ? "rate_limit" : "provider_error";
+        console.error(JSON.stringify({ event: "image_generation_failed", model, status: upstream.status, detail }));
+        throw new HttpError(upstream.status >= 500 ? 502 : upstream.status, "IMAGE_PROVIDER_ERROR", `Image provider returned ${upstream.status}: ${detail}`);
+      }
+      const contentType = upstream.headers.get("content-type") ?? "";
+      let image: string | undefined;
+      if (contentType.startsWith("image/")) {
+        image = Buffer.from(await upstream.arrayBuffer()).toString("base64");
+      } else {
+        const payload = await upstream.json() as { result?: { image?: unknown }; image?: unknown };
+        const candidate = payload.result?.image ?? payload.image;
+        if (typeof candidate === "string" && candidate) image = candidate;
+      }
+      if (!image) {
+        errorClass = "invalid_provider_response";
+        throw new HttpError(502, "IMAGE_PROVIDER_ERROR", "Image provider returned no image data.");
+      }
+      ok = true;
+      sendJson(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ b64_json: image }] });
+    } catch (error) {
+      errorClass ??= error instanceof Error && error.name === "TimeoutError" ? "timeout" : "provider_error";
+      throw error;
+    } finally {
+      const runIdHeader = request.headers["x-seltra-run-id"];
+      const runId = typeof runIdHeader === "string" && runIdHeader.length <= 128 ? runIdHeader : modelClaims.workspaceId + "-" + utcDay();
+      const usage = {
+        tenantId: modelClaims.workspaceId,
+        workspaceId: modelClaims.creditWorkspaceId ?? modelClaims.workspaceId,
+        userId: modelClaims.sub,
+        role: "image",
+        model,
+        tokensIn: tokenCount(body.prompt),
+        tokensOut: 0,
+        cached: false,
+        ok,
+        runId,
+      };
+      await fetch(`${config.NEST_INTERNAL_URL.replace(/\/+$/, "")}/api/v5/internal/core/usage`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-core-service-secret": config.CORE_SERVICE_SECRET },
+        body: JSON.stringify(usage),
+        signal: AbortSignal.timeout(5_000),
+      }).then((result) => { if (!result.ok) console.error(JSON.stringify({ event: "image_usage_report_failed", status: result.status })); })
+        .catch(() => console.error(JSON.stringify({ event: "image_usage_report_failed" })));
+      console.log(JSON.stringify({ event: "image_generation_usage", workspaceId: modelClaims.workspaceId, runId, model, ok, errorClass, latencyMs: Date.now() - startedAt }));
     }
   }
 
@@ -1420,6 +1695,10 @@ async function main(): Promise<void> {
     }
     if (request.method === "GET" && url.pathname === "/healthz") {
       sendJson(response, 200, { ok: true });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/images/generations") {
+      await handleImageGenerationRequest(request, response);
       return;
     }
     if (url.pathname.startsWith("/v1/")) {
@@ -1507,14 +1786,13 @@ async function main(): Promise<void> {
       if (match && request.method === "POST") {
         const channel = decodeURIComponent(match[1]);
         const requestStartedAt = Date.now();
-        let logStatus = 500;
         response.once("finish", () =>
           console.log(
             JSON.stringify({
               time: new Date().toISOString(),
               userId: claims.sub,
               channel,
-              status: logStatus,
+              status: response.statusCode,
               durationMs: Date.now() - requestStartedAt,
             }),
           ),
@@ -1525,7 +1803,6 @@ async function main(): Promise<void> {
             "CHANNEL_DISABLED",
             "This IPC channel is unavailable in the web runtime.",
           );
-        logStatus = 403;
         const runtimeSessionId = request.headers["x-runtime-session"];
         if (
           typeof runtimeSessionId !== "string" ||
@@ -1587,20 +1864,55 @@ async function main(): Promise<void> {
               : [];
           for (const candidate of appCandidates) {
             if (!candidate || typeof candidate !== "object") continue;
-            const app = candidate as { id?: unknown; name?: unknown };
+            const app = candidate as { id?: unknown; name?: unknown; path?: unknown };
             if (typeof app.id !== "number" || !Number.isSafeInteger(app.id) || typeof app.name !== "string") continue;
+            const coreAppId = app.id;
             await fetch(`${config.NEST_INTERNAL_URL.replace(/\/+$/, "")}/api/v5/builder/apps/sync`, {
               method: "POST",
               headers: { "content-type": "application/json", "x-core-service-secret": config.CORE_SERVICE_SECRET },
-              body: JSON.stringify({ tenantId: claims.workspaceId, coreAppId: app.id, name: app.name, status: "draft" }),
+              body: JSON.stringify({ tenantId: claims.workspaceId, coreAppId, name: app.name, ...(typeof app.path === "string" ? { corePath: app.path } : {}), status: "draft" }),
               signal: AbortSignal.timeout(5_000),
             }).then((sync) => {
-              if (!sync.ok) console.error(JSON.stringify({ event: "tenant_app_sync_failed", tenantId: claims.workspaceId, appId: app.id, status: sync.status }));
-            }).catch(() => console.error(JSON.stringify({ event: "tenant_app_sync_failed", tenantId: claims.workspaceId, appId: app.id })));
+              if (!sync.ok) console.error(JSON.stringify({ event: "tenant_app_sync_failed", tenantId: claims.workspaceId, appId: coreAppId, status: sync.status }));
+            }).catch(() => console.error(JSON.stringify({ event: "tenant_app_sync_failed", tenantId: claims.workspaceId, appId: coreAppId })));
+            const appPath = (candidate as { path?: unknown }).path
+            if (typeof appPath === "string" && (channel === "create-app" || channel === "list-apps")) {
+              void (async () => {
+                const files: Array<{ path: string; content: string }> = []
+                const walk = async (root: string, relative = ""): Promise<void> => {
+                  let entries: Array<import("node:fs").Dirent>
+                  try { entries = await fs.readdir(root, { withFileTypes: true }) } catch { return }
+                  for (const entry of entries) {
+                    if ((entry.name.startsWith(".") && entry.name !== ".dyad") || files.length >= 2000) continue
+                    const absolute = path.join(root, entry.name)
+                    const relativePath = path.join(relative, entry.name).replaceAll("\\", "/")
+                    if (!isWorkspaceSyncPathAllowed(relativePath)) continue
+                    if (entry.isDirectory()) await walk(absolute, relativePath)
+                    else if (entry.isFile()) {
+                      try {
+                        const stat = await fs.stat(absolute)
+                        if (isRasterImagePath(relativePath)) {
+                          if (stat.size <= 6 * 1024 * 1024) {
+                            const content = `base64:${(await fs.readFile(absolute)).toString("base64")}`
+                            files.push({ path: path.join("apps", path.basename(appPath), relativePath).replaceAll("\\", "/"), content })
+                          }
+                          continue
+                        }
+                        if (stat.size > 10 * 1024 * 1024) continue
+                        const content = await fs.readFile(absolute, "utf8")
+                        files.push({ path: path.join("apps", path.basename(appPath), relativePath).replaceAll("\\", "/"), content })
+                      } catch { /* unreadable files are not part of the durable manifest */ }
+                    }
+                  }
+                }
+                await walk(appPath)
+                if (!files.length) return
+                await syncWorkspaceFileBatches(config, claims, files, coreAppId).catch((error) => console.error(JSON.stringify({ event: "workspace_files_sync_failed", tenantId: claims.workspaceId, appId: coreAppId, reason: error instanceof Error ? error.message : String(error) })))
+              })()
+            }
           }
         }
         const rewritten = await rewriteWithPreviewTokens(result, claims);
-        logStatus = upstream.status;
         sendJson(response, upstream.status, rewritten);
         return;
       }
@@ -1644,7 +1956,7 @@ async function main(): Promise<void> {
           const cookieClaims = queryClaims ? null : await validPreviewToken(cookies(request).get("seltra_preview"), label, ["preview", "preview_session"]);
           const claims = queryClaims ?? cookieClaims;
           if (!claims) throw new HttpError(401, "PREVIEW_TOKEN_REQUIRED", "Preview token required.");
-          await assertEntitlement(claims);
+          await assertEntitlement(claims, true);
           if (url.searchParams.has("preview_token")) {
             url.searchParams.delete("preview_token");
             request.url = url.pathname + url.search;
@@ -1666,7 +1978,7 @@ async function main(): Promise<void> {
         checkOrigin(request);
         const ticket = url.searchParams.get("ticket");
         if (!ticket || ticket.length > 4096) throw new HttpError(401, "WS_TICKET_REQUIRED", "A websocket ticket is required.");
-        let redeemed: { workspaceId?: string; userId?: string; coreWorkspaceKey?: string; storeSlug?: string; email?: string; plan?: string };
+        let redeemed: { workspaceId?: string; creditWorkspaceId?: string; userId?: string; coreWorkspaceKey?: string; storeSlug?: string; email?: string; plan?: string };
         try {
           const result = await fetch(`${config.NEST_INTERNAL_URL.replace(/\/+$/, "")}/api/v5/internal/core/ws-ticket/redeem`, {
             method: "POST", headers: { "content-type": "application/json", "x-core-service-secret": config.CORE_SERVICE_SECRET },
@@ -1677,8 +1989,8 @@ async function main(): Promise<void> {
         } catch { throw new HttpError(401, "WS_TICKET_INVALID", "Websocket ticket is invalid or expired."); }
         if (!redeemed.workspaceId || !redeemed.userId || !redeemed.coreWorkspaceKey || !redeemed.storeSlug || !redeemed.email || !redeemed.plan)
           throw new HttpError(401, "WS_TICKET_INVALID", "Websocket ticket is invalid or expired.");
-        const claims: SessionClaims = { workspaceId: redeemed.workspaceId, sub: redeemed.userId, coreWorkspaceKey: redeemed.coreWorkspaceKey, storeSlug: redeemed.storeSlug, email: redeemed.email, plan: redeemed.plan };
-        await assertEntitlement(claims);
+        const claims: SessionClaims = { workspaceId: redeemed.workspaceId, creditWorkspaceId: redeemed.creditWorkspaceId, sub: redeemed.userId, coreWorkspaceKey: redeemed.coreWorkspaceKey, storeSlug: redeemed.storeSlug, email: redeemed.email, plan: redeemed.plan };
+        await assertEntitlement(claims, true);
         const workspaceRuntime = await runtimeFor(claims);
         url.searchParams.delete("ticket");
         request.url = url.pathname + url.search;
@@ -1697,12 +2009,61 @@ async function main(): Promise<void> {
           let runtimeAlive = true;
           let queuedRuntimeBytes = 0;
           let runtimeMessageQueue = Promise.resolve();
+          let workspaceSyncInFlight = false;
           const authLifetimeTimer = setTimeout(() => closeBoth("gateway", 1008, "Builder session expired"), 10 * 60_000);
           authLifetimeTimer.unref();
           const sessionReadyTimer = setTimeout(() => {
             if (!runtimeSessionId) closeBoth("gateway", 1011, "Runtime session handshake timed out");
           }, 20_000);
           sessionReadyTimer.unref();
+          const syncWorkspaceFiles = async () => {
+            if (workspaceSyncInFlight) return;
+            workspaceSyncInFlight = true;
+            const appsRoot = path.resolve(config.DATA_ROOT, "ws", claims.coreWorkspaceKey, "apps");
+            const files: Array<{ path: string; content: string }> = [];
+            const walk = async (directory: string, relative = ""): Promise<void> => {
+              let entries: Array<import("node:fs").Dirent>;
+              try {
+                entries = await fs.readdir(directory, { withFileTypes: true });
+              } catch {
+                return;
+              }
+              for (const entry of entries) {
+                    if ((entry.name.startsWith(".") && entry.name !== ".dyad") || files.length >= 2000) continue;
+                const absolute = path.join(directory, entry.name);
+                const relativePath = path.join(relative, entry.name).replaceAll("\\", "/");
+                if (!isWorkspaceSyncPathAllowed(relativePath)) continue;
+                if (entry.isDirectory()) {
+                  await walk(absolute, relativePath);
+                } else if (entry.isFile()) {
+                  try {
+                    const stat = await fs.stat(absolute);
+                    if (stat.size > 10 * 1024 * 1024) continue;
+                    if (isRasterImagePath(relativePath)) {
+                      if (stat.size <= 6 * 1024 * 1024) files.push({ path: relativePath, content: `base64:${(await fs.readFile(absolute)).toString("base64")}` });
+                    } else {
+                      files.push({ path: relativePath, content: await fs.readFile(absolute, "utf8") });
+                    }
+                  } catch {
+                    continue;
+                  }
+                }
+              }
+            };
+            try {
+              await walk(appsRoot, "apps");
+              if (files.length) {
+                await syncWorkspaceFileBatches(config, claims, files).catch((error) => console.error(JSON.stringify({ event: "workspace_files_sync_failed", tenantId: claims.workspaceId, reason: error instanceof Error ? error.message : String(error) })));
+              }
+            } finally {
+              workspaceSyncInFlight = false;
+            }
+          };
+          void syncWorkspaceFiles();
+          const workspaceSyncTimer = setInterval(() => {
+            if (!closed) void syncWorkspaceFiles();
+          }, 8_000);
+          workspaceSyncTimer.unref();
           const heartbeatTimer = setInterval(() => {
             if (closed) return;
             if (!browserAlive || !runtimeAlive) {
@@ -1742,6 +2103,7 @@ async function main(): Promise<void> {
             clearTimeout(authLifetimeTimer);
             clearTimeout(sessionReadyTimer);
             clearInterval(heartbeatTimer);
+            clearInterval(workspaceSyncTimer);
             const forwardedCode =
               code === 1005 || code === 1006 || code === 1015 ? 1011 : code;
             if (browser.readyState < WebSocket.CLOSING)

@@ -7,7 +7,7 @@ import {
   escapeXmlContent,
 } from "./types";
 import { extractCodebase } from "../../../../../../utils/codebase";
-import { engineFetch } from "./engine_fetch";
+import { engineFetch, isSeltraEngineConfigured } from "./engine_fetch";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
 import { isCodeExplorerReady } from "@/ipc/processors/code_explorer";
 import { readSettings } from "@/main/settings";
@@ -109,7 +109,7 @@ export const codeSearchTool: ToolDefinition<CodeSearchArgs> = {
   // Route root discovery through the Explorer sub-agent whenever it is
   // available. Inside Explorer, retain code_search as a fallback unless the
   // compiler-backed exploration surface is ready.
-  isEnabled: (ctx) => ctx.isDyadPro,
+  isEnabled: () => isSeltraEngineConfigured(),
   isDiscoverable: (ctx) => {
     if (!ctx.subagentThreadId && ctx.canUseExplorerSubagent) return false;
 

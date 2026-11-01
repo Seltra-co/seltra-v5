@@ -1,7 +1,7 @@
 {
   "name": "seltra.co",
-  "version": "1.19.0",
-  "description": "Core Infrastructure for seltra v5.",
+  "version": "5.0.0",
+  "description": "Core AI Infrastructure for seltra v5.",
   "keywords": [],
   "license": "MIT",
   "author": {
@@ -33,8 +33,10 @@
     "start:paused-sub": "node scripts/start-subscription-status.mjs subscription_paused",
     "start:healthy-sub": "node scripts/start-subscription-status.mjs healthy",
     "dev": "cross-env NODE_ENV=development npm start",
-    "dev:engine": "cross-env DYAD_ENGINE_URL=http://localhost:8080/v1 npm start",
-    "staging:engine": "cross-env DYAD_ENGINE_URL=https://staging---dyad-llm-engine-kq7pivehnq-uc.a.run.app/v1 npm start",
+    "dev:engine": "cross-env SELTRA_ENGINE_URL=http://localhost:3001/v1 npm start",
+    "staging:engine": "node scripts/start-seltra-engine.mjs",
+    "engine:check": "node scripts/web/check-seltra-engine-url.mjs",
+    "engine:test:contracts": "node --test scripts/web/seltra-engine-env.test.mjs && vitest run src/ipc/utils/seltra_engine_url.test.ts src/pro/main/ipc/handlers/local_agent/tools/engine_fetch.spec.ts src/pro/main/ipc/handlers/local_agent/tool_definitions.test.ts src/lib/schemas.test.ts",
     "package": "npm run rebuild:keychain-reader && npm run clean && electron-forge package",
     "make": "npm run rebuild:keychain-reader && npm run clean && electron-forge make",
     "publish": "npm run rebuild:keychain-reader && npm run clean && electron-forge publish",

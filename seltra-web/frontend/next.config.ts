@@ -34,12 +34,17 @@ const nextConfig: NextConfig = {
       process.env.API_PROXY_TARGET?.replace(/\/$/, '') ||
       process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '') ||
       'https://seltra-merchant-backend.onrender.com'
-    return [
-      {
-        source: '/api/v5/:path*',
-        destination: `${api}/api/v5/:path*`,
-      },
-    ]
+    return {
+      // Let the API Route Handler own this path first. It turns temporary
+      // backend restarts into a bounded 502 response instead of Next's low-
+      // level rewrite proxy logging an unhandled ECONNRESET/ECONNREFUSED.
+      afterFiles: [
+        {
+          source: '/api/v5/:path*',
+          destination: `${api}/api/v5/:path*`,
+        },
+      ],
+    }
   },
 }
 

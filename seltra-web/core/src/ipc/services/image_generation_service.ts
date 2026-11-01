@@ -18,7 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import log from "electron-log";
 import { DyadError, DyadErrorKind, isDyadError } from "@/errors/dyad_error";
-import { getDyadEngineBaseUrl } from "../utils/dyad_engine_url";
+import { getSeltraEngineBaseUrl } from "../utils/seltra_engine_url";
 import { ensureDyadGitignored } from "../handlers/gitignoreUtils";
 
 const logger = log.scope("image_generation_service");
@@ -53,6 +53,9 @@ function throwIfGenerationCancelled(signal: AbortSignal): void {
 function getHttpErrorKind(status: number): DyadErrorKind {
   if (status === 401 || status === 403) {
     return DyadErrorKind.Auth;
+  }
+  if (status === 402) {
+    return DyadErrorKind.Precondition;
   }
   if (status === 429) {
     return DyadErrorKind.RateLimited;
@@ -145,11 +148,14 @@ export class ImageGenerationService {
     controller: AbortController,
   ) {
     const settings = readSettings();
-    const apiKey = settings.providerSettings?.auto?.apiKey?.value;
+    const apiKey =
+      process.env.SELTRA_ENGINE_API_KEY ??
+      settings.seltraEngineApiKey?.value ??
+      (process.env.SELTRA_ENGINE_URL ? undefined : settings.providerSettings?.auto?.apiKey?.value);
 
     if (!apiKey) {
       throw new DyadError(
-        "Dyad Pro API key is required for image generation",
+        "Seltra engine API key is required for image generation",
         DyadErrorKind.Auth,
       );
     }
@@ -174,12 +180,15 @@ export class ImageGenerationService {
 
     let response: Response;
     try {
-      response = await fetch(`${getDyadEngineBaseUrl()}/images/generations`, {
+      response = await fetch(`${getSeltraEngineBaseUrl()}/images/generations`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
-          "X-Dyad-Request-Id": requestId,
+          "X-Request-ID": requestId,
+          ...(process.env.SELTRA_ENGINE_CREDIT_IDENTITY?.trim()
+            ? { "x-seltra-credit-identity": process.env.SELTRA_ENGINE_CREDIT_IDENTITY.trim() }
+            : {}),
         },
         body: JSON.stringify({
           prompt: fullPrompt,

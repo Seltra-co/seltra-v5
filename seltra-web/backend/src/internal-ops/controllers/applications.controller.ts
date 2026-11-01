@@ -73,7 +73,7 @@ export class ApplicationsController {
   @ApiOperation({
     summary: 'Resend merchant login credentials',
     description:
-      'Regenerates a temporary password for an approved application, syncs Supabase Auth, and emails Merchant ID + password.',
+      'Regenerates the Neon-backed account password for an approved application and emails Merchant ID + password.',
   })
   @ApiParam({ name: 'id', description: 'Merchant application ID.', example: 'clx9app123' })
   @ApiHeader({ name: 'x-ops-actor', description: 'Human-readable ops actor recorded in the audit log.', required: true, example: 'ops@seltra.co' })

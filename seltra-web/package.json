@@ -1,0 +1,8 @@
+{
+  "name": "seltra-v5-workspace-scripts",
+  "private": true,
+  "scripts": {
+    "engine:test": "npm --prefix backend run engine:test:all",
+    "engine:live": "npm --prefix backend run engine:test:live"
+  }
+}

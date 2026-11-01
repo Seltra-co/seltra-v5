@@ -1,6 +1,6 @@
 //seltra-web/frontend/app/(dashboard)/dashboard/page.tsx
 'use client'
-import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
@@ -11,9 +11,9 @@ import {
   TrendingUp, Wallet, Menu, X, Trash2, Copy,
   Sparkles, ArrowRight, Megaphone, Paperclip, Image as ImageIcon, Figma, Wrench, ListTodo, Check,
   Bell, CreditCard, ShieldCheck, CheckCheck,
-  FileText, UserCircle, HelpCircle, Globe2, Building2, LockKeyhole,
+  FileText, UserCircle, HelpCircle, Globe, Globe2, Building2, LockKeyhole,
   Eye, Pencil, Mic, ChevronDown, PanelLeft, Search, UserRound, RefreshCw, Tablet,
-  MoreHorizontal, Expand, MessageSquare, Monitor, Smartphone, Asterisk, Circle, Loader2,
+  MoreHorizontal, Expand, MessageSquare, Monitor, Smartphone, Asterisk, Circle, Loader2, CheckCircle2, MousePointer2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -28,12 +28,22 @@ import { useStore } from '@/context/StoreContext'
 import { CoreClient, type CoreSession } from '@/lib/core/client'
 import { CoreEvents } from '@/lib/core/events'
 import { takePendingBuild } from '@/lib/builder/pending'
+import { fetchWithSeltraAuth } from '@/lib/auth-session'
 import { CorePreviewAnnotator } from '@/components/dashboard/CorePreviewAnnotator'
 import { CoreAgentMessage, CoreTodoProgress, type CoreBlueprint, type CoreQuestionnaire, type CoreTodo } from '@/components/dashboard/CoreAgentMessage'
 import { CURRENT_ANNOUNCEMENT_VERSION, WHATS_NEW } from './config/whats-new'
+import { getGreeting } from '@/lib/greetings'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001'
+// Use the Next.js same-origin proxy in development and production. Direct
+// cross-origin calls bypass the proxy and fail CORS before reaching the API.
+const API_BASE = ''
 const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? 'seltra.co'
+const CORE_RUNTIME_CONNECTION_TIMEOUT_MS = 10 * 60_000
+const NEW_USER_PLACEHOLDERS = [
+  'Ask Seltra to build a skincare brand…',
+  'Ask Seltra to build a bakery storefront…',
+  'Ask Seltra to create a sustainable fashion store…',
+]
 
 const DEV_PREVIEW = process.env.NODE_ENV === 'development'
 
@@ -79,20 +89,6 @@ function editedLabel(iso?: string) {
   return `Edited ${new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
 }
 
-function ensureDevPreview() {
-  if (!DEV_PREVIEW || typeof window === 'undefined' || getToken()) return
-  const previewUser = {
-    id: 'dev-preview',
-    email: 'william@seltra.co',
-    plan: 'free',
-    user_metadata: {
-      full_name: 'William Ofosu-Parwar',
-      avatar_url: '/seltra/william.png',
-    },
-  }
-  localStorage.setItem('seltra:token', 'dev-preview')
-  localStorage.setItem('seltra:user', JSON.stringify(previewUser))
-}
 function clearAuth() {
   ['seltra:token','seltra:user','seltra:active_store'].forEach((k) => localStorage.removeItem(k))
   window.dispatchEvent(new Event('seltra:auth-expired'))
@@ -102,7 +98,7 @@ async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<{ data
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as Record<string, string> ?? {}) }
   if (token) headers['Authorization'] = `Bearer ${token}`
   try {
-    const res  = await fetch(`${API_BASE}${path}`, { ...opts, headers })
+    const res  = await fetchWithSeltraAuth(`${API_BASE}${path}`, { ...opts, headers })
     const json = await res.json().catch(() => ({}))
     if (!res.ok) { if (res.status === 401) clearAuth(); return { data: null, error: json?.message ?? `HTTP ${res.status}` } }
     return { data: json as T, error: null }
@@ -114,9 +110,6 @@ async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<{ data
 
 function storefrontUrl(store: StoreData | null): string {
   if (!store) return ''
-  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
-    return `${window.location.origin}/store/${store.slug}`
-  }
   return `https://${store.slug}.${ROOT_DOMAIN}`
 }
 
@@ -142,6 +135,24 @@ const statusClass = (status: string) => {
 const ORDER_STATUSES = ['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded']
 const hasConfirmedPayment = (order: OrderRecord) => order.merchantAmount !== null && order.merchantAmount !== undefined
 const storeIdOf = (store: StoreData | null) => store?.id ?? store?.slug
+
+type PersistedRunEvent = { type: string; payload?: unknown }
+
+function latestRunTodoSnapshot(events?: PersistedRunEvent[]): { chatId?: number; todos: CoreTodo[] } | undefined {
+  const snapshot = [...(events ?? [])].reverse().find((event) =>
+    Boolean(event.payload && typeof event.payload === 'object' && Array.isArray((event.payload as { todos?: unknown }).todos)),
+  )
+  const payload = snapshot?.payload as { todos?: CoreTodo[]; chatId?: number } | undefined
+  const todos = payload?.todos
+  if (!todos?.every((todo) => todo && typeof todo.id === 'string' && typeof todo.content === 'string' && ['pending', 'in_progress', 'completed'].includes(todo.status))) return undefined
+  const chatId = payload?.chatId ?? [...(events ?? [])].reverse().map((event) => (event.payload as { chatId?: number } | undefined)?.chatId).find((id): id is number => typeof id === 'number')
+  return { ...(chatId !== undefined ? { chatId } : {}), todos }
+}
+
+function hasUnfinishedRunTodos(events?: PersistedRunEvent[]) {
+  const snapshot = latestRunTodoSnapshot(events)
+  return snapshot ? snapshot.todos.some((todo) => todo.status !== 'completed') : undefined
+}
 
 async function createConversation(title: string, signal?: AbortSignal) {
   const { data, error, aborted } = await apiFetch<Conversation>('/api/v5/conversations', {
@@ -354,6 +365,8 @@ function formatChatTime(iso?: string) {
 }
 
 function UserPromptBubble({ content, attachments, createdAt, onEdit }: { content: string; attachments?: MessageAttachment[]; createdAt?: string; onEdit?: (value: string) => void }) {
+  const [expanded, setExpanded] = useState(false)
+  const isLong = content.length > 220 || content.split('\n').length > 3
   const time = formatChatTime(createdAt)
 
   return (
@@ -367,10 +380,11 @@ function UserPromptBubble({ content, attachments, createdAt, onEdit }: { content
           </div>
         ) : null}
         {content && (
-          <div className="break-words [overflow-wrap:anywhere] rounded-2xl border border-white/15 bg-white/[0.03] px-4 py-2.5 text-[14.5px] leading-relaxed text-white">
+          <div className={cn('break-words [overflow-wrap:anywhere] rounded-2xl border border-white/15 bg-white/[0.03] px-4 py-2.5 text-[14.5px] leading-relaxed text-white', isLong && !expanded && 'line-clamp-3')}>
             {content}
           </div>
         )}
+        {isLong && <button type="button" onClick={() => setExpanded((value) => !value)} className="mt-1.5 block ml-auto text-xs text-white/50 hover:text-white">{expanded ? 'Show less' : 'Show more'}</button>}
         <div className="mt-1.5 flex items-center justify-end gap-2 text-[12px] text-white/40">
           <button type="button" className="grid h-6 w-6 place-items-center rounded-md hover:bg-white/5 hover:text-white" aria-label="Copy message" onClick={() => void navigator.clipboard.writeText(content)}>
             <Copy className="h-3.5 w-3.5" />
@@ -416,8 +430,8 @@ function PendingImageChip({ attachment, onRemove, tone = 'light' }: { attachment
   )
 }
 
-function AgentReply({ content, isStreaming, todos, questionnaire, blueprint, onQuestionnaireSubmit, onBlueprintApprove, onBlueprintNameChange, loadAsset }: { content: string; isStreaming?: boolean; todos?: CoreTodo[]; questionnaire?: CoreQuestionnaire; blueprint?: CoreBlueprint; onQuestionnaireSubmit?: (answers: Record<string, string> | null) => void; onBlueprintApprove?: () => Promise<void>; onBlueprintNameChange?: (name: string) => void; loadAsset?: (path: string) => Promise<string> }) {
-  return <CoreAgentMessage content={content} isStreaming={isStreaming} todos={todos} questionnaire={questionnaire} blueprint={blueprint} onQuestionnaireSubmit={onQuestionnaireSubmit} onBlueprintApprove={onBlueprintApprove} onBlueprintNameChange={onBlueprintNameChange} loadAsset={loadAsset} />
+function AgentReply({ content, streamingPreview, isStreaming, todos, questionnaire, blueprint, onQuestionnaireSubmit, onBlueprintApprove, onBlueprintNameChange, loadAsset }: { content: string; streamingPreview?: string; isStreaming?: boolean; todos?: CoreTodo[]; questionnaire?: CoreQuestionnaire; blueprint?: CoreBlueprint; onQuestionnaireSubmit?: (answers: Record<string, string> | null) => void; onBlueprintApprove?: () => Promise<void>; onBlueprintNameChange?: (name: string) => void; loadAsset?: (path: string) => Promise<string> }) {
+  return <CoreAgentMessage content={content} streamingPreview={streamingPreview} isStreaming={isStreaming} todos={todos} questionnaire={questionnaire} blueprint={blueprint} onQuestionnaireSubmit={onQuestionnaireSubmit} onBlueprintApprove={onBlueprintApprove} onBlueprintNameChange={onBlueprintNameChange} loadAsset={loadAsset} />
 }
 
 function PlannerQuestionCard({
@@ -790,6 +804,8 @@ function mergeAnswersIntoPrompt(originalPrompt: string, answers: Record<string, 
 
 type SidebarSharedProps = {
   user: { id?: string; email: string; name: string; avatar: string; joinedAt?: string; plan?: 'free' | 'premium' } | null
+  credits: { used: number; limit: number; balance?: number; resetsAt: string } | null
+  onUpgrade: () => void
   tab: string
   setTab: (t: string) => void
   onSignOut: () => void
@@ -832,28 +848,46 @@ export default function DashboardPage() {
   const coreChatRef = useRef<number>()
   const coreIntentRef = useRef<string>()
   const coreCompletedIntentRef = useRef<string>()
+  const coreRunRef = useRef<{ id: string; idempotencyKey: string }>()
+  const coreRunEventQueueRef = useRef<Promise<unknown>>(Promise.resolve())
+  const coreRunProjectRef = useRef<string>()
+  const coreRunHeartbeatRef = useRef<number>()
+  // React state updates on the next render. Guard dispatches synchronously so
+  // a double click (or a second submit before that render) cannot start two runs.
+  const corePromptInFlightRef = useRef(false)
   const coreAppRef = useRef<number>()
   const coreMessageRef = useRef<number>()
   const coreReplyRef = useRef('')
   const coreDashboardConversationRef = useRef<string>()
   const coreEventsRef = useRef<CoreEvents | null>(null)
   const [corePreviewUrl, setCorePreviewUrl] = useState('')
+  const [coreStreamingPreview, setCoreStreamingPreview] = useState('')
+  const [corePreviewLoaded, setCorePreviewLoaded] = useState(false)
+  const [previewReloadKey, setPreviewReloadKey] = useState(0)
   const [previewRecovering, setPreviewRecovering] = useState(false)
   const [previewRecoveryError, setPreviewRecoveryError] = useState('')
   const previewRecoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const previewRecoveryInFlightRef = useRef(false)
   const previewUrlAtRecoveryRef = useRef('')
   const corePreviewFrameRef = useRef<HTMLIFrameElement | null>(null)
+  const completionAudioRef = useRef<AudioContext | null>(null)
   const corePreviewScreenshotRequestRef = useRef<string>()
   const [corePreviewScreenshot, setCorePreviewScreenshot] = useState('')
+  const [coreElementPickerActive, setCoreElementPickerActive] = useState(false)
+  const [coreSelectedComponents, setCoreSelectedComponents] = useState<Array<{ id: string; name: string; runtimeId?: string; relativePath: string; lineNumber: number; columnNumber: number }>>([])
+  const [publishPanelOpen, setPublishPanelOpen] = useState(false)
   const [corePreviewConsole, setCorePreviewConsole] = useState<Array<{ level: string; message: string; timestamp: string }>>([])
   const [corePreviewConsoleOpen, setCorePreviewConsoleOpen] = useState(false)
   const [corePreviewError, setCorePreviewError] = useState('')
   const [coreFiles, setCoreFiles] = useState<File[]>([])
+  const coreMessageAttachmentUrlsRef = useRef<string[]>([])
   const [coreConnected, setCoreConnected] = useState(false)
   const [coreConnectionError, setCoreConnectionError] = useState('')
   const [coreQuestionnaire, setCoreQuestionnaire] = useState<CoreQuestionnaire | null>(null)
+  const coreQuestionnaireRef = useRef<CoreQuestionnaire | null>(null)
+  const coreQuestionnaireInFlightRef = useRef<Set<string>>(new Set())
   const [coreTodos, setCoreTodos] = useState<{ chatId: number; todos: CoreTodo[] } | null>(null)
+  const coreTodosRef = useRef<{ chatId: number; todos: CoreTodo[] } | null>(null)
   const [coreBlueprint, setCoreBlueprint] = useState<CoreBlueprint | null>(null)
   const [coreBlueprintName, setCoreBlueprintName] = useState('')
   const coreBlueprintRef = useRef<CoreBlueprint | null>(null)
@@ -862,14 +896,29 @@ export default function DashboardPage() {
     const questionnaire = coreQuestionnaire
     const client = coreClientRef.current
     const runtime = coreRuntimeRef.current
-    if (!questionnaire || !client || !runtime) return
+    if (!questionnaire || !client || !runtime || coreQuestionnaireInFlightRef.current.has(questionnaire.requestId)) return
+    coreQuestionnaireInFlightRef.current.add(questionnaire.requestId)
     setCoreQuestionnaire({ ...questionnaire, isResponding: true })
+    if (answers !== null) {
+      setSending(true)
+      setCoreStartupStatus('Sending your answers to Seltra…')
+      coreMessageRef.current = undefined
+    }
     try {
       await client.invoke('user-input:respond', [{ requestId: questionnaire.requestId, response: { kind: 'questionnaire', answers } }], runtime)
-      if (answers === null) setCoreQuestionnaire(null)
+      if (answers === null) {
+        coreQuestionnaireRef.current = null
+        setCoreQuestionnaire(null)
+      } else {
+        setCoreStartupStatus('Your answers are in. Updating the build plan…')
+      }
     } catch (error) {
       setCoreQuestionnaire((current) => current?.requestId === questionnaire.requestId ? { ...current, isResponding: false } : current)
+      setSending(false)
+      setCoreStartupStatus('')
       toast.error(error instanceof Error ? error.message : 'Could not submit your answers.')
+    } finally {
+      coreQuestionnaireInFlightRef.current.delete(questionnaire.requestId)
     }
   }
 
@@ -884,30 +933,46 @@ export default function DashboardPage() {
   }, [])
 
   const approveCoreBlueprint = async () => {
+    if (corePromptInFlightRef.current) return
     const blueprint = coreBlueprint
     const client = coreClientRef.current
     const runtime = coreRuntimeRef.current
     const appId = coreAppRef.current
     if (!blueprint || !client || !runtime || !appId || blueprint.chatId !== coreChatRef.current) throw new Error('The Core app plan is no longer active. Reopen the workspace and try again.')
+    corePromptInFlightRef.current = true
     const chatId = blueprint.chatId
     const name = coreBlueprintName.trim() || blueprint.appName
     let finalAppName = name
     const approvalKey = `seltra:core:blueprint-approved:${activeStore?.id ?? ''}`
     const alreadyApproved = localStorage.getItem(approvalKey) === '1'
-    let messageIndex: number | undefined
+    setSending(true)
+    setCoreStartupStatus('Applying your approved plan…')
+    // The previous assistant message contains the blueprint, so make the
+    // live status card visible while template and workspace RPCs run.
+    coreMessageRef.current = undefined
     try {
       if (!alreadyApproved) {
+        setCoreStartupStatus('Checking your workspace and project…')
         const app = await client.invoke<{ name: string; path: string }>('get-app', [appId], runtime)
         const folder = name.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 80) || 'seltra-app'
         if (name !== app.name || folder !== app.path.split(/[\\/]/).filter(Boolean).at(-1)) {
+          setCoreStartupStatus('Preparing your project name…')
           const renamed = await client.invoke<{ name: string }>('rename-app', [{ appId, appName: name, appPath: folder, autoResolveConflicts: true }], runtime)
           finalAppName = renamed.name
           setCoreBlueprint((current) => current?.chatId === chatId ? { ...current, appName: renamed.name } : current)
         }
         await client.invoke('app-blueprint:edit-field', [{ chatId, field: 'appName', value: finalAppName }], runtime)
+        setCoreStartupStatus('Applying the selected starting point…')
         const templateResult = await client.invoke<{ needsRestart?: boolean }>('apply-app-template', [{ appId, templateId: blueprint.templateId, chatId }], runtime)
-        if (templateResult?.needsRestart) await client.invoke('restart-app', [{ appId }], runtime)
-        if (blueprint.themeId !== 'default') await client.invoke('set-app-theme', [{ appId, themeId: blueprint.themeId }], runtime)
+        if (templateResult?.needsRestart) {
+          setCoreStartupStatus('Restarting your workspace with the selected starting point…')
+          await client.invoke('restart-app', [{ appId }], runtime)
+        }
+        if (blueprint.themeId !== 'default') {
+          setCoreStartupStatus('Applying your selected theme…')
+          await client.invoke('set-app-theme', [{ appId, themeId: blueprint.themeId }], runtime)
+        }
+        setCoreStartupStatus('Confirming your approved plan…')
         await client.invoke('app-blueprint:approve', [{ chatId }], runtime)
         // Persist only after Core confirms approval. Retrying a failed follow-up
         // must not reapply a template and overwrite work already in the app.
@@ -915,9 +980,10 @@ export default function DashboardPage() {
       }
 
       const visuals = blueprint.visuals?.length ? blueprint.visuals.map((visual) => `- ${visual.type}: ${visual.description}\n  Prompt: ${visual.prompt}`).join('\n') : 'No visuals planned'
-      const prompt = ['The app blueprint has been approved. Please build the app based on the following approved blueprint.', 'This is a multi-step build: immediately use Core’s update_todos tool to create a concise plan before editing files, update it as work proceeds, and mark each step complete only after doing it. Continue implementation in this same turn; do not stop after writing the plan.', '', `App Name: ${finalAppName}`, `Template: ${blueprint.templateId}`, `Theme: ${blueprint.themeId}`, `Primary Color: ${blueprint.primaryColor}`, `Design Direction: ${blueprint.designDirection}`, '', 'Visual Assets:', visuals, '', `Original Prompt: ${blueprint.userPrompt}`].join('\n')
+      const prompt = ['The app blueprint has been approved. Please build the app based on the following approved blueprint.', 'This is a multi-step build: immediately use Core’s update_todos tool to create a concise plan before editing files, update it as work proceeds, and mark each step complete only after doing it. Continue implementation in this same turn; do not stop after writing the plan.', 'Before declaring completion, inspect the actual project files, resolve every planned page in the app router, and verify navigation destinations. Implement every page promised by the blueprint; a page file that is not imported and routed does not count as complete. Run the project build and fix import, compile, and browser-visible runtime errors before marking the build complete.', 'Follow Section 8.2 of the Seltra build reliability requirements for visual assets. Use customer supplied and catalog imagery first. For planned brand/editorial photo slots without suitable supplied assets, call the configured image-generation tool and save its real raster output (such as PNG or WebP) under public assets, then reference that file in the page. Do not use SVG illustrations, gradients, remote hotlinks, or placeholder.svg as substitutes for requested photography. Keep SVG for logos, icons, and vector decoration. Mark a photo task complete only after the generated raster file exists and is used by the app.', '', `App Name: ${finalAppName}`, `Template: ${blueprint.templateId}`, `Theme: ${blueprint.themeId}`, `Primary Color: ${blueprint.primaryColor}`, `Design Direction: ${blueprint.designDirection}`, '', 'Visual Assets:', visuals, '', `Original Prompt: ${blueprint.userPrompt}`].join('\n')
       const visiblePrompt = blueprint.userPrompt || `Build ${finalAppName}`
       const machine = { protocolVersion: 1, machineId: 'chat_stream', encodedKey: { chatId } }
+      setCoreStartupStatus('Preparing Seltra to build your app…')
       const actor = await client.invoke<{ actorInstanceId: string; revision: number; encodedState: { stopPolicyVersion?: number } }>('distributed-machine:subscribe', [machine], runtime)
       const operationId = crypto.randomUUID()
       const intentId = crypto.randomUUID()
@@ -928,24 +994,23 @@ export default function DashboardPage() {
       coreCompletedIntentRef.current = undefined
       coreReplyRef.current = ''
       shouldFollowStreamRef.current = true
-      messageIndex = msgs.length
-      coreMessageRef.current = msgs.length + 1
       setMsgs((current) => {
+        coreMessageRef.current = current.length + 1
         return [...current, { role: 'user', content: visiblePrompt, createdAt: new Date().toISOString() }, { role: 'assistant', content: '' }]
       })
-      setSending(true)
+      setCoreStartupStatus('Starting your approved build…')
       setCorePreviewUrl('')
       const receipt = await client.invoke<{ kind: string; reason?: string }>('distributed-machine:dispatch', [{ ...machine, expectedActorInstanceId: actor.actorInstanceId, expectedRevision: actor.revision, messageId: crypto.randomUUID(), encodedEvent: { type: 'SUBMIT', intent: { ...intent, payloadHash }, observedStopPolicyVersion: actor.encodedState.stopPolicyVersion ?? 0 } }], runtime)
       if (receipt.kind !== 'applied' && receipt.kind !== 'replayed') throw new Error(receipt.reason || `Core did not start the approved build (${receipt.kind}).`)
       setCoreBlueprint(null)
       coreBlueprintRef.current = null
+      corePromptInFlightRef.current = false
       void saveMessage(coreDashboardConversationRef.current, 'user', visiblePrompt)
-      toast.success('Blueprint approved. Seltra Core is building your app.')
+      toast.success('Blueprint approved. Seltra is building your app.')
     } catch (error) {
+      corePromptInFlightRef.current = false
       setSending(false)
-      if (messageIndex !== undefined) {
-        setMsgs((current) => current.slice(0, messageIndex))
-      }
+      setCoreStartupStatus('')
       toast.error(error instanceof Error ? error.message : 'Could not approve the Core app plan.')
       throw error
     }
@@ -981,7 +1046,12 @@ export default function DashboardPage() {
     }
   }, [corePreviewUrl])
 
+  useEffect(() => {
+    setCorePreviewLoaded(false)
+  }, [corePreviewUrl, previewReloadKey])
+
   const updateCoreAssistantMessage = (content: string) => {
+    if (content.trim()) setCoreStartupStatus('')
     setMsgs((current) => {
       const activeIndex = coreMessageRef.current
       if (typeof activeIndex === 'number' && current[activeIndex]?.role === 'assistant') {
@@ -1008,7 +1078,24 @@ export default function DashboardPage() {
     const handlePreviewMessage = (event: MessageEvent) => {
       if (event.source !== corePreviewFrameRef.current?.contentWindow || event.origin !== expectedOrigin) return
       if (!event.data || typeof event.data !== 'object') return
-      const data = event.data as { type?: string; requestId?: string; success?: boolean; dataUrl?: string; error?: string; level?: string; args?: unknown[]; timestamp?: string; payload?: { message?: string; reason?: string; file?: string } }
+      const data = event.data as { type?: string; requestId?: string; success?: boolean; dataUrl?: string; error?: string; level?: string; args?: unknown[]; timestamp?: string; component?: { id?: string; name?: string }; payload?: { message?: string; reason?: string; file?: string } }
+      if (data.type === 'dyad-component-selector-initialized') {
+        corePreviewFrameRef.current?.contentWindow?.postMessage({ type: 'dyad-pro-mode', enabled: true }, expectedOrigin)
+        return
+      }
+      if (data.type === 'dyad-component-selected' && data.component && typeof data.component.id === 'string' && typeof data.component.name === 'string') {
+        setCoreElementPickerActive(false)
+        const location = data.component.id.split(':')
+        const columnNumber = Number(location.pop())
+        const lineNumber = Number(location.pop())
+        const relativePath = location.join(':')
+        if (!relativePath || !Number.isFinite(lineNumber) || !Number.isFinite(columnNumber)) return
+        setCoreSelectedComponents([{ id: data.component.id, name: data.component.name, relativePath: relativePath.replace(/\\/g, '/'), lineNumber, columnNumber }])
+        const componentContext = `Please edit the selected element: ${data.component.name}.`
+        setInput((current) => `${current.trim()}${current.trim() ? '\n\n' : ''}${componentContext}`)
+        toast.success(`${data.component.name} selected. Describe the change you want.`)
+        return
+      }
       if (data.type === 'seltra:preview-auth-expired') {
         setPreviewRecoveryError('Preview access expired. Reconnecting to your app…')
         void recoverCorePreview()
@@ -1051,12 +1138,35 @@ export default function DashboardPage() {
     }, 10_000)
   }
 
+  const toggleCoreElementPicker = () => {
+    if (!corePreviewFrameRef.current?.contentWindow || !corePreviewUrl) return
+    const type = coreElementPickerActive ? 'deactivate-dyad-component-selector' : 'activate-dyad-component-selector'
+    corePreviewFrameRef.current.contentWindow.postMessage({ type }, new URL(corePreviewUrl).origin)
+    setCoreElementPickerActive((active) => !active)
+  }
+
+  const publishedProjectUrl = activeStore?.dashboardApp?.publishedUrl
+  const projectIsPublished = Boolean(publishedProjectUrl || ['published', 'deployed'].includes(activeStore?.dashboardApp?.status?.toLowerCase() ?? ''))
+
   const [user, setUser] = useState<{ id?: string; email: string; name: string; avatar: string; joinedAt?: string; plan?: 'free' | 'premium' } | null>(null)
+  const corePreviewDisplayUrl = useMemo(() => {
+    if (!corePreviewUrl) return ''
+    try {
+      const url = new URL(corePreviewUrl)
+      url.searchParams.set('__seltra_plan', user?.plan === 'premium' ? 'premium' : 'free')
+      return url.toString()
+    } catch {
+      return corePreviewUrl
+    }
+  }, [corePreviewUrl, user?.plan])
   const [merchantProfile, setMerchantProfile] = useState<{ businessType?: string; businessName?: string; storeName?: string; whatYouSell?: string; basedIn?: string } | null>(null)
   const [msgs, setMsgs] = useState<Msg[]>([])
+  const [hasNewActivity, setHasNewActivity] = useState(false)
+  const [coreBuildCompleted, setCoreBuildCompleted] = useState(false)
   const [input, setInput] = useState('')
   const [builderMode, setBuilderMode] = useState<'build' | 'plan' | 'chat'>('build')
   const [sending, setSending] = useState(false)
+  const [coreStartupStatus, setCoreStartupStatus] = useState('')
   const [figmaDialogOpen, setFigmaDialogOpen] = useState(false)
   const [figmaUrl, setFigmaUrl] = useState('')
   const [figmaImporting, setFigmaImporting] = useState(false)
@@ -1077,14 +1187,44 @@ export default function DashboardPage() {
   coreDashboardConversationRef.current = convId
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [previewOpen, setPreviewOpen] = useState(true)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  useEffect(() => {
+    if (previewOpen) setCorePreviewLoaded(false)
+  }, [previewOpen])
   const [previewDevice, setPreviewDevice] = useState<'desktop' | 'tablet' | 'mobile'>('desktop')
-  const [previewReloadKey, setPreviewReloadKey] = useState(0)
   const [chatMenuOpen, setChatMenuOpen] = useState(false)
   const [thoughtSeconds, setThoughtSeconds] = useState<number | null>(null)
   const [buildProgress, setBuildProgress] = useState<BuildProgress | null>(null)
+  const [resumeProjectAvailable, setResumeProjectAvailable] = useState(false)
   const [connection, setConnection] = useState<LinkState>('online')
   const [pillDismissed, setPillDismissed] = useState(false)
+  const unlockCompletionAudio = () => {
+    if (typeof window === 'undefined' || !('AudioContext' in window)) return
+    try {
+      completionAudioRef.current ??= new AudioContext()
+      if (completionAudioRef.current.state === 'suspended') void completionAudioRef.current.resume()
+    } catch { /* Audio is an optional enhancement. */ }
+  }
+  const playCompletionTone = () => {
+    unlockCompletionAudio()
+    const context = completionAudioRef.current
+    if (!context || context.state !== 'running') return
+    const start = context.currentTime + 0.02
+    ;[587.33, 783.99].forEach((frequency, index) => {
+      const oscillator = context.createOscillator()
+      const gain = context.createGain()
+      const at = start + index * 0.22
+      oscillator.type = 'sine'
+      oscillator.frequency.setValueAtTime(frequency, at)
+      gain.gain.setValueAtTime(0.0001, at)
+      gain.gain.exponentialRampToValueAtTime(0.055, at + 0.035)
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.38)
+      oscillator.connect(gain)
+      gain.connect(context.destination)
+      oscillator.start(at)
+      oscillator.stop(at + 0.4)
+    })
+  }
   const connectionRef = useRef<LinkState>('online')
   const browserOffline = useRef(false)
   const reconnectSource = useRef<'browser' | 'stream'>('browser')
@@ -1104,10 +1244,13 @@ export default function DashboardPage() {
   const [mobileSidebar, setMobileSidebar] = useState(false)
   const [mobileView, setMobileView] = useState<'chat' | 'store'>('chat')
   const [stores, setStores] = useState<StoreData[]>([])
+  const [projectLimitOpen, setProjectLimitOpen] = useState(false)
+  const [projectLimitInfo, setProjectLimitInfo] = useState<{ currentStoreCount?: number; maxStores?: number; plan?: 'free' | 'premium' }>({})
   const [announcementVisible, setAnnouncementVisible] = useState(false)
   const [pendingAttachment, setPendingAttachment] = useState<PendingAttachment | null>(null)
   const pendingAttachmentRef = useRef<PendingAttachment | null>(null)
-  const [credits, setCredits] = useState<{ used: number; limit: number; resetsAt: string } | null>(null)
+  const [credits, setCredits] = useState<{ used: number; limit: number; balance?: number; resetsAt: string } | null>(null)
+  const [billingPlansOpen, setBillingPlansOpen] = useState(false)
   const [buildConversationId, setBuildConversationId] = useState<string | undefined>()
 
   // ── Business Planner Agent state — an inline chat thread that asks one
@@ -1149,7 +1292,7 @@ export default function DashboardPage() {
     }
     const getSession = async (): Promise<CoreSession> => {
       const result = await apiFetch<CoreSession>('/api/v5/builder/session', { method: 'POST', body: JSON.stringify({ tenantId }) })
-      if (!result.data) throw new Error(result.error || 'Could not connect to Seltra Core.')
+      if (!result.data) throw new Error(result.error || 'Could not connect to Seltra Internal Server.')
       return result.data
     }
     const client = new CoreClient(getSession, getSession)
@@ -1158,17 +1301,68 @@ export default function DashboardPage() {
       const machine = { protocolVersion: 1, machineId: 'app_run', encodedKey: { appId } }
       try {
         const actor = await client.invoke<{ encodedState?: { url?: { appUrl?: string } } }>('distributed-machine:subscribe', [machine], runtimeId)
+        const app = await client.invoke<{ name?: string; path?: string }>('get-app', [appId], runtimeId).catch(() => null)
         await client.invoke('select-app-for-preview', [{ appId }], runtimeId)
-        if (actor.encodedState?.url?.appUrl && coreRuntimeRef.current === runtimeId) setCorePreviewUrl(actor.encodedState.url.appUrl)
+        const previewUrl = actor.encodedState?.url?.appUrl
+        if (previewUrl && coreRuntimeRef.current === runtimeId) { setCorePreviewUrl(previewUrl); setPreviewOpen(true) }
+        if (app?.name && coreRuntimeRef.current === runtimeId) {
+          void apiFetch('/api/v5/builder/apps/state', {
+            method: 'POST',
+            body: JSON.stringify({ tenantId, coreAppId: appId, name: app.name, ...(app.path ? { corePath: app.path } : {}), status: previewUrl ? 'live' : 'draft', ...(previewUrl ? { previewUrl } : {}), eventType: 'app.reconnected' }),
+          }).catch((error) => console.warn('[builder] Could not refresh the app record from Core', { tenantId, appId, error }))
+        }
       } catch (error) {
         if (coreRuntimeRef.current === runtimeId) setCoreConnectionError(error instanceof Error ? error.message : 'Could not restore the Core app preview.')
       }
     }
+    const recoverLatestProjectChat = async (runtimeId: string, appId: number) => {
+      if (coreChatRef.current) return
+      try {
+        const chats = await client.invoke<Array<{ id: number; createdAt: Date }>>('get-chats', [appId], runtimeId)
+        if (coreRuntimeRef.current !== runtimeId || coreAppRef.current !== appId || coreChatRef.current) return
+        const latest = [...chats].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0]
+        if (!latest || !Number.isSafeInteger(latest.id) || latest.id <= 0) return
+        coreChatRef.current = latest.id
+        localStorage.setItem(`seltra:core:last-app:${tenantId}`, JSON.stringify({ appId, chatId: latest.id }))
+        const chat = await client.invoke<{ messages?: Array<{ role: 'user' | 'assistant'; content: string; createdAt?: string | Date }> }>('get-chat', [latest.id], runtimeId)
+        if (coreRuntimeRef.current !== runtimeId || coreChatRef.current !== latest.id || !Array.isArray(chat.messages)) return
+        setMsgs(chat.messages.map((message) => ({ role: message.role, content: message.content, createdAt: message.createdAt ? new Date(message.createdAt).toISOString() : undefined })))
+        coreReplyRef.current = chat.messages.filter((message) => message.role === 'assistant').at(-1)?.content ?? ''
+        void client.invoke('distributed-machine:subscribe', [{ protocolVersion: 1, machineId: 'chat_stream', encodedKey: { chatId: latest.id } }], runtimeId).catch(() => undefined)
+      } catch { /* A Core app can exist before its first chat is created. */ }
+    }
     coreEventsRef.current?.close()
     const events = new CoreEvents(client, (frame) => {
+      const persistRunEvent = (type: string, phase?: string, state?: 'running' | 'waiting_for_user' | 'completed' | 'failed' | 'stopped', payload: Record<string, unknown> = {}) => {
+        const run = coreRunRef.current
+        if (!run) return
+        // Preserve event order: a delayed todo snapshot must not land after
+        // the completion event and make a finished build look unfinished.
+        coreRunEventQueueRef.current = coreRunEventQueueRef.current.catch(() => undefined).then(() =>
+          apiFetch(`/api/v5/runs/${encodeURIComponent(run.id)}/events`, {
+            method: 'POST',
+            body: JSON.stringify({ type, phase, agent: 'supervisor', ...(state ? { state } : {}), payload }),
+          }).then(({ error }) => { if (error) console.warn('[builder] Could not persist Core run event', { runId: run.id, type, error }) }),
+        )
+      }
+      const persistAppState = (eventType: string, values: { name?: string; status?: 'draft' | 'building' | 'live' | 'failed'; previewUrl?: string; blueprint?: Record<string, unknown>; approved?: boolean } = {}) => {
+        const appId = coreAppRef.current
+        if (!appId) return
+        void apiFetch('/api/v5/builder/apps/state', {
+          method: 'POST',
+          body: JSON.stringify({ tenantId, coreAppId: appId, eventType, ...values }),
+        }).catch((error) => console.warn('[builder] Could not persist Core app state', { tenantId, appId, eventType, error }))
+      }
       if (frame.channel === 'agent-tool:todos-update') {
         const payload = frame.payload as { chatId?: number; todos?: CoreTodo[] }
-        if (payload.chatId !== undefined && payload.chatId === coreChatRef.current && Array.isArray(payload.todos)) setCoreTodos({ chatId: payload.chatId, todos: payload.todos })
+        if (payload.chatId !== undefined && payload.chatId === coreChatRef.current && Array.isArray(payload.todos)) {
+          const nextTodos = { chatId: payload.chatId, todos: payload.todos }
+          coreTodosRef.current = nextTodos
+          setCoreTodos(nextTodos)
+          const currentTodo = payload.todos.find((todo) => todo.status === 'in_progress')
+          if (currentTodo) setCoreStartupStatus(`Working on: ${currentTodo.content}`)
+          persistRunEvent('step.progress', 'build', 'running', { chatId: payload.chatId, total: payload.todos.length, completed: payload.todos.filter((todo) => todo.status === 'completed').length, current: payload.todos.find((todo) => todo.status === 'in_progress')?.content ?? null, todos: payload.todos })
+        }
       }
       if (frame.channel === 'app-blueprint:update') {
         const payload = frame.payload as { chatId?: number; data?: Omit<CoreBlueprint, 'chatId'> }
@@ -1178,17 +1372,53 @@ export default function DashboardPage() {
           setCoreBlueprint(blueprint)
           setCoreBlueprintName(blueprint.appName)
           setCorePreviewUrl('')
+          persistAppState('app.blueprint.ready', { name: blueprint.appName, status: 'draft', blueprint: blueprint as unknown as Record<string, unknown> })
+          persistRunEvent('blueprint.ready', 'understand', 'waiting_for_user', { appName: blueprint.appName })
+        }
+      }
+      if (frame.channel === 'app-blueprint:visuals-update') {
+        const payload = frame.payload as { chatId?: number; visuals?: CoreBlueprint['visuals']; complete?: boolean }
+        const current = coreBlueprintRef.current
+        if (typeof payload.chatId === 'number' && current && payload.chatId === coreChatRef.current && current.chatId === payload.chatId && Array.isArray(payload.visuals)) {
+          const blueprint = { ...current, visuals: payload.visuals }
+          coreBlueprintRef.current = blueprint
+          setCoreBlueprint(blueprint)
+          persistAppState('app.assets.planned', { name: blueprint.appName, blueprint: blueprint as unknown as Record<string, unknown> })
+          persistRunEvent('assets.planned', 'analyze', 'running', { count: payload.visuals.length, complete: payload.complete === true })
         }
       }
       if (frame.channel === 'user-input:requested') {
         const descriptor = frame.payload as { kind?: string; requestId?: string; chatId?: number; questions?: CoreQuestionnaire['questions'] }
         if (descriptor.kind === 'questionnaire' && descriptor.requestId && descriptor.chatId !== undefined && descriptor.chatId === coreChatRef.current && Array.isArray(descriptor.questions)) {
-          setCoreQuestionnaire({ requestId: descriptor.requestId, chatId: descriptor.chatId, questions: descriptor.questions })
+          const questionnaire = { requestId: descriptor.requestId, chatId: descriptor.chatId, questions: descriptor.questions }
+          coreQuestionnaireRef.current = questionnaire
+          setCoreQuestionnaire(questionnaire)
+          setSending(false)
+          setCoreStartupStatus('')
+          setPreviewOpen(true)
+          persistRunEvent('questionnaire.requested', 'understand', 'waiting_for_user', { requestId: descriptor.requestId, questionCount: descriptor.questions.length, questions: descriptor.questions })
         }
       }
       if (frame.channel === 'user-input:settled') {
         const payload = frame.payload as { requestId?: string }
-        if (payload.requestId) setCoreQuestionnaire((current) => current?.requestId === payload.requestId ? null : current)
+        if (payload.requestId) {
+          coreQuestionnaireRef.current = coreQuestionnaireRef.current?.requestId === payload.requestId ? null : coreQuestionnaireRef.current
+          setCoreQuestionnaire((current) => current?.requestId === payload.requestId ? null : current)
+          setSending(true)
+          setCoreStartupStatus('Your answers are in. Planning the next step…')
+          coreMessageRef.current = undefined
+          persistRunEvent('questionnaire.answered', 'understand', 'running', { requestId: payload.requestId })
+        }
+      }
+      if (frame.channel === 'app-blueprint:approved') {
+        const payload = frame.payload as { chatId?: number }
+        if (payload.chatId === coreChatRef.current) {
+          setSending(true)
+          setCoreStartupStatus('Your plan is approved. Preparing the build…')
+          coreMessageRef.current = undefined
+          persistAppState('app.blueprint.approved', { name: coreBlueprintName || undefined, status: 'building', approved: true, ...(coreBlueprintRef.current ? { blueprint: coreBlueprintRef.current as unknown as Record<string, unknown> } : {}) })
+          persistRunEvent('blueprint.approved', 'analyze', 'running', { appName: coreBlueprintName || null })
+        }
       }
       if (frame.channel === 'web:session') {
         const id = (frame.payload as { id?: string } | null)?.id
@@ -1209,7 +1439,12 @@ export default function DashboardPage() {
             void client.invoke<Array<{ status: string; descriptor?: { kind?: string; requestId?: string; chatId?: number; questions?: CoreQuestionnaire['questions'] } }>>('user-input:get-pending', [], id).then((pending) => {
               const current = pending.find((request) => request.status !== 'settled' && request.descriptor?.kind === 'questionnaire' && request.descriptor.chatId === chatId)
               const descriptor = current?.descriptor
-              if (descriptor?.requestId && descriptor.chatId && Array.isArray(descriptor.questions) && coreRuntimeRef.current === id) setCoreQuestionnaire({ requestId: descriptor.requestId, chatId: descriptor.chatId, questions: descriptor.questions })
+              if (descriptor?.requestId && descriptor.chatId && Array.isArray(descriptor.questions) && coreRuntimeRef.current === id) {
+                const questionnaire = { requestId: descriptor.requestId, chatId: descriptor.chatId, questions: descriptor.questions }
+                coreQuestionnaireRef.current = questionnaire
+                setCoreQuestionnaire(questionnaire)
+                setPreviewOpen(true)
+              }
             }).catch(() => undefined)
           }
           let appId = coreAppRef.current
@@ -1222,25 +1457,30 @@ export default function DashboardPage() {
               coreAppRef.current = appId
               localStorage.setItem(`seltra:core:last-app:${tenantId}`, JSON.stringify({ appId }))
               void attachCoreApp(id, appId)
+              void recoverLatestProjectChat(id, appId)
             })
           } else if (client) {
             void attachCoreApp(id, appId)
+            void recoverLatestProjectChat(id, appId)
           }
         }
       }
       if (frame.channel === 'chat:response:chunk') {
-        const payload = frame.payload as { chatId?: number; messages?: Array<{ role?: string; content?: string }>; streamingMessageId?: number; streamingPatch?: { offset: number; content: string } }
+        const payload = frame.payload as { chatId?: number; messages?: Array<{ role?: string; content?: string }>; streamingMessageId?: number; streamingPatch?: { offset: number; content: string }; streamingPreview?: { content?: string } }
         if (payload.chatId !== coreChatRef.current) return
+        if (payload.streamingPreview) setCoreStreamingPreview(payload.streamingPreview.content ?? '')
         if (payload.messages) {
           const assistant = payload.messages.filter((message) => message.role === 'assistant').at(-1)?.content
           if (typeof assistant === 'string') {
             coreReplyRef.current = assistant
+            if (assistant.trim()) setCoreStartupStatus('')
             updateCoreAssistantMessage(assistant)
           }
         }
         if (payload.streamingPatch) {
           const { offset, content } = payload.streamingPatch
           coreReplyRef.current = coreReplyRef.current.slice(0, offset) + content
+          if (coreReplyRef.current.trim()) setCoreStartupStatus('')
           updateCoreAssistantMessage(coreReplyRef.current)
         }
       }
@@ -1248,33 +1488,104 @@ export default function DashboardPage() {
         const payload = frame.payload as { chatId?: number; error?: string; message?: string }
         if (payload.chatId === coreChatRef.current) {
           setSending(false)
+          setCoreStartupStatus('')
           coreCompletedIntentRef.current = coreIntentRef.current
+          const failedRun = coreRunRef.current
+          if (coreRunHeartbeatRef.current) {
+            window.clearInterval(coreRunHeartbeatRef.current)
+            coreRunHeartbeatRef.current = undefined
+          }
+          if (failedRun) {
+            setResumeProjectAvailable(true)
+            persistRunEvent('run.failed', 'build', 'failed', {
+              reason: 'core_response_error',
+              message: payload.message?.trim() || payload.error?.trim() || 'Seltra could not complete this request.',
+            })
+          }
           if (!coreReplyRef.current.trim()) {
-            const fallback = 'Seltra Core could not complete this request. Stop the run, then retry your prompt.'
+            const detail = payload.message?.trim() || payload.error?.trim()
+            const fallback = detail
+              ? `Seltra could not complete this request: ${detail}`
+              : 'Seltra could not complete this request. Stop the run, then retry your prompt.'
             updateCoreAssistantMessage(fallback)
             void saveMessage(coreDashboardConversationRef.current, 'assistant', fallback)
           }
-          toast.error('Seltra Core could not complete this request.')
+          toast.error(payload.message?.trim() || payload.error?.trim() || 'Seltra could not complete this request.')
         }
       }
       if (frame.channel === 'distributed-machine:snapshot') {
         const value = frame.payload as { machineId?: string; encodedKey?: { appId?: number; chatId?: number }; encodedState?: { phase?: string; url?: { appUrl?: string }; operationError?: { message?: string }; lastCompletion?: { intentId?: string; outcome?: string; error?: string; targetAppId?: number | null } } }
         if (value.machineId === 'app_run' && value.encodedKey?.appId === coreAppRef.current) {
-          if (value.encodedState?.url?.appUrl) setCorePreviewUrl(value.encodedState.url.appUrl)
-          if (value.encodedState?.phase === 'errored') { setSending(false); toast.error(value.encodedState.operationError?.message || 'Preview failed to start.') }
+          if (value.encodedState?.url?.appUrl) {
+            setCorePreviewUrl(value.encodedState.url.appUrl)
+            setPreviewOpen(true)
+            // A working preview is still a draft; publishing is a separate lifecycle action.
+            persistAppState('app.preview.ready', { status: coreRunRef.current ? 'building' : 'draft', previewUrl: value.encodedState.url.appUrl })
+            persistRunEvent('preview.ready', 'verify', 'running', { previewUrl: value.encodedState.url.appUrl })
+          }
+          if (value.encodedState?.phase === 'errored') {
+            setSending(false)
+            setCoreStartupStatus('')
+            persistAppState('app.preview.failed', { status: 'failed' })
+            persistRunEvent('preview.failed', 'verify', 'running', { error: value.encodedState.operationError?.message ?? 'Preview failed to start.' })
+            toast.error(value.encodedState.operationError?.message || 'Preview failed to start.')
+          }
         }
         if (value.machineId === 'chat_stream' && value.encodedKey?.chatId === coreChatRef.current && value.encodedState?.lastCompletion?.outcome && value.encodedState.lastCompletion.intentId === coreIntentRef.current && value.encodedState.lastCompletion.intentId !== coreCompletedIntentRef.current) {
           const completion = value.encodedState.lastCompletion
+          setCoreStartupStatus('')
           coreCompletedIntentRef.current = completion.intentId
-          setSending(false)
-          if (coreReplyRef.current.trim()) void saveMessage(coreDashboardConversationRef.current, 'assistant', coreReplyRef.current)
+          const completedRun = coreRunRef.current
+          const awaitingUser = completion.outcome === 'completed' && Boolean(coreQuestionnaireRef.current || coreBlueprintRef.current)
+          if (completedRun) {
+            if (awaitingUser) {
+              setSending(false)
+              persistRunEvent('run.waiting_for_user', coreQuestionnaireRef.current ? 'understand' : 'analyze', 'waiting_for_user', { reason: coreQuestionnaireRef.current ? 'questionnaire' : 'blueprint_approval' })
+            } else {
+              setSending(false)
+              if (coreRunHeartbeatRef.current) {
+                window.clearInterval(coreRunHeartbeatRef.current)
+                coreRunHeartbeatRef.current = undefined
+              }
+              const state = completion.outcome === 'completed' ? 'completed' : completion.outcome === 'cancelled' ? 'stopped' : 'failed'
+              persistRunEvent(`run.${completion.outcome === 'cancelled' ? 'stopped' : completion.outcome === 'completed' ? 'completed' : 'failed'}`, 'verify', state, {
+                chatId: coreChatRef.current,
+                outcome: completion.outcome,
+                error: completion.error ?? null,
+                todos: coreTodosRef.current?.chatId === coreChatRef.current ? coreTodosRef.current?.todos ?? [] : [],
+              })
+              if (completion.outcome === 'completed') {
+                setCoreBuildCompleted(true)
+                setPreviewOpen(true)
+                playCompletionTone()
+                const currentTodos = coreTodosRef.current
+                const remainingTodos = currentTodos && currentTodos.chatId === coreChatRef.current
+                  ? currentTodos.todos.filter((todo) => todo.status !== 'completed')
+                  : []
+                const hasUnfinishedWork = remainingTodos.length > 0
+                setResumeProjectAvailable(hasUnfinishedWork)
+                persistAppState(hasUnfinishedWork ? 'app.build.incomplete' : 'app.build.completed', {
+                  status: hasUnfinishedWork ? 'building' : 'draft',
+                  name: coreBlueprintRef.current?.appName,
+                })
+              }
+              if (completion.outcome === 'errored') persistAppState('app.build.failed', { status: 'failed' })
+              coreRunRef.current = undefined
+            }
+          } else {
+            setSending(false)
+          }
+          if (coreReplyRef.current.trim() && !awaitingUser) void saveMessage(coreDashboardConversationRef.current, 'assistant', coreReplyRef.current)
           if (completion.outcome === 'errored') {
             if (!coreReplyRef.current.trim()) {
-              const fallback = 'Seltra Core could not complete this request. Stop the run, then retry your prompt.'
+              const detail = completion.error?.trim()
+              const fallback = detail
+                ? `Seltra could not complete this request: ${detail}`
+                : 'Seltra could not complete this request. Stop the run, then retry your prompt.'
               updateCoreAssistantMessage(fallback)
               void saveMessage(coreDashboardConversationRef.current, 'assistant', fallback)
             }
-            toast.error('Seltra Core could not complete this request.')
+            toast.error(completion.error?.trim() || 'Seltra could not complete this request.')
           }
           if (completion.outcome === 'cancelled') {
             if (!coreReplyRef.current.trim()) {
@@ -1284,7 +1595,7 @@ export default function DashboardPage() {
             }
             toast.message('Build stopped.')
           }
-          if (completion.outcome === 'completed' && !coreReplyRef.current.trim()) {
+          if (completion.outcome === 'completed' && !awaitingUser && !coreReplyRef.current.trim()) {
             const fallback = 'Core finished this run without a response message. Check your preview or send another prompt to continue.'
             updateCoreAssistantMessage(fallback)
             void saveMessage(coreDashboardConversationRef.current, 'assistant', fallback)
@@ -1318,7 +1629,11 @@ export default function DashboardPage() {
   }, [activeStore?.id])
 
   useEffect(() => {
-    return () => revokeAttachmentPreview(pendingAttachmentRef.current)
+    return () => {
+      revokeAttachmentPreview(pendingAttachmentRef.current)
+      coreMessageAttachmentUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+      coreMessageAttachmentUrlsRef.current = []
+    }
   }, [])
 
   const clearPendingAttachment = useCallback(() => {
@@ -1368,7 +1683,6 @@ export default function DashboardPage() {
   }, [])
 
   useEffect(() => {
-    ensureDevPreview()
     if (!getToken()) { router.replace('/auth'); return }
 
     const u = getUser() as UserRecord | null
@@ -1398,6 +1712,13 @@ export default function DashboardPage() {
       const routeOption = routeParams.get('figma') === '1' ? 'figma' as const : undefined
       const routeAutoStart = routeParams.get('autostart') === '1'
       await loadConversations()
+      let preferredStore: StoreData | null = null
+      try {
+        const persistedStore = localStorage.getItem('seltra:active_store')
+        preferredStore = persistedStore ? JSON.parse(persistedStore) as StoreData : null
+      } catch {
+        preferredStore = null
+      }
       const { data } = await apiFetch<StoreData[]>('/api/v5/seltra/store')
       const fromApi = data ?? []
       const showPreviewStores = DEV_PREVIEW && fromApi.length === 0 && new URLSearchParams(window.location.search).get('preview') === 'stores'
@@ -1405,7 +1726,7 @@ export default function DashboardPage() {
       setStores(existing)
 
       if (existing.length > 0) {
-        const current = activeStore && existing.find((store) => store.id === activeStore.id || store.slug === activeStore.slug)
+        const current = preferredStore && existing.find((store) => store.id === preferredStore?.id || store.slug === preferredStore?.slug)
         const selected = current ?? existing[0]
         setActiveStore(selected)
         if (pending) {
@@ -1414,12 +1735,17 @@ export default function DashboardPage() {
         } else if (legacyPending) await openCoreBuilder({ prompt: legacyPending, mode: builderMode, autoSubmit: true, storeOverride: selected })
         else if (routePrompt) await openCoreBuilder({ prompt: routePrompt, mode: routeMode, option: routeOption, autoSubmit: routeAutoStart, storeOverride: selected })
       } else if (pending) {
+        setActiveStore(null);
         (window as Window & { __seltraBuilderFiles?: File[] }).__seltraBuilderFiles = pending.files
         await openCoreBuilder({ prompt: pending.prompt, mode: pending.mode, option: pending.figma ? 'figma' : undefined, autoSubmit: !pending.figma })
       } else if (legacyPending) {
+        setActiveStore(null)
         await openCoreBuilder({ prompt: legacyPending, mode: builderMode, autoSubmit: true })
       } else if (routePrompt) {
+        setActiveStore(null)
         await openCoreBuilder({ prompt: routePrompt, mode: routeMode, option: routeOption, autoSubmit: routeAutoStart })
+      } else {
+        setActiveStore(null)
       }
       if (routeParams.has('prompt')) router.replace('/dashboard', { scroll: false })
     }
@@ -1429,37 +1755,152 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const viewport = scrollRef.current
-    if (!viewport || !shouldFollowStreamRef.current) return
-    if (previewOpen) viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'auto' })
-    else viewport.lastElementChild?.scrollIntoView({ block: 'end', behavior: 'auto' })
-  }, [msgs, previewOpen])
+    if (!viewport) return
+    if (shouldFollowStreamRef.current) viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'auto' })
+    else setHasNewActivity(true)
+  }, [msgs])
 
   useEffect(() => {
-    if (previewOpen) return
-    const pageViewport = document.querySelector<HTMLElement>('.dash-scroll')
-    if (!pageViewport) return
-    const updateFollowState = () => {
-      shouldFollowStreamRef.current = pageViewport.scrollHeight - pageViewport.scrollTop - pageViewport.clientHeight < 96
+    let cancelled = false
+    let inFlight = false
+    const loadCredits = async () => {
+      if (cancelled || inFlight) return
+      inFlight = true
+      let data: { used: number; limit: number; balance: number; resetsAt: string } | null = null
+      try {
+        data = (await apiFetch<{ used: number; limit: number; balance: number; resetsAt: string }>('/api/v5/builder/credits')).data ?? null
+      } finally { inFlight = false }
+      if (cancelled || !data) return
+      setCredits((current) => current?.balance === data.balance && current.limit === data.limit && current.resetsAt === data.resetsAt ? current : data)
     }
-    pageViewport.addEventListener('scroll', updateFollowState, { passive: true })
-    updateFollowState()
-    return () => pageViewport.removeEventListener('scroll', updateFollowState)
-  }, [previewOpen])
+    void loadCredits()
+    const timer = window.setInterval(() => { void loadCredits() }, sending || buildId ? 1000 : 15000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [sending, buildId, user?.id])
 
   useEffect(() => {
-  let cancelled = false
-  const loadCredits = async () => {
-    const tenantId = storeIdOf(activeStore)
-    if (!tenantId) { setCredits(null); return }
-    const { data } = await apiFetch<CoreSession & { limits?: { aiCredits?: { used: number; limit: number; resetsAt: string } } }>(
-      '/api/v5/builder/session',
-      { method: 'POST', body: JSON.stringify({ tenantId }) },
-    )
-    if (!cancelled && data?.limits?.aiCredits) setCredits(data.limits.aiCredits)
-  }
-  void loadCredits()
-  return () => { cancelled = true }
-}, [activeStore])
+    const projectId = storeIdOf(activeStore)
+    if (coreRunProjectRef.current !== projectId) {
+      coreRunProjectRef.current = projectId
+      coreRunRef.current = undefined
+      setSending(false)
+      if (coreRunHeartbeatRef.current) {
+        window.clearInterval(coreRunHeartbeatRef.current)
+        coreRunHeartbeatRef.current = undefined
+      }
+    }
+    if (!projectId) return
+    // A saved Core app/chat means the conversation should be restored. It does
+    // not mean the last build failed or needs a resume action.
+    setResumeProjectAvailable(false)
+    let cancelled = false
+    void apiFetch<{ id: string; state: string; events?: PersistedRunEvent[] }>(`/api/v5/projects/${encodeURIComponent(projectId)}/active-run`).then(({ data }) => {
+      if (cancelled) return
+      if (!data?.id) {
+        coreRunRef.current = undefined
+        setSending(false)
+        setResumeProjectAvailable(false)
+        return
+      }
+      coreRunRef.current = { id: data.id, idempotencyKey: '' }
+      if (data.state === 'stopped' || data.state === 'interrupted' || data.state === 'paused_no_credits' || data.state === 'failed') {
+        setSending(false)
+        setCoreBuildCompleted(true)
+        const todoSnapshot = latestRunTodoSnapshot(data.events)
+        if (todoSnapshot) {
+          const restored = { chatId: todoSnapshot.chatId ?? coreChatRef.current ?? -1, todos: todoSnapshot.todos }
+          coreTodosRef.current = restored
+          setCoreTodos(restored)
+        }
+        setResumeProjectAvailable(true)
+      } else if (data.state === 'completed') {
+        coreRunRef.current = undefined
+        setSending(false)
+        setCoreBuildCompleted(true)
+        const todoSnapshot = latestRunTodoSnapshot(data.events)
+        if (todoSnapshot) {
+          const restored = { chatId: todoSnapshot.chatId ?? coreChatRef.current ?? -1, todos: todoSnapshot.todos }
+          coreTodosRef.current = restored
+          setCoreTodos(restored)
+        }
+        const hasUnfinishedTodos = hasUnfinishedRunTodos(data.events) ?? Boolean(coreTodosRef.current?.chatId === coreChatRef.current && coreTodosRef.current?.todos.some((todo) => todo.status !== 'completed'))
+        setResumeProjectAvailable(Boolean(hasUnfinishedTodos))
+      } else if (data.state === 'waiting_for_user') {
+        setSending(false)
+        setResumeProjectAvailable(false)
+      } else {
+        setSending(true)
+        // Reattaching the dashboard is not proof that a Core worker is alive.
+        // Do not renew its lease here; otherwise a dead stream looks active
+        // forever and the interrupted run can never be resumed.
+        setCoreStartupStatus('Reconnecting to the saved build…')
+      }
+    })
+    return () => {
+      cancelled = true
+      if (coreRunHeartbeatRef.current) {
+        window.clearInterval(coreRunHeartbeatRef.current)
+        coreRunHeartbeatRef.current = undefined
+      }
+    }
+  }, [activeStore])
+
+  useEffect(() => {
+    if (!sending || !coreRunRef.current?.id) return
+    let cancelled = false
+    let checking = false
+    const runId = coreRunRef.current.id
+    const inspectRun = async () => {
+      if (cancelled || checking) return
+      checking = true
+      try {
+        const { data, error } = await apiFetch<{ state?: string; error?: { reason?: string; code?: string }; events?: PersistedRunEvent[] }>(`/api/v5/runs/${encodeURIComponent(runId)}/snapshot`)
+        if (cancelled) return
+        if (error) {
+          if (/\b403\b|do not have access/i.test(error)) {
+            coreRunRef.current = undefined
+            setSending(false)
+            setResumeProjectAvailable(true)
+          }
+          return
+        }
+        if (!data?.state) return
+        if (['interrupted', 'failed', 'stopped', 'paused_no_credits'].includes(data.state)) {
+          if (coreRunHeartbeatRef.current) window.clearInterval(coreRunHeartbeatRef.current)
+          coreRunHeartbeatRef.current = undefined
+          setSending(false)
+          setCoreBuildCompleted(true)
+          const todoSnapshot = latestRunTodoSnapshot(data.events)
+          if (todoSnapshot) {
+            const restored = { chatId: todoSnapshot.chatId ?? coreChatRef.current ?? -1, todos: todoSnapshot.todos }
+            coreTodosRef.current = restored
+            setCoreTodos(restored)
+          }
+          setResumeProjectAvailable(true)
+          toast.error(data.state === 'interrupted' ? 'The build connection was interrupted. Your saved work is ready to continue.' : data.state === 'paused_no_credits' ? 'The build paused when credits ran out. Your saved work is ready to continue.' : `The build ${data.state}. Your saved work is ready to continue.`)
+        } else if (data.state === 'completed') {
+          if (coreRunHeartbeatRef.current) window.clearInterval(coreRunHeartbeatRef.current)
+          coreRunHeartbeatRef.current = undefined
+          coreRunRef.current = undefined
+          setSending(false)
+          setCoreBuildCompleted(true)
+          const todoSnapshot = latestRunTodoSnapshot(data.events)
+          if (todoSnapshot) {
+            const restored = { chatId: todoSnapshot.chatId ?? coreChatRef.current ?? -1, todos: todoSnapshot.todos }
+            coreTodosRef.current = restored
+            setCoreTodos(restored)
+          }
+          const hasUnfinishedTodos = hasUnfinishedRunTodos(data.events) ?? Boolean(coreTodosRef.current?.chatId === coreChatRef.current && coreTodosRef.current?.todos.some((todo) => todo.status !== 'completed'))
+          setResumeProjectAvailable(Boolean(hasUnfinishedTodos))
+        }
+      } finally {
+        checking = false
+      }
+    }
+    void inspectRun()
+    const timer = window.setInterval(() => { void inspectRun() }, 4000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [sending, coreRunRef.current?.id])
 
   const loadStores = useCallback(async () => {
     const { data } = await apiFetch<StoreData[]>('/api/v5/seltra/store')
@@ -1515,6 +1956,31 @@ export default function DashboardPage() {
     stoppedRef.current = true
     workAbortRef.current?.abort()
     workAbortRef.current = null
+    const runtime = coreRuntimeRef.current
+    const client = coreClientRef.current
+    const chatId = coreChatRef.current
+    const run = coreRunRef.current
+    if (runtime && client && chatId) {
+      void client.invoke<{ actorInstanceId: string; revision: number; stopPolicyVersion?: number }>('distributed-machine:subscribe', [{ protocolVersion: 1, machineId: 'chat_stream', encodedKey: { chatId } }], runtime).then((actor) =>
+        client.invoke('distributed-machine:dispatch', [{
+          protocolVersion: 1,
+          machineId: 'chat_stream',
+          encodedKey: { chatId },
+          expectedActorInstanceId: actor.actorInstanceId,
+          expectedRevision: actor.revision,
+          messageId: crypto.randomUUID(),
+          encodedEvent: { type: 'cancel-active', stopId: crypto.randomUUID(), observedStopPolicyVersion: actor.stopPolicyVersion ?? 0 },
+        }], runtime),
+      ).catch((error) => toast.error(error instanceof Error ? error.message : 'Could not stop the Core run.'))
+    }
+    if (run) {
+      void apiFetch<{ id: string }>(`/api/v5/runs/${encodeURIComponent(run.id)}/stop`, { method: 'POST' })
+      coreRunRef.current = undefined
+    }
+    if (coreRunHeartbeatRef.current) {
+      window.clearInterval(coreRunHeartbeatRef.current)
+      coreRunHeartbeatRef.current = undefined
+    }
     setSending(false)
     setBuildId(null)
     setBuildProgress(null)
@@ -1652,10 +2118,16 @@ export default function DashboardPage() {
   // back with questions, we start the inline planner thread and wait for the
   // merchant to answer (or skip) before calling beginBuild. ──
   const startConv = async (prompt: string, signal?: AbortSignal) => {
-    const limitCheck = await apiFetch<{ allowed: boolean; reason?: string }>('/api/v5/seltra/store/check-limit', { signal })
+    const limitCheck = await apiFetch<{ allowed: boolean; reason?: string; currentStoreCount?: number; maxStores?: number; plan?: 'free' | 'premium' }>('/api/v5/seltra/store/check-limit', { signal })
     if (limitCheck.aborted || signal?.aborted || stoppedRef.current) return
-    if (!limitCheck.data?.allowed) {
-      toast.error(limitCheck.data?.reason || 'Store limit reached for your plan')
+    if (limitCheck.error || !limitCheck.data) {
+      toast.error(limitCheck.error || 'Could not check your project limit. Please try again.')
+      setSending(false)
+      return
+    }
+    if (!limitCheck.data.allowed) {
+      setProjectLimitInfo(limitCheck.data ?? {})
+      setProjectLimitOpen(true)
       setSending(false)
       return
     }
@@ -1724,44 +2196,95 @@ export default function DashboardPage() {
     await beginBuild(plannerPrompt, convId, undefined, signal)
   }
 
-  const runCorePrompt = async (text: string, requestedMode: 'build' | 'plan' | 'chat', store: StoreData, stagedFiles: File[] = []) => {
+  const runCorePrompt = async (text: string, requestedMode: 'build' | 'plan' | 'chat', store: StoreData, stagedFiles: File[] = [], resumeExistingChat = false) => {
+    if (corePromptInFlightRef.current) return
+    corePromptInFlightRef.current = true
+    unlockCompletionAudio()
     const tenantId = store.id
-    if (!tenantId) { toast.error('This store is missing its workspace ID. Refresh the dashboard and try again.'); return }
+    if (!tenantId) {
+      corePromptInFlightRef.current = false
+      setSending(false)
+      setCoreStartupStatus('')
+      toast.error('This store is missing its workspace ID. Refresh the dashboard and try again.')
+      return
+    }
     const getSession = async (): Promise<CoreSession> => {
       const result = await apiFetch<CoreSession>('/api/v5/builder/session', { method: 'POST', body: JSON.stringify({ tenantId }) })
-      if (!result.data) throw new Error(result.error || 'Could not connect to Seltra Core.')
+      if (!result.data) throw new Error(result.error || 'Could not connect to Seltra Internal Server.')
       return result.data
     }
     const client = coreClientRef.current ?? new CoreClient(getSession, getSession)
     coreClientRef.current = client
     const files = [...coreFiles, ...stagedFiles]
-    if (files.length > 10 || files.some((file) => file.size > 10 * 1024 * 1024) || files.reduce((total, file) => total + file.size, 0) > 25 * 1024 * 1024) { toast.error('Attach up to 10 files, each no larger than 10 MiB and 25 MiB total.'); return }
+    if (files.length > 10) {
+      corePromptInFlightRef.current = false
+      setSending(false)
+      setCoreStartupStatus('')
+      toast.message('You can attach up to 10 files at a time. Remove a few and try again.')
+      return
+    }
+    const oversizedFile = files.find((file) =>
+      file.size > (file.name.toLowerCase().endsWith('.pdf') ? 5 : 10) * 1024 * 1024,
+    )
+    if (oversizedFile) {
+      corePromptInFlightRef.current = false
+      setSending(false)
+      setCoreStartupStatus('')
+      const limit = oversizedFile.name.toLowerCase().endsWith('.pdf') ? '5 MiB' : '10 MiB'
+      toast.message(`${oversizedFile.name} is over ${limit}. Choose a smaller file and try again.`)
+      return
+    }
+    if (files.reduce((total, file) => total + file.size, 0) > 25 * 1024 * 1024) {
+      corePromptInFlightRef.current = false
+      setSending(false)
+      setCoreStartupStatus('')
+      toast.message('Those files are a little too large together. Try fewer images or smaller files (25 MiB total).')
+      return
+    }
     shouldFollowStreamRef.current = true
+    setHasNewActivity(false)
     setSending(true)
+    setCoreStartupStatus('Connecting to your workspace…')
+    setCoreBuildCompleted(false)
     setBuildProgress(null)
     setCorePreviewUrl('')
     setCorePreviewScreenshot('')
     setCorePreviewError('')
     setCoreConnectionError('')
     setCorePreviewConsole([])
-    const row = { role: 'user' as const, content: `${text}${files.length ? `${text ? '\n' : ''}Attached: ${files.map((file) => file.name).join(', ')}` : ''}`, createdAt: new Date().toISOString() }
+    const imageFiles = files.filter((file) => file.type.startsWith('image/'))
+    const otherFiles = files.filter((file) => !file.type.startsWith('image/'))
+    const imageAttachments = imageFiles.map((file) => {
+      const url = URL.createObjectURL(file)
+      coreMessageAttachmentUrlsRef.current.push(url)
+      return { type: 'image' as const, name: file.name, url }
+    })
+    const userMessageCreatedAt = new Date().toISOString()
+    const row = {
+      role: 'user' as const,
+      content: `${text}${otherFiles.length ? `${text ? '\n' : ''}Attached: ${otherFiles.map((file) => file.name).join(', ')}` : ''}`,
+      attachments: imageAttachments,
+      createdAt: userMessageCreatedAt,
+    }
     coreReplyRef.current = ''
     setMsgs((current) => {
       coreMessageRef.current = current.length + 1
       return [...current, row, { role: 'assistant', content: '' }]
     })
     setCoreFiles([])
+    let dispatchRunIdForCatch: string | undefined
+    let coreDispatchAccepted = false
     try {
       const runtimeStarted = Date.now()
-      // On first access Core starts a tenant-isolated runtime before it
-      // upgrades /api/events and sends web:session. WorkspaceSupervisor allows
-      // 60 seconds for that cold start; a 20-second UI deadline abandoned the
-      // prompt while the gateway was still starting the runtime.
-      while (!coreRuntimeRef.current && Date.now() - runtimeStarted < 70_000) await new Promise((resolve) => setTimeout(resolve, 100))
+      // The gateway can spend several minutes starting a tenant runtime
+      // before its event socket supplies the RPC session ID.
+      while (!coreRuntimeRef.current && Date.now() - runtimeStarted < CORE_RUNTIME_CONNECTION_TIMEOUT_MS) await new Promise((resolve) => setTimeout(resolve, 100))
       const runtime = coreRuntimeRef.current
-      if (!runtime) throw new Error(coreConnectionError || 'Seltra Core runtime did not connect within 70 seconds. Check the Core service status and try again.')
+      if (!runtime) throw new Error(coreConnectionError || 'Seltra runtime did not connect within 10 minutes. Check the Core service status and try again.')
+      setCoreStartupStatus('Workspace connected. Opening your app and conversation…')
       const coreMode = requestedMode === 'chat' ? 'ask' : requestedMode
       const storedApp = (() => { try { return JSON.parse(localStorage.getItem(`seltra:core:last-app:${tenantId}`) ?? 'null') as { appId?: number; chatId?: number } | null } catch { return null } })()
+      if (resumeExistingChat && (!storedApp?.appId || !storedApp.chatId)) throw new Error('The saved project chat is no longer available. Send a new prompt to continue.')
       let appId = storedApp?.appId
       // The browser can retain an app ID after its Core workspace was reset,
       // restored from backup, or the app was deleted. Core's create-chat path
@@ -1778,6 +2301,7 @@ export default function DashboardPage() {
         localStorage.removeItem(`seltra:core:last-app:${tenantId}`)
       }
       if (!appId) {
+        setCoreStartupStatus('Checking your saved projects…')
         const apps = await apiFetch<Array<{ coreAppId: number; name: string }>>(`/api/v5/builder/apps?tenantId=${encodeURIComponent(tenantId)}`)
         for (const existingApp of apps.data ?? []) {
           if (!Number.isSafeInteger(existingApp.coreAppId) || existingApp.coreAppId <= 0) continue
@@ -1795,6 +2319,7 @@ export default function DashboardPage() {
       // Core owns the workspace app list, so consult it before creating a
       // duplicate when the Seltra index is temporarily behind.
       if (!appId) {
+        setCoreStartupStatus('Preparing your app…')
         try {
           const runtimeApps = await client.invoke<{ apps?: Array<{ id: number; name: string }> }>('list-apps', [], runtime)
           const existingRuntimeApp = runtimeApps.apps?.find((app) => Number.isSafeInteger(app.id) && app.id > 0)
@@ -1807,24 +2332,34 @@ export default function DashboardPage() {
       let chatId: number | undefined
       let continuingPlan = false
       if (appId) {
-        if (coreMode === 'build' && storedApp?.chatId) {
+        if (storedApp?.chatId) {
           try {
             const previousChat = await client.invoke<{ chatMode?: string }>('get-chat', [storedApp.chatId], runtime)
-            if (previousChat.chatMode === 'plan') {
-              chatId = storedApp.chatId
-              continuingPlan = true
-            }
-          } catch { /* A stale saved chat pointer falls back to a new chat. */ }
+            chatId = storedApp.chatId
+            continuingPlan = previousChat.chatMode === 'plan'
+          } catch { /* Recover the latest project chat from Core below. */ }
         }
         if (!chatId) {
+          try {
+            const chats = await client.invoke<Array<{ id: number; chatMode?: string | null; createdAt: Date }>>('get-chats', [appId], runtime)
+            const previousChat = [...chats].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0]
+            if (previousChat && Number.isSafeInteger(previousChat.id) && previousChat.id > 0) {
+              chatId = previousChat.id
+              continuingPlan = previousChat.chatMode === 'plan'
+            }
+          } catch { /* A project without Core chat history starts a new conversation. */ }
+        }
+        if (!chatId) {
+          if (resumeExistingChat) throw new Error('The saved project conversation could not be recovered. Refresh the workspace and try again.')
           const chat = await client.invoke<number>('create-chat', [{ appId, initialChatMode: coreMode }], runtime)
-          if (!Number.isSafeInteger(chat) || chat <= 0) throw new Error('Seltra Core returned an invalid chat ID.')
+          if (!Number.isSafeInteger(chat) || chat <= 0) throw new Error('Seltra returned an invalid chat ID.')
           chatId = chat
         }
       } else {
+        if (resumeExistingChat) throw new Error('The saved Core app is no longer available. Send a new prompt to continue.')
         const created = await client.invoke<{ app: { id: number; name: string }; chatId: number }>('create-app', [{ name: 'Seltra App', initialChatMode: coreMode }], runtime)
         if (!created?.app || !Number.isSafeInteger(created.app.id) || created.app.id <= 0 || !Number.isSafeInteger(created.chatId) || created.chatId <= 0) {
-          throw new Error('Seltra Core created an app but returned an invalid app or chat record. Refresh the workspace and try again.')
+          throw new Error('Seltra created an app but returned an invalid app or chat record. Refresh the workspace and try again.')
         }
         appId = created.app.id
         appName = created.app.name
@@ -1833,7 +2368,9 @@ export default function DashboardPage() {
       }
       coreAppRef.current = appId
       if (coreChatRef.current !== chatId) {
+        coreQuestionnaireRef.current = null
         setCoreQuestionnaire(null)
+        coreTodosRef.current = null
         setCoreTodos(null)
         setCoreBlueprint(null)
         setCoreBlueprintName('')
@@ -1841,6 +2378,8 @@ export default function DashboardPage() {
       }
       coreChatRef.current = chatId
       localStorage.setItem(`seltra:core:last-app:${tenantId}`, JSON.stringify({ appId, chatId }))
+      const runKey = crypto.randomUUID()
+      const previousRunId = resumeExistingChat ? coreRunRef.current?.id : undefined
       let dashboardConversationId = coreDashboardConversationRef.current
       if (!dashboardConversationId) {
         const createdConversation = await createConversation(text || appName)
@@ -1850,34 +2389,118 @@ export default function DashboardPage() {
         setConvId(dashboardConversationId)
         setConversations((current) => [createdConversation.data!, ...current])
       }
-      const serializedAttachments = await Promise.all(files.map(async (file) => ({ name: file.name, type: file.type || 'application/octet-stream', data: await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => { const dataUrl = String(reader.result ?? ''); const separator = dataUrl.indexOf(','); if (separator < 0) return reject(new Error(`Could not encode ${file.name}.`)); resolve(dataUrl.slice(separator + 1)) }; reader.onerror = () => reject(new Error(`Could not read ${file.name}.`)); reader.readAsDataURL(file) }), attachmentType: 'chat-context' })))
+      const serializedAttachments = await Promise.all(
+        files.map(async (file) => ({
+          name: file.name,
+          type: file.type || 'application/octet-stream',
+          data: await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => {
+              const dataUrl = String(reader.result ?? '')
+              if (!dataUrl.startsWith('data:') || !dataUrl.includes(';base64,')) {
+                reject(new Error(`Could not encode ${file.name}.`))
+                return
+              }
+              // The chat intent schema and main-process decoder require the
+              // complete data URL, including its MIME type and base64 marker.
+              resolve(dataUrl)
+            }
+            reader.onerror = () => reject(new Error(`Could not read ${file.name}.`))
+            reader.readAsDataURL(file)
+          }),
+          attachmentType: 'chat-context' as const,
+        })),
+      )
+      setCoreStartupStatus(files.length ? `Preparing ${files.length} attachment${files.length === 1 ? '' : 's'} and reconnecting to your conversation…` : 'Reconnecting to your Seltra conversation…')
       const machine = { protocolVersion: 1, machineId: 'chat_stream', encodedKey: { chatId } }
       const actor = await client.invoke<{ actorInstanceId: string; revision: number; encodedState: { stopPolicyVersion?: number } }>('distributed-machine:subscribe', [machine], runtime)
       const operationId = crypto.randomUUID()
       const intentId = crypto.randomUUID()
       const userPrompt = text || 'Use the attached files as context for this app.'
+      setCoreStreamingPreview('')
       const blueprintApproved = localStorage.getItem(`seltra:core:blueprint-approved:${tenantId}`) === '1'
-      const prompt = coreMode === 'build' && continuingPlan && !blueprintApproved
+      const prompt = resumeExistingChat
+        ? `Continue the existing project from its current files and conversation. Preserve completed work, identify the unfinished build steps, and continue until the app builds and a working preview is available. Do not restart or recreate completed work.\n\n${userPrompt}`
+        : coreMode === 'build' && continuingPlan && !blueprintApproved
         ? `Continue from the completed plan in this conversation. The planning questionnaire has already been answered in this chat; do not ask it again. First call write_app_blueprint to present the initial app blueprint for approval. Do not create todos, edit files, or call implementation tools before the user approves the blueprint. After approval, implement the completed plan and carry it through to a working preview.\n\n${userPrompt}`
         : coreMode === 'build' && continuingPlan
           ? `Continue from the completed plan in this conversation and implement it now. Use the plan as the implementation specification, create/update the todo list, and carry the work through to a working preview.\n\n${userPrompt}`
           : coreMode === 'build' && !blueprintApproved
             ? `This app still needs its initial blueprint. Make planning_questionnaire your first tool call. Ask at most three concise questions with no more than three options each. Do not call update_todos, write files, or use implementation tools until the user answers and approves the blueprint.\n\n${userPrompt}`
           : userPrompt
-      const intent = { schemaVersion: 1, intentId, chatId, appId, invocationRef: { kind: 'chat-stream', entityKey: chatId, operationId }, prompt, redo: false, attachments: serializedAttachments, selectedComponents: [], requestedChatMode: coreMode }
+      const intent = { schemaVersion: 1, intentId, chatId, appId, invocationRef: { kind: 'chat-stream', entityKey: chatId, operationId }, prompt, redo: false, attachments: serializedAttachments, selectedComponents: coreSelectedComponents, requestedChatMode: coreMode }
       const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(intent))))
       const payloadHash = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
       coreIntentRef.current = intentId
       coreCompletedIntentRef.current = undefined
+      setCoreStartupStatus(resumeExistingChat ? 'Saving your resume request…' : 'Saving your build request…')
+      const runWorkspace = await getSession()
+      const runStart = previousRunId
+        ? await apiFetch<{ id: string }>(`/api/v5/runs/${encodeURIComponent(previousRunId)}/continue`, { method: 'POST' })
+        : await apiFetch<{ id: string }>(`/api/v5/runs`, {
+          method: 'POST',
+          headers: { 'Idempotency-Key': runKey },
+          body: JSON.stringify({ projectId: tenantId, workspaceId: runWorkspace.creditWorkspaceId ?? runWorkspace.workspaceId, idempotencyKey: runKey }),
+        })
+      if (!runStart.data?.id) throw new Error(runStart.error || 'Could not save this build run.')
+      coreRunRef.current = { id: runStart.data.id, idempotencyKey: runKey }
+      const dispatchRunId = runStart.data.id
+      dispatchRunIdForCatch = dispatchRunId
+      const heartbeat = () => {
+        if (coreRunRef.current?.id !== dispatchRunId) return
+        void apiFetch(`/api/v5/runs/${encodeURIComponent(dispatchRunId)}/events`, {
+          method: 'POST', cache: 'no-store',
+          body: JSON.stringify({ type: 'run.heartbeat', payload: { chatId, appId, source: 'core_dispatch_pending' } }),
+        })
+      }
+      if (coreRunHeartbeatRef.current) window.clearInterval(coreRunHeartbeatRef.current)
+      heartbeat()
+      coreRunHeartbeatRef.current = window.setInterval(heartbeat, 5000)
+      setCoreStartupStatus(resumeExistingChat ? 'Seltra Core is receiving your resume request…' : 'Seltra Core is receiving your request…')
       const receipt = await client.invoke<{ kind: string; reason?: string }>('distributed-machine:dispatch', [{ ...machine, expectedActorInstanceId: actor.actorInstanceId, expectedRevision: actor.revision, messageId: crypto.randomUUID(), encodedEvent: { type: 'SUBMIT', intent: { ...intent, payloadHash }, observedStopPolicyVersion: actor.encodedState.stopPolicyVersion ?? 0 } }], runtime)
       if (receipt.kind !== 'applied' && receipt.kind !== 'replayed') throw new Error(receipt.reason || `Core accepted no work (${receipt.kind}).`)
-      toast.success(requestedMode === 'plan' ? 'Plan request sent to Seltra Core.' : requestedMode === 'chat' ? 'Message sent to Seltra Core.' : 'Build started in your workspace.')
-      await saveMessage(dashboardConversationId, 'user', row.content)
+      coreDispatchAccepted = true
+      corePromptInFlightRef.current = false
+      // This heartbeat only covers the RPC acceptance window. Once Core has
+      // accepted the intent, Core events own the worker lease; the dashboard
+      // must not keep a stalled remote stream looking alive.
+      if (coreRunHeartbeatRef.current) window.clearInterval(coreRunHeartbeatRef.current)
+      coreRunHeartbeatRef.current = undefined
+      if (coreRunRef.current?.id) {
+        const acceptedRunId = coreRunRef.current.id
+        void apiFetch(`/api/v5/runs/${encodeURIComponent(acceptedRunId)}/events`, {
+          method: 'POST',
+          body: JSON.stringify({ type: resumeExistingChat ? 'run.resumed' : 'run.started', phase: 'understand', agent: 'supervisor', state: 'running', payload: { chatId, appId } }),
+        }).catch(() => undefined)
+      }
+      setCoreStartupStatus('Seltra accepted your request. Planning the work…')
+      setCoreSelectedComponents([])
+      toast.success(requestedMode === 'plan' ? 'Plan request sent to Seltra.' : requestedMode === 'chat' ? 'Message sent to Seltra.' : 'Build started in your workspace.')
+      void saveMessage(dashboardConversationId, 'user', row.content).catch(() => toast.error('Seltra received your request, but this conversation could not sync yet. Your build is still running.'))
       void appName
     } catch (error) {
+      corePromptInFlightRef.current = false
+      if (!coreDispatchAccepted) {
+        if (coreRunHeartbeatRef.current) window.clearInterval(coreRunHeartbeatRef.current)
+        coreRunHeartbeatRef.current = undefined
+      }
+      if (!coreDispatchAccepted && dispatchRunIdForCatch) {
+        void apiFetch(`/api/v5/runs/${encodeURIComponent(dispatchRunIdForCatch)}/events`, {
+          method: 'POST',
+          body: JSON.stringify({ type: 'run.failed', state: 'failed', payload: { code: 'CORE_DISPATCH_FAILED', reason: error instanceof Error ? error.message : 'Core did not accept the request.' } }),
+        }).catch(() => undefined)
+        if (coreRunRef.current?.id === dispatchRunIdForCatch) coreRunRef.current = undefined
+      }
       setSending(false)
+      setCoreStartupStatus('')
+      if (resumeExistingChat) setResumeProjectAvailable(true)
       const message = error instanceof Error ? error.message : 'Could not start the Core workflow.'
-      setMsgs((current) => current.filter((_, index) => index !== coreMessageRef.current))
+      if (!coreDispatchAccepted) {
+        setMsgs((current) => current.filter((message, index) =>
+          !(message.role === 'user' && message.createdAt === userMessageCreatedAt) &&
+          !(message.role === 'assistant' && index === coreMessageRef.current),
+        ))
+      }
       toast.error(message)
     }
   }
@@ -1898,6 +2521,14 @@ export default function DashboardPage() {
     if (!store) {
       setSending(true)
       try {
+        const limitCheck = await apiFetch<{ allowed: boolean; reason?: string; currentStoreCount?: number; maxStores?: number; plan?: 'free' | 'premium' }>('/api/v5/seltra/store/check-limit')
+        if (limitCheck.error || !limitCheck.data) throw new Error(limitCheck.error || 'Could not check your project limit. Please try again.')
+        if (!limitCheck.data.allowed) {
+          setProjectLimitInfo(limitCheck.data ?? {})
+          setProjectLimitOpen(true)
+          setSending(false)
+          return
+        }
         const name = prompt.split(/[.!?\n]/)[0]?.trim().slice(0, 60) || 'New store'
         const result = await apiFetch<{ store: StoreData }>('/api/v5/seltra/store/core-workspace', {
           method: 'POST', body: JSON.stringify({ name, prompt }),
@@ -1920,7 +2551,7 @@ export default function DashboardPage() {
       setSending(true)
       try {
         const sessionResult = await apiFetch<CoreSession>('/api/v5/builder/session', { method: 'POST', body: JSON.stringify({ tenantId: figmaStore.id }) })
-        if (!sessionResult.data) throw new Error(sessionResult.error || 'Could not connect to Seltra Core.')
+        if (!sessionResult.data) throw new Error(sessionResult.error || 'Could not connect to Seltra Internal Server.')
         const coreUrl = process.env.NEXT_PUBLIC_CORE_URL?.replace(/\/$/, '')
         if (!coreUrl) throw new Error('The Seltra builder is not configured.')
         const response = await fetch(`${coreUrl}/api/figma/import`, {
@@ -1959,6 +2590,7 @@ export default function DashboardPage() {
 const send = async () => {
   const text = input.trim()
   if ((!text && !pendingAttachment && coreFiles.length === 0) || sending) return
+  unlockCompletionAudio()
   if (pendingAttachment?.uploading) {
     toast.message('Image is still uploading.')
     return
@@ -1967,6 +2599,11 @@ const send = async () => {
     toast.error(pendingAttachment.error)
     return
   }
+
+  // Show immediate feedback before workspace checks, file encoding, app
+  // recovery, or RPC dispatch can wait on network or runtime startup.
+  setSending(true)
+  setCoreStartupStatus('Preparing your request for Seltra…')
 
   const corePrompt = pendingAttachment?.url
     ? `${text || 'Use this image as visual context for my app.'}\n\nReference image: ${pendingAttachment.url}`
@@ -1993,7 +2630,9 @@ const send = async () => {
     setBuildProgress(null)
     setBuildLaunchStarted(false)
     setBuildConversationId(undefined)
+    coreQuestionnaireRef.current = null
     setCoreQuestionnaire(null)
+    coreTodosRef.current = null
     setCoreTodos(null)
     setCoreBlueprint(null)
     setCoreBlueprintName('')
@@ -2001,6 +2640,7 @@ const send = async () => {
     setCorePreviewUrl('')
     setCorePreviewError('')
     setPreviewRecoveryError('')
+    setResumeProjectAvailable(false)
   }
 
   const openStoreProject = (store: StoreData) => {
@@ -2010,21 +2650,26 @@ const send = async () => {
     setTab('home')
     setRev((v) => v + 1)
     resetProjectSurface()
-    if (sameWorkspace) {
-      try {
-        const saved = JSON.parse(localStorage.getItem(`seltra:core:last-app:${store.id}`) ?? 'null') as { appId?: number; chatId?: number } | null
-        if (saved?.appId) coreAppRef.current = saved.appId
-        if (saved?.chatId) {
-          coreChatRef.current = saved.chatId
-          const client = coreClientRef.current
-          const runtime = coreRuntimeRef.current
-          if (client && runtime) void client.invoke<{ messages?: Array<{ role: 'user' | 'assistant'; content: string; createdAt?: string | Date }> }>('get-chat', [saved.chatId], runtime).then((chat) => {
-            if (coreRuntimeRef.current !== runtime || coreChatRef.current !== saved.chatId || !Array.isArray(chat.messages)) return
-            setMsgs(chat.messages.map((message) => ({ role: message.role, content: message.content, createdAt: message.createdAt ? new Date(message.createdAt).toISOString() : undefined })))
-            coreReplyRef.current = chat.messages.filter((message) => message.role === 'assistant').at(-1)?.content ?? ''
-          }).catch(() => undefined)
-        }
-      } catch { /* A missing/stale project pointer is handled by the session restore. */ }
+    coreAppRef.current = undefined
+    coreChatRef.current = undefined
+    try {
+      const saved = JSON.parse(localStorage.getItem(`seltra:core:last-app:${store.id}`) ?? 'null') as { appId?: number; chatId?: number } | null
+      if (saved?.appId && Number.isSafeInteger(saved.appId)) coreAppRef.current = saved.appId
+      if (saved?.chatId && Number.isSafeInteger(saved.chatId)) coreChatRef.current = saved.chatId
+      const hasSavedConversation = Boolean(coreAppRef.current && coreChatRef.current)
+      if (sameWorkspace && hasSavedConversation) {
+        const client = coreClientRef.current
+        const runtime = coreRuntimeRef.current
+        const chatId = coreChatRef.current
+        if (client && runtime && chatId) void client.invoke<{ messages?: Array<{ role: 'user' | 'assistant'; content: string; createdAt?: string | Date }> }>('get-chat', [chatId], runtime).then((chat) => {
+          if (coreRuntimeRef.current !== runtime || coreChatRef.current !== chatId || !Array.isArray(chat.messages)) return
+          setMsgs(chat.messages.map((message) => ({ role: message.role, content: message.content, createdAt: message.createdAt ? new Date(message.createdAt).toISOString() : undefined })))
+          coreReplyRef.current = chat.messages.filter((message) => message.role === 'assistant').at(-1)?.content ?? ''
+        }).catch((error) => toast.error(error instanceof Error ? `Could not restore the saved Core conversation: ${error.message}` : 'Could not restore the saved Core conversation.'))
+      }
+    } catch (error) {
+      setResumeProjectAvailable(false)
+      console.error('[builder] Could not read the saved project pointer.', error)
     }
   }
 
@@ -2045,7 +2690,17 @@ const send = async () => {
     }
   }
 
-  const newStore = () => {
+  const newStore = async () => {
+    const limitCheck = await apiFetch<{ allowed: boolean; reason?: string; currentStoreCount?: number; maxStores?: number; plan?: 'free' | 'premium' }>('/api/v5/seltra/store/check-limit')
+    if (limitCheck.error || !limitCheck.data) {
+      toast.error(limitCheck.error || 'Could not check your project limit. Please try again.')
+      return
+    }
+    if (!limitCheck.data.allowed) {
+      setProjectLimitInfo(limitCheck.data ?? {})
+      setProjectLimitOpen(true)
+      return
+    }
     resetProjectSurface()
     setActiveStore(null)
     setRev((v) => v + 1)
@@ -2161,6 +2816,8 @@ const handleAgentAttach = async (f: File) => {
 
   const sidebarProps: SidebarSharedProps = {
     user,
+    credits,
+    onUpgrade: () => setTab('billing'),
     tab,
     setTab,
     onSignOut: signOut,
@@ -2183,7 +2840,7 @@ const handleAgentAttach = async (f: File) => {
       galleryTitle: '',
     })
   }, [buildId])
-  const showAgentHome = msgs.length === 0 && !sending && !buildId
+  const showAgentHome = msgs.length === 0 && !sending && !buildId && !resumeProjectAvailable
   const chatTitle = conversations.find((item) => item.id === convId)?.title
     || msgs.find((item) => item.role === 'user')?.content?.slice(0, 48)
     || activeStore?.name
@@ -2251,6 +2908,68 @@ const handleAgentAttach = async (f: File) => {
     setPillDismissed(true)
   }, [setLink])
 
+  const deleteStoreAppsFromCore = async (tenantId: string) => {
+    const appsResult = await apiFetch<Array<{ coreAppId: number }>>(
+      `/api/v5/builder/apps?tenantId=${encodeURIComponent(tenantId)}`,
+    )
+    if (appsResult.error) throw new Error(appsResult.error)
+    const appIds = [...new Set((appsResult.data ?? []).map((app) => app.coreAppId).filter(Number.isSafeInteger))]
+    if (appIds.length === 0) return
+
+    let client = coreClientRef.current
+    let runtimeId = coreTenantRef.current === tenantId ? coreRuntimeRef.current : undefined
+    let temporaryEvents: CoreEvents | undefined
+
+    if (!client || coreTenantRef.current !== tenantId || !runtimeId) {
+      const getSession = async (): Promise<CoreSession> => {
+        const result = await apiFetch<CoreSession>('/api/v5/builder/session', {
+          method: 'POST', body: JSON.stringify({ tenantId }),
+        })
+        if (!result.data) throw new Error(result.error || 'Could not connect to Seltra Core for this store.')
+        return result.data
+      }
+      client = new CoreClient(getSession, getSession)
+      runtimeId = await new Promise<string>((resolve, reject) => {
+        let settled = false
+        const timeout = window.setTimeout(() => {
+          if (settled) return
+          settled = true
+          temporaryEvents?.close()
+          reject(new Error('Seltra Core did not connect to this store in time. The store was not deleted. Try again when the builder is connected.'))
+        }, 30_000)
+        temporaryEvents = new CoreEvents(client!, (frame) => {
+          if (frame.channel !== 'web:session' || settled) return
+          const id = (frame.payload as { id?: string } | null)?.id
+          if (!id) return
+          settled = true
+          window.clearTimeout(timeout)
+          resolve(id)
+        }, () => undefined, (message) => {
+          if (!settled) {
+            settled = true
+            window.clearTimeout(timeout)
+            reject(new Error(message || 'Could not connect to Seltra Core.'))
+          }
+        })
+        temporaryEvents.connect()
+      })
+    }
+    if (!client || !runtimeId) throw new Error('Seltra Core is not connected to this store. The store was not deleted.')
+
+    try {
+      const runtimeApps = await client.invoke<{ apps?: Array<{ id: number }> }>('list-apps', [], runtimeId)
+      const existingIds = new Set((runtimeApps.apps ?? []).map((app) => app.id))
+      for (const appId of appIds) {
+        // A stale database mapping is already absent from disk; do not let it
+        // block removal of the remaining apps or the store record.
+        if (!existingIds.has(appId)) continue
+        await client.invoke('delete-app', [{ appId }], runtimeId)
+      }
+    } finally {
+      temporaryEvents?.close()
+    }
+  }
+
   useEffect(() => {
     if (!sending && !buildId) {
       setThoughtSeconds(null)
@@ -2298,12 +3017,14 @@ const handleAgentAttach = async (f: File) => {
             tab={tab} activeStore={activeStore} stores={stores}
             onSelectStore={openStoreProject}
             onStoreDeleted={handleStoreDeleted}
+            deleteStoreAppsFromCore={deleteStoreAppsFromCore}
             onStoreUpdated={(store) => { /* unchanged */ }}
             reloadStores={loadStores} user={user}
             credits={credits}
           />
         </main>
         <FigmaImportDialog open={figmaDialogOpen} value={figmaUrl} onChange={setFigmaUrl} busy={figmaImporting} onClose={() => setFigmaDialogOpen(false)} onSubmit={submitFigmaImport} />
+        <ProjectLimitDialog open={projectLimitOpen} info={projectLimitInfo} onClose={() => setProjectLimitOpen(false)} onUpgrade={() => { setProjectLimitOpen(false); setTab('billing') }} />
       </DashboardFrame>
     )
   }
@@ -2320,18 +3041,16 @@ const handleAgentAttach = async (f: File) => {
     >
       <main
         className={cn(
-          'dash-canvas relative flex min-w-0 w-full flex-1 flex-col',
+          'dash-canvas relative flex min-h-0 min-w-0 w-full flex-1 flex-col',
           showAgentHome
             ? 'is-wash'
-            : cn('is-chat', previewOpen ? 'h-[calc(100dvh-1rem)] min-h-[calc(100dvh-1rem)] overflow-hidden' : 'min-h-[calc(100dvh-1rem)]'),
+            : 'is-chat h-full min-h-0 overflow-hidden',
         )}
       >
         {showAgentHome ? (
           <EmptyState
-            input={input} setInput={setInput} send={send} sending={sending} name={user?.name ?? ''}
+            input={input} setInput={setInput} send={send} sending={sending} name={user?.name ?? ''} userId={user?.id ?? ''}
             merchantProfile={merchantProfile}
-            recentActivity={conversations.find((item) => item.id === convId)?.title || conversations[0]?.title}
-            hasHistory={conversations.length > 0}
             pendingAttachment={pendingAttachment}
             onClearAttachment={clearPendingAttachment}
             coreFiles={coreFiles}
@@ -2340,7 +3059,7 @@ const handleAgentAttach = async (f: File) => {
             sidebarOpen={sidebarOpen}
             onToggleSidebar={() => setSidebarOpen((p) => !p)}
             onMenu={() => setMobileSidebar(true)}
-            onUpgrade={() => setTab('billing')}
+            onUpgrade={() => setBillingPlansOpen(true)}
             showUpgrade={user?.plan !== 'premium'}
             activeStore={activeStore}
             onOpenStore={openStoreProject}
@@ -2362,8 +3081,8 @@ const handleAgentAttach = async (f: File) => {
             onDismissAnnouncement={dismissAnnouncement}
           />
         ) : (
-          <div className={cn('flex flex-col', previewOpen ? 'min-h-0 flex-1' : '')}>
-            <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-5 sm:px-6 lg:px-7">
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex shrink-0 items-center justify-between gap-3 px-4 pb-3 pt-5 sm:px-6 lg:px-7">
               <div className="flex min-w-0 items-center gap-2">
                 <button type="button" onClick={() => setMobileSidebar(true)} className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 text-white lg:hidden" aria-label="Open menu">
                   <Menu className="h-4 w-4" />
@@ -2401,14 +3120,14 @@ const handleAgentAttach = async (f: File) => {
               <div className="flex items-center gap-2">
                 <NotificationBell activeStore={activeStore} />
                 {!previewOpen && (
-                  <button type="button" onClick={() => setPreviewOpen(true)} className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 text-white/80 hover:text-white" aria-label="Open store preview">
+                  <button type="button" onClick={() => setPreviewOpen(true)} className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 text-white/80 hover:text-white" aria-label="Open app preview" title="Open app preview">
                     <Expand className="h-4 w-4" />
                   </button>
                 )}
               </div>
             </div>
 
-            <div className={cn('grid min-w-0 grid-cols-1 gap-4 overflow-x-clip px-3 pb-4 sm:gap-5 sm:px-5 sm:pb-5 lg:gap-5', previewOpen ? 'min-h-0 flex-1' : '', previewOpen && mobileView === 'chat' ? 'lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]' : 'lg:grid-cols-1')}>
+            <div className={cn('grid min-h-0 min-w-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)] gap-4 overflow-x-clip px-3 pb-4 transition-[grid-template-columns] duration-300 ease-in-out motion-reduce:transition-none sm:gap-5 sm:px-5 sm:pb-5 lg:gap-5', previewOpen && mobileView === 'chat' ? 'lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]' : 'lg:grid-cols-1')}>
               {buildId && (
                 <AgentBuildStream
                   headless
@@ -2422,8 +3141,26 @@ const handleAgentAttach = async (f: File) => {
                   onConnection={reportConnection}
                 />
               )}
-              <section className={cn('flex min-w-0 flex-col overflow-x-clip', previewOpen ? 'min-h-0 flex-1' : '', mobileView === 'store' && 'hidden lg:flex')}>
-                <div ref={scrollRef} onScroll={(event) => { const viewport = event.currentTarget; shouldFollowStreamRef.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 96 }} className={cn('mx-auto flex w-full min-w-0 max-w-[760px] flex-col gap-6 overflow-x-clip px-3 py-6 sm:px-4', previewOpen ? 'min-h-0 flex-1 overflow-y-auto overscroll-y-contain' : 'overflow-y-visible')}>
+              <section className={cn('flex h-full min-h-0 min-w-0 flex-col overflow-x-clip', mobileView === 'store' && 'hidden lg:flex')}>
+                <div className="relative mx-auto flex min-h-0 w-full min-w-0 max-w-[760px] flex-1 flex-col">
+                <div ref={scrollRef} onScroll={(event) => { const viewport = event.currentTarget; shouldFollowStreamRef.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 96; if (shouldFollowStreamRef.current) setHasNewActivity(false) }} className="workbench-scroll flex min-h-0 w-full min-w-0 flex-1 flex-col gap-6 overflow-x-clip overflow-y-auto overscroll-y-contain px-3 py-6 sm:px-4">
+                  {resumeProjectAvailable && activeStore && (
+                    <section className="w-full max-w-[680px] rounded-2xl border border-emerald-400/20 bg-[#171b19] p-4" aria-label="Continue your saved build">
+                      <p className="text-sm font-semibold text-white">{coreTodos?.todos.some((todo) => todo.status !== 'completed') ? 'Your project is saved with work remaining' : 'Your project is saved'}</p>
+                      <p className="mt-1 text-sm leading-5 text-white/55">Continue in the same app and conversation. Seltra will review what’s already there and carry on from the unfinished work.</p>
+                      <button
+                        type="button"
+                        disabled={sending || !coreConnected}
+                        onClick={() => {
+                          setResumeProjectAvailable(false)
+                          void runCorePrompt('Continue building this project from where the previous run stopped.', 'build', activeStore, [], true)
+                        }}
+                        className="mt-3 inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-[#082012] hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {coreConnected ? 'Resume building' : 'Reconnecting to your project…'}
+                      </button>
+                    </section>
+                  )}
                   {msgs.map((message, index) => {
                     if (message.role === 'planner-question' && message.question) {
                       const isLatest = index === msgs.length - 1
@@ -2465,6 +3202,7 @@ const handleAgentAttach = async (f: File) => {
                       <div key={`${message.createdAt ?? index}-assistant`} className="w-full min-w-0 max-w-[680px]">
                         <AgentReply
                           content={message.content}
+                          streamingPreview={isLatestAssistant && coreStreamingPreview ? coreStreamingPreview : undefined}
                           isStreaming={isLatestAssistant && sending}
                           todos={isLatestAssistant && coreTodos && coreTodos.chatId === coreChatRef.current ? coreTodos.todos : undefined}
                           questionnaire={isLatestAssistant && coreQuestionnaire && coreQuestionnaire.chatId === coreChatRef.current ? coreQuestionnaire : undefined}
@@ -2478,9 +3216,9 @@ const handleAgentAttach = async (f: File) => {
                       </div>
                     )
                   })}
-                  {sending && !activeAssistantVisible && <section className="flex w-full max-w-[680px] min-w-0 items-start gap-3 rounded-xl border border-white/[0.08] bg-[#171b19] px-4 py-3" role="status" aria-live="polite">
-                    <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-emerald-300" />
-                    <div className="min-w-0"><p className="text-sm font-medium text-white">{thoughtSeconds !== null && thoughtSeconds >= 20 ? `Waiting for progress from Seltra Core · ${Math.floor(thoughtSeconds / 60)}:${String(thoughtSeconds % 60).padStart(2, '0')}` : builderMode === 'build' ? 'Preparing your build questions' : 'Seltra Core is starting the agent workflow'}</p><p className="mt-1 text-xs leading-5 text-white/50">{thoughtSeconds !== null && thoughtSeconds >= 20 ? 'The run is still active. Your next question, task list, or build update will appear here; you can stop the run from the composer.' : builderMode === 'build' ? 'Core is preparing the short questionnaire and app plan before implementation starts.' : 'Agent messages and build steps will appear here as Core sends them.'}</p></div>
+                  {sending && (Boolean(coreStartupStatus) || !activeAssistantVisible) && <section className="agent-card-in flex w-full max-w-[680px] min-w-0 items-start gap-3 rounded-2xl border border-white/[0.08] bg-[#171b19] px-4 py-4" role="status" aria-live="polite">
+                    <img src="/assets/brand/mark.png" alt="" className="seltra-build-mark mt-0.5 h-8 w-8 shrink-0 object-contain" />
+                    <div className="min-w-0 flex-1"><p className="text-sm font-medium text-white">{coreStartupStatus || (builderMode === 'build' ? 'Seltra is preparing your build' : 'Seltra is preparing a response')}</p><div className="mt-3 space-y-2" aria-hidden="true"><div className="h-2 w-4/5 animate-pulse rounded-full bg-white/[0.08]"/><div className="h-2 w-3/5 animate-pulse rounded-full bg-white/[0.06]"/></div><p className="mt-3 text-xs leading-5 text-white/55">{thoughtSeconds !== null && thoughtSeconds >= 20 ? `Still waiting — ${Math.floor(thoughtSeconds / 60)}:${String(thoughtSeconds % 60).padStart(2, '0')} elapsed. Seltra is at: ${coreStartupStatus || 'workspace connection'}. Your saved project remains available if the connection drops.` : 'Your request is saved. Seltra is connecting to the workspace and will post progress here while it works.'}</p></div>
                   </section>}
                   {!activeAssistantVisible && activeTodos.length > 0 && <CoreTodoProgress todos={activeTodos} />}
                   {(buildProgress && (buildId || buildProgress.phase === 'ready' || buildProgress.phase === 'error')) && (
@@ -2491,11 +3229,11 @@ const handleAgentAttach = async (f: File) => {
                       onRetry={retryBuild}
                     />
                   )}
-                  {(sending || buildId) && !buildProgress && !msgs.some((message) => message.role === 'assistant') && (
-                    <p className="text-[15px] text-white/80">{coreConnected ? 'Seltra Core is working on your app…' : 'Starting your Seltra Core workspace…'}</p>
-                  )}
+                  {coreBuildCompleted && (resumeProjectAvailable || coreTodos?.todos.some((todo) => todo.status !== 'completed')) && <section className="agent-card-in w-full max-w-[680px] rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.055] p-4" aria-live="polite"><div className="flex items-start gap-3"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-emerald-400/15 text-emerald-300"><CheckCircle2 className="h-4 w-4"/></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-white">{resumeProjectAvailable ? 'Build paused with work saved' : 'Build paused with work remaining'}</p><p className="mt-1 text-sm leading-5 text-white/55">{resumeProjectAvailable ? 'The run stopped before completion. Your saved work is ready to continue.' : `${coreTodos?.todos.filter((todo) => todo.status !== 'completed').length ?? 0} build steps still need attention. Continue building to finish them.`}</p><ul className="mt-3 space-y-1.5 text-xs text-white/65"><li className="flex items-center gap-2"><RefreshCw className="h-3.5 w-3.5 text-amber-300"/>Build paused; saved work preserved</li><li className="flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin text-white/45"/>Finish the remaining steps before previewing</li></ul></div></div></section>}
                 </div>
-                <div className={cn('mx-auto w-full min-w-0 max-w-[760px] px-3 pb-3 sm:px-4', !previewOpen && 'sticky bottom-0 z-20 bg-gradient-to-t from-[#1b241f] via-[#1b241f]/95 to-transparent pt-4')}>
+                {!shouldFollowStreamRef.current && hasNewActivity && <button type="button" onClick={() => { const viewport = scrollRef.current; if (viewport) viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' }); shouldFollowStreamRef.current = true; setHasNewActivity(false) }} className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-white/15 bg-[#252925] px-3.5 py-2 text-xs font-medium text-white shadow-lg hover:bg-[#303530]">↓ New activity</button>}
+                </div>
+                <div className="mx-auto w-full min-w-0 max-w-[760px] shrink-0 bg-gradient-to-t from-[#1b241f] via-[#1b241f]/95 to-transparent px-3 pb-3 pt-4 sm:px-4">
                   <ChatInput
                     input={input}
                     setInput={setInput}
@@ -2527,7 +3265,7 @@ const handleAgentAttach = async (f: File) => {
               </section>
 
               {previewOpen && (
-                <aside className={cn('min-h-0 w-full flex-col lg:flex lg:w-auto', mobileView === 'chat' ? 'hidden lg:flex' : 'flex')}>
+                <aside className={cn('h-full min-h-0 w-full flex-col lg:flex lg:w-auto', mobileView === 'chat' ? 'hidden lg:flex' : 'flex')}>
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[22px] border border-white/10 bg-[#141615]">
                     <div className="flex items-center justify-between gap-2 px-3 py-2.5">
                       <button type="button" onClick={() => setPreviewOpen(false)} className="grid h-8 w-8 place-items-center rounded-lg text-white/50 hover:bg-white/5 hover:text-white" aria-label="Close preview">
@@ -2537,34 +3275,47 @@ const handleAgentAttach = async (f: File) => {
                         <button type="button" className="grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:bg-white/10 hover:text-white disabled:opacity-30" aria-label="Reconnect Core preview" onClick={() => corePreviewUrl ? void recoverCorePreview() : setPreviewReloadKey((key) => key + 1)} disabled={!corePreviewUrl || previewRecovering}>
                           <RefreshCw className={cn('h-3.5 w-3.5', previewRecovering && 'animate-spin')} />
                         </button>
-                        <button type="button" onClick={captureCorePreview} className="grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:bg-white/10 hover:text-white disabled:opacity-30" aria-label="Annotate Core preview" disabled={!corePreviewUrl}>
+                        <button type="button" onClick={toggleCoreElementPicker} className={cn('grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:bg-white/10 hover:text-white disabled:opacity-30', coreElementPickerActive && 'bg-emerald-400/15 text-emerald-300')} aria-label="Select an element to edit" title="Select an element to edit" disabled={!corePreviewUrl}>
+                          <MousePointer2 className="h-3.5 w-3.5" />
+                        </button>
+                        <button type="button" onClick={captureCorePreview} className="grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:bg-white/10 hover:text-white disabled:opacity-30" aria-label="Annotate preview" title="Annotate preview" disabled={!corePreviewUrl}>
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
                         <button type="button" onClick={() => setCorePreviewConsoleOpen((open) => !open)} className={cn('grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:bg-white/10 hover:text-white', corePreviewConsoleOpen && 'bg-white/10 text-white')} aria-label="Toggle Core preview console" disabled={!corePreviewUrl}>
                           <MessageSquare className="h-3.5 w-3.5" />
                         </button>
-                        <button type="button" onClick={() => setPreviewDevice('mobile')} className={cn('grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:text-white', previewDevice === 'mobile' && 'bg-white/10 text-white')} aria-label="Phone preview">
+                        <button type="button" disabled={!corePreviewUrl} onClick={() => setPreviewDevice('mobile')} className={cn('grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:text-white disabled:opacity-30', previewDevice === 'mobile' && 'bg-white/10 text-white')} aria-label="Phone preview">
                           <Smartphone className="h-3.5 w-3.5" />
                         </button>
-                        <button type="button" onClick={() => setPreviewDevice('tablet')} className={cn('grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:text-white', previewDevice === 'tablet' && 'bg-white/10 text-white')} aria-label="Tablet preview">
+                        <button type="button" disabled={!corePreviewUrl} onClick={() => setPreviewDevice('tablet')} className={cn('grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:text-white disabled:opacity-30', previewDevice === 'tablet' && 'bg-white/10 text-white')} aria-label="Tablet preview">
                           <Tablet className="h-3.5 w-3.5" />
                         </button>
-                        <button type="button" onClick={() => setPreviewDevice('desktop')} className={cn('grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:text-white', previewDevice === 'desktop' && 'bg-white/10 text-white')} aria-label="Desktop preview">
+                        <button type="button" disabled={!corePreviewUrl} onClick={() => setPreviewDevice('desktop')} className={cn('grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:text-white disabled:opacity-30', previewDevice === 'desktop' && 'bg-white/10 text-white')} aria-label="Desktop preview">
                           <Monitor className="h-3.5 w-3.5" />
                         </button>
-                        {storeHref ? (
-                          <a href={storeHref} target="_blank" rel="noreferrer" className="ml-1 inline-flex items-center gap-1.5 rounded-lg bg-[#1b8a45] px-2.5 py-1.5 text-[12px] font-medium text-white">
+                        <button type="button" onClick={() => setPublishPanelOpen((open) => !open)} className={cn('ml-1 inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-300/20 bg-emerald-400/10 px-2.5 text-[12px] font-semibold text-emerald-200 hover:bg-emerald-400/20', publishPanelOpen && 'bg-emerald-400/20')} aria-label="Publish project" aria-expanded={publishPanelOpen} title="Publish project">
+                          <Globe className="h-4 w-4" strokeWidth={1.8} /> Publish
+                        </button>
+                        {corePreviewUrl ? (
+                          <a href={corePreviewDisplayUrl} target="_blank" rel="noreferrer" className="ml-1 inline-flex items-center gap-1.5 rounded-lg bg-[#1b8a45] px-2.5 py-1.5 text-[12px] font-medium text-white">
                             Open Preview
                           </a>
                         ) : (
-                          <span className="ml-1 inline-flex items-center rounded-lg bg-white/5 px-2.5 py-1.5 text-[12px] text-white/35">Open Preview</span>
+                          <span className="ml-1 inline-flex items-center rounded-lg bg-white/5 px-2.5 py-1.5 text-[12px] text-white/35" aria-disabled="true">Open Preview</span>
                         )}
                       </div>
                     </div>
                     <div className="min-h-0 flex-1">
                       {corePreviewUrl ? (
                         <div className="relative h-full min-w-0 overflow-hidden">
-                          <iframe ref={corePreviewFrameRef} key={previewReloadKey} title="Seltra Core app preview" src={corePreviewUrl} sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-orientation-lock allow-pointer-lock allow-presentation allow-downloads" className={cn('h-full border-0 bg-white transition-all', previewDevice === 'mobile' ? 'mx-auto w-[375px] max-w-full' : previewDevice === 'tablet' ? 'mx-auto w-[768px] max-w-full' : 'w-full')} allow="clipboard-read; clipboard-write; fullscreen; microphone; camera; display-capture; geolocation; autoplay; picture-in-picture" />
+                          <iframe ref={corePreviewFrameRef} key={previewReloadKey} title="Seltra app preview" src={corePreviewDisplayUrl} onLoad={() => setCorePreviewLoaded(true)} sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-orientation-lock allow-pointer-lock allow-presentation allow-downloads" className={cn('h-full border-0 bg-white transition-all duration-500', (!corePreviewLoaded || sending || (resumeProjectAvailable && Boolean(coreTodos?.todos.some((todo) => todo.status !== 'completed')))) && 'opacity-0', previewDevice === 'mobile' ? 'mx-auto w-[375px] max-w-full' : previewDevice === 'tablet' ? 'mx-auto w-[768px] max-w-full' : 'w-full')} allow="clipboard-read; clipboard-write; fullscreen; microphone; camera; display-capture; geolocation; autoplay; picture-in-picture" />
+                          {(!corePreviewLoaded || sending || (resumeProjectAvailable && Boolean(coreTodos?.todos.some((todo) => todo.status !== 'completed')))) && <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-white px-6 text-center text-slate-700 transition-opacity duration-500" role="status" aria-live="polite">
+                            <img src="/assets/brand/mark.png" alt="" className="seltra-build-mark h-16 w-16 object-contain" />
+                            <div className="space-y-1.5">
+                              <p className="text-[15px] font-medium text-slate-800">{coreQuestionnaire ? 'Waiting for your answers' : coreBlueprint ? 'Your app plan is ready' : sending ? 'Seltra is building your app…' : 'Opening your preview…'}</p>
+                              <p className="max-w-md text-sm text-slate-500">{coreQuestionnaire ? 'Answer the questions in the chat to continue.' : coreBlueprint ? 'Approve the plan in the chat to start implementation.' : activeTodos.find((todo) => todo.status === 'in_progress')?.content || 'Your live app will appear here as soon as it is ready.'}</p>
+                            </div>
+                          </div>}
                           {(previewRecovering || previewRecoveryError) && <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#141615]/95 px-6 text-center text-white backdrop-blur-sm" role={previewRecoveryError && !previewRecovering ? 'alert' : 'status'}>
                             <div className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-400/10 text-emerald-300">{previewRecovering ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}</div>
                             <p className="text-sm font-medium">{previewRecovering ? 'Reconnecting to your preview' : 'Preview needs to reconnect'}</p>
@@ -2575,11 +3326,25 @@ const handleAgentAttach = async (f: File) => {
                           {(corePreviewError || coreConnectionError) && <div role="alert" className="absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 bg-red-950/95 px-3 py-2 text-xs text-red-100"><span className="min-w-0 break-words">{corePreviewError || coreConnectionError}</span><button type="button" className="shrink-0 rounded p-1 hover:bg-white/10" aria-label="Dismiss preview error" onClick={() => { setCorePreviewError(''); setCoreConnectionError('') }}><X size={14} /></button></div>}
                           {corePreviewConsoleOpen && <section aria-label="Core preview console" className="absolute inset-x-0 bottom-0 z-10 flex h-[38%] min-h-28 flex-col border-t border-white/15 bg-[#111312]/95 text-[11px] text-white backdrop-blur"><div className="flex items-center justify-between border-b border-white/10 px-3 py-2"><span>Core preview console</span><button type="button" onClick={() => setCorePreviewConsole([])} className="text-white/55 hover:text-white">Clear</button></div><div className="min-h-0 flex-1 overflow-y-auto p-2 font-mono">{corePreviewConsole.length ? corePreviewConsole.map((entry, index) => <p key={`${entry.timestamp}-${index}`} className={cn('whitespace-pre-wrap break-words py-0.5', entry.level === 'error' ? 'text-red-300' : entry.level === 'warn' ? 'text-amber-200' : 'text-white/70')}><span className="mr-2 text-white/35">{new Date(entry.timestamp).toLocaleTimeString()}</span>{entry.message || `[${entry.level}]`}</p>) : <p className="p-2 text-white/40">No console messages yet.</p>}</div></section>}
                           {corePreviewScreenshot && <CorePreviewAnnotator screenshot={corePreviewScreenshot} onCancel={() => setCorePreviewScreenshot('')} onAttach={(file) => { setCoreFiles((current) => [...current, file]); setCorePreviewScreenshot(''); toast.success('Annotated Core preview attached to your next message.') }} />}
+                          {publishPanelOpen && <div className="absolute inset-0 z-30 flex items-start justify-end bg-slate-950/10 p-3 backdrop-blur-[1px] sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setPublishPanelOpen(false) }}>
+                            <section role="dialog" aria-modal="true" aria-label="Publish app" className="publish-panel-motion w-full max-w-[390px] origin-top-right rounded-[26px] border border-slate-200 bg-[#fbfcfb] p-5 text-slate-900 shadow-[0_24px_70px_rgba(16,24,20,.22)] sm:p-6">
+                              <div className="flex items-start justify-between gap-4">
+                                <div><div className="flex items-center gap-2"><span className={cn('h-2.5 w-2.5 rounded-full', projectIsPublished ? 'bg-emerald-500' : 'bg-slate-300')} /><p className="text-sm font-semibold">{projectIsPublished ? 'Published' : 'Ready when you are'}</p></div><p className="mt-1 text-sm text-slate-500">{projectIsPublished ? 'Your website is up to date.' : 'Your app is still in preview.'}</p></div>
+                                <button type="button" onClick={() => setPublishPanelOpen(false)} className="-mr-2 -mt-2 grid h-9 w-9 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900" aria-label="Close publish panel"><X className="h-4 w-4" /></button>
+                              </div>
+                              <div className="mt-5 rounded-2xl border border-slate-200 bg-white px-4 py-3.5"><p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">Website address</p><p className="mt-1.5 truncate text-sm font-medium text-slate-800">{publishedProjectUrl || 'A public URL will appear here'}</p></div>
+                              <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                                <div className="flex items-center justify-between gap-3"><div><p className="text-sm font-medium">Deployment</p><p className="mt-1 text-xs text-slate-500">Connect a provider to publish your app.</p></div><span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-medium text-emerald-700">Coming soon</span></div>
+                                <div className="mt-3 flex gap-2"><span className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-600">GitHub</span><span className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-600">Vercel</span></div>
+                              </div>
+                              <p className="mt-4 text-xs leading-5 text-slate-500">Publishing will be available here once deployment connections are ready. Your preview and project files remain available.</p>
+                            </section>
+                          </div>}
                         </div>
                       ) : (
-                        <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
-                          <img src="/assets/brand/mark.png" alt="" className="h-16 w-16 object-contain" />
-                          <p className="text-[15px] text-white/70">{coreConnectionError || (sending ? 'Seltra Core is building your app…' : coreConnected ? 'Your Core app preview will appear here when the app starts.' : 'Connecting to Seltra Core…')}</p>
+                        <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center" role={coreQuestionnaire ? 'status' : undefined} aria-live={coreQuestionnaire ? 'polite' : undefined}>
+                          <img src="/assets/brand/mark.png" alt="" className={cn('h-16 w-16 object-contain', sending && 'seltra-build-mark')} />
+                          <div className="space-y-1.5"><p className="text-[15px] text-white/80">{coreQuestionnaire ? 'Waiting for you — answer in the chat to continue.' : coreBlueprint ? 'Your app plan is ready for review.' : coreConnectionError || (sending ? 'Seltra is building your app…' : coreConnected ? 'Your app preview will appear here when the app starts.' : 'Connecting to Seltra …')}</p>{coreQuestionnaire && <p className="text-sm text-white/50">The preview will open as soon as it is ready.</p>}</div>
                         </div>
                       )}
                     </div>
@@ -2595,7 +3360,75 @@ const handleAgentAttach = async (f: File) => {
         )}
       </main>
       <FigmaImportDialog open={figmaDialogOpen} value={figmaUrl} onChange={setFigmaUrl} busy={figmaImporting} onClose={() => setFigmaDialogOpen(false)} onSubmit={submitFigmaImport} />
+      <ProjectLimitDialog open={projectLimitOpen} info={projectLimitInfo} onClose={() => setProjectLimitOpen(false)} onUpgrade={() => { setProjectLimitOpen(false); setTab('billing') }} />
+      <AnimatePresence>{billingPlansOpen && <BillingPlansModal plan={user?.plan ?? 'free'} credits={credits} onClose={() => setBillingPlansOpen(false)} onUpgrade={() => { setBillingPlansOpen(false); toast.message('Seltra Pro checkout will be available here soon.') }} />}</AnimatePresence>
     </DashboardFrame>
+  )
+}
+
+function BillingPlansModal({ plan, credits, onClose, onUpgrade }: {
+  plan: 'free' | 'premium'
+  credits: { used: number; limit: number; resetsAt: string } | null
+  onClose: () => void
+  onUpgrade: () => void
+}) {
+  const [period, setPeriod] = useState<'monthly' | 'yearly'>('monthly')
+  const freeFeatures = ['1 store or project', '5 AI credits daily, resetting at 12am UTC', 'Conversation agent with commerce tools', 'Edit your store through chat', 'Seltra subdomain (shop.seltra.co)', '“Powered by Seltra” badge', 'Customer and store data opted in to internal model training', '2% per transaction']
+  const proFeatures = ['3 stores or projects', 'Capped shared AI credits sized for all your projects', 'Pro Design Intelligence: chat, component edits, and annotator', 'Custom domain search with managed purchase and store setup', 'Conversation agents with commerce tools', 'Advanced SEO and AEO for search and AI recommendations', 'Tier 2 support with priority', 'Remove the Seltra badge', 'Opt out of internal model training at any time']
+  const creditUsage = credits ? Math.min(100, Math.round((credits.used / Math.max(credits.limit, 1)) * 100)) : 0
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/35 p-0 backdrop-blur-[3px] sm:items-center sm:p-5" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <motion.section initial={{ opacity: 0, y: 26, scale: 0.985 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.99 }} transition={{ type: 'spring', stiffness: 300, damping: 28 }} role="dialog" aria-modal="true" aria-labelledby="billing-plans-title" className="relative flex max-h-[94dvh] w-full max-w-[1180px] flex-col overflow-hidden rounded-t-[28px] border border-slate-200 bg-[#fbfcfb] text-slate-950 shadow-[0_32px_100px_rgba(0,0,0,.24)] sm:rounded-[28px]">
+        <header className="shrink-0 border-b border-slate-200/80 px-5 pb-4 pt-3 sm:px-8 sm:pb-5 sm:pt-4">
+          <div className="mx-auto mb-4 h-1.5 w-16 rounded-full bg-slate-300 sm:hidden" />
+          <div className="flex items-start justify-between gap-4"><div><div className="flex items-center gap-2"><img src="/assets/brand/mark.png" alt="" className="h-6 w-6 object-contain"/><span className="text-[11px] font-semibold tracking-[0.16em] text-emerald-800">SELTRA / PLANS</span></div><h2 id="billing-plans-title" className="mt-2 text-[22px] font-semibold tracking-[-0.03em] sm:text-[26px]">Plan &amp; usage</h2><p className="mt-1 text-sm text-slate-500">Manage your subscription and choose what works for your business.</p></div><button type="button" onClick={onClose} aria-label="Close plan and usage" className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"><X className="h-4 w-4" /></button></div>
+          <div className="mt-4 flex justify-center"><div className="inline-flex items-center rounded-full border border-slate-200 bg-white p-1 shadow-sm" aria-label="Billing period"><button type="button" onClick={() => setPeriod('monthly')} aria-pressed={period === 'monthly'} className={cn('rounded-full px-4 py-2 text-sm font-medium transition', period === 'monthly' ? 'bg-slate-100 text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800')}>Monthly</button><button type="button" onClick={() => setPeriod('yearly')} aria-pressed={period === 'yearly'} className={cn('rounded-full px-4 py-2 text-sm font-medium transition', period === 'yearly' ? 'bg-slate-100 text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800')}>Yearly <span className="ml-1 text-emerald-700">Save 20%</span></button></div></div>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-7"><div className="mx-auto grid max-w-[1040px] items-stretch gap-4 lg:grid-cols-2 lg:gap-6">
+          <article className="flex flex-col rounded-[22px] border border-slate-200 bg-white p-5 shadow-[0_8px_24px_rgba(15,23,42,.045)] sm:p-6"><div className="flex items-start justify-between gap-3"><div><p className="text-[11px] font-semibold tracking-[0.16em] text-slate-500">FREE</p><h3 className="mt-2 text-xl font-semibold">Start building</h3><p className="mt-1 text-sm leading-5 text-slate-500">For your first store or project.</p></div>{plan === 'free' && <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">Current plan</span>}</div><p className="mt-5 text-[34px] font-semibold tracking-[-0.05em]">$0<span className="ml-1 text-sm font-normal tracking-normal text-slate-500">/ month</span></p>{credits && plan === 'free' && <div className="mt-1"><div className="flex justify-between text-xs text-slate-500"><span>AI credit usage</span><span>{credits.used.toLocaleString()} / {credits.limit.toLocaleString()}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${creditUsage}%` }}/></div></div>}<div className="mt-4 space-y-2.5 border-t border-slate-100 pt-4 text-[13px] leading-5 text-slate-700">{freeFeatures.map((item) => <p key={item} className="flex gap-2.5"><CheckCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700"/><span>{item}</span></p>)}</div><div className="mt-auto pt-5"><div className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-center text-sm font-medium text-slate-500">{plan === 'free' ? 'You’re on Free' : 'Free plan'}</div></div></article>
+          <article className="relative flex flex-col overflow-hidden rounded-[22px] border border-emerald-700/35 bg-white p-5 pt-0 shadow-[0_12px_34px_rgba(16,185,129,.12)] sm:p-6 sm:pt-0"><div className="-mx-5 mb-5 flex h-14 items-center justify-center rounded-t-[22px] bg-gradient-to-r from-emerald-800 via-emerald-600 to-teal-700 shadow-[inset_0_-1px_0_rgba(255,255,255,.2)] sm:-mx-6"><span className="text-xs font-bold uppercase tracking-[0.24em] text-white drop-shadow-sm">Most Popular</span></div><div className="flex items-start justify-between gap-3"><div><p className="text-[11px] font-semibold tracking-[0.16em] text-emerald-800">SELTRA PRO</p><h3 className="mt-2 text-xl font-semibold">For ambitious brands</h3><p className="mt-1 text-sm leading-5 text-slate-500">More reach, control, and room to grow.</p></div></div><p className="mt-5 text-[34px] font-semibold tracking-[-0.05em]">{period === 'monthly' ? '$15' : '$144'}<span className="ml-1 text-sm font-normal tracking-normal text-slate-500">/ {period === 'monthly' ? 'month' : 'year'}</span></p><p className="-mt-1 text-xs text-slate-500">{period === 'yearly' ? 'Billed annually · 20% savings' : 'Billed monthly'}</p><div className="mt-4 space-y-2.5 border-t border-slate-100 pt-4 text-[13px] leading-5 text-slate-700">{proFeatures.map((item) => <p key={item} className="flex gap-2.5"><CheckCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700"/><span>{item}</span></p>)}</div><div className="mt-auto pt-5"><button type="button" onClick={onUpgrade} disabled={plan === 'premium'} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3.5 text-sm font-semibold text-white shadow-sm shadow-emerald-900/10 transition-colors hover:bg-emerald-700 active:bg-emerald-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/30 disabled:cursor-default disabled:bg-emerald-100 disabled:text-emerald-800 disabled:shadow-none disabled:hover:bg-emerald-100">{plan === 'premium' ? 'Current plan' : 'Upgrade'}{plan !== 'premium' && <ArrowRight className="h-4 w-4"/>}</button>{plan !== 'premium' && <p className="mt-2 text-center text-xs text-slate-500">Checkout will open here when billing is connected.</p>}</div></article>
+        </div></div>
+      </motion.section>
+    </motion.div>
+  )
+}
+
+function ProjectLimitDialog({ open, info, onClose, onUpgrade }: {
+  open: boolean
+  info: { currentStoreCount?: number; maxStores?: number; plan?: 'free' | 'premium' }
+  onClose: () => void
+  onUpgrade: () => void
+}) {
+  if (!open) return null
+  const max = info.maxStores ?? (info.plan === 'premium' ? 3 : 1)
+  const isFree = info.plan !== 'premium'
+  const used = info.currentStoreCount ?? max
+  return (
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/65 px-3 py-4 backdrop-blur-sm sm:px-6 sm:py-8" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <section role="dialog" aria-modal="true" aria-labelledby="project-cap-title" className="grid max-h-[min(720px,calc(100dvh-2rem))] w-full max-w-[980px] overflow-hidden rounded-[30px] border border-white/50 bg-[#f8faf8] text-slate-950 shadow-[0_32px_100px_rgba(0,0,0,.42)] md:grid-cols-[0.92fr_1.08fr]">
+        <div className="relative min-h-[220px] overflow-hidden bg-[#071b19] md:min-h-[590px]">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_48%_43%,rgba(53,224,173,.26),transparent_40%),radial-gradient(ellipse_at_15%_80%,rgba(39,129,111,.28),transparent_48%),linear-gradient(155deg,#071a1b_0%,#0a2927_53%,#10261e_100%)]" />
+          <svg aria-hidden="true" viewBox="0 0 620 760" preserveAspectRatio="xMidYMid slice" className="absolute inset-0 h-full w-full opacity-95">
+            <defs><radialGradient id="project-limit-core" cx="50%" cy="50%" r="50%"><stop offset="0" stopColor="#e6fff7" stopOpacity=".96"/><stop offset=".14" stopColor="#70f2c8" stopOpacity=".88"/><stop offset=".4" stopColor="#24bf91" stopOpacity=".24"/><stop offset="1" stopColor="#24bf91" stopOpacity="0"/></radialGradient><linearGradient id="project-limit-orbit" x1="0" x2="1" y1="0" y2="1"><stop stopColor="#c7fff1" stopOpacity=".8"/><stop offset=".55" stopColor="#46d9ad" stopOpacity=".13"/><stop offset="1" stopColor="#d7fff4" stopOpacity=".64"/></linearGradient><filter id="project-limit-glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="12" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+            <g fill="none" stroke="url(#project-limit-orbit)" strokeWidth="1.2"><ellipse cx="310" cy="340" rx="218" ry="92" transform="rotate(-26 310 340)" opacity=".66"/><ellipse cx="310" cy="340" rx="188" ry="136" transform="rotate(43 310 340)" opacity=".44"/><ellipse cx="310" cy="340" rx="246" ry="174" transform="rotate(-67 310 340)" opacity=".28"/><path d="M47 505 166 424l79 34 71-166 105 35 125-134M78 214l117 71 81-51 99 76 128-32" opacity=".38"/></g>
+            <g fill="#8df6d4" opacity=".8"><circle cx="166" cy="424" r="3"/><circle cx="245" cy="458" r="3"/><circle cx="316" cy="292" r="3.5"/><circle cx="421" cy="327" r="3"/><circle cx="546" cy="193" r="3"/><circle cx="195" cy="285" r="2.5"/><circle cx="375" cy="310" r="2.5"/><circle cx="503" cy="310" r="2.5"/></g>
+            <circle cx="310" cy="340" r="142" fill="url(#project-limit-core)" filter="url(#project-limit-glow)"/><g transform="translate(310 340)" filter="url(#project-limit-glow)"><circle r="58" fill="#0c2823" fillOpacity=".84" stroke="#95f8d9" strokeOpacity=".9" strokeWidth="1.5"/><path d="M-20-15h40v30h-40zM-42-8h22v16h-22zM20-8h22v16h-22zM-8-37h16v22H-8zM-8 15h16v22H-8z" fill="#36d6a5"/><path d="M-8-15 8-30v30L-8 15z" fill="#a0f7dc" fillOpacity=".85"/></g>
+            <g fill="#d9fff3" opacity=".7"><circle cx="102" cy="154" r="1.5"/><circle cx="500" cy="486" r="1.7"/><circle cx="131" cy="597" r="1.3"/><circle cx="456" cy="113" r="1.4"/><circle cx="356" cy="593" r="1.2"/><circle cx="557" cy="590" r="1.3"/></g>
+          </svg>
+          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#061412]/95 via-[#061412]/65 to-transparent px-6 pb-6 pt-24 sm:px-8 sm:pb-8"><div className="mb-3 flex items-center gap-2"><img src="/assets/brand/mark.png" alt="" className="h-6 w-6 object-contain"/><span className="text-[10px] font-semibold tracking-[0.2em] text-emerald-100/80">SELTRA / PRO</span></div><p className="max-w-sm text-2xl font-semibold leading-tight tracking-[-0.035em] text-white sm:text-[30px]">Build what you imagine. Keep growing.</p><p className="mt-2 max-w-sm text-sm leading-6 text-emerald-50/65">More room for your ideas, your projects, and what comes next.</p></div>
+        </div>
+        <div className="relative flex min-h-0 flex-col overflow-y-auto px-6 py-6 sm:px-9 sm:py-8">
+          <button type="button" onClick={onClose} aria-label="Close project limit dialog" className="absolute right-5 top-5 grid h-9 w-9 place-items-center rounded-full text-slate-500 transition hover:bg-slate-200/70 hover:text-slate-900"><X className="h-4 w-4" /></button>
+          <p className="text-[11px] font-semibold tracking-[0.17em] text-emerald-700">{isFree ? 'SELTRA PRO' : 'YOUR WORKSPACE'}</p>
+          <h2 id="project-cap-title" className="mt-4 max-w-md pr-8 text-[28px] font-semibold leading-[1.08] tracking-[-0.04em] sm:text-[36px]">{isFree ? 'Make room for your next big idea.' : 'Your workspace is full for now.'}</h2>
+          <p className="mt-3 max-w-md text-sm leading-6 text-slate-600">{isFree ? 'Your free project is ready to grow. Move to Pro for more space, shared credits, and tools to keep building.' : `Your Pro plan includes ${max} projects. You can keep editing the projects you already have.`}</p>
+          <div className="mt-7 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5"><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">Your plan</p><p className="mt-2 text-base font-semibold">{isFree ? 'Free' : 'Pro'}</p></div><div className="text-right"><p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">Projects used</p><p className="mt-2 text-base font-semibold tabular-nums">{used} / {max}</p></div></div><div className="mt-4 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, used / max * 100)}%` }}/></div></div>
+          <ul className="mt-6 space-y-3.5 text-sm text-slate-700">{['Create up to 3 projects', 'One shared credit balance across projects', 'Custom domains and growing business tools'].map((item) => <li key={item} className="flex items-start gap-3"><span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md bg-emerald-100 text-emerald-800"><CheckCheck className="h-3.5 w-3.5"/></span><span>{item}</span></li>)}</ul>
+          {isFree && <div className="mt-auto pt-8"><button type="button" onClick={onUpgrade} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-emerald-700">Upgrade <ArrowRight className="h-4 w-4" /></button></div>}
+        </div>
+      </section>
+    </div>
   )
 }
 
@@ -2652,7 +3485,7 @@ function NotificationBell({ activeStore, tone = 'dark' }: { activeStore: StoreDa
     let cancelled = false
     let loading = false
     const load = async () => {
-      if (cancelled || loading || document.visibilityState !== 'visible') return
+      if (cancelled || loading || !tenantId || !getToken() || document.visibilityState !== 'visible') return
       loading = true
       try {
         const path = `/api/v5/notifications${tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : ''}`
@@ -2801,9 +3634,9 @@ function DashboardFrame({
   return (
     <div className="dash-app flex h-dvh overflow-hidden">
       <SidebarDesktop {...sidebarProps} />
-      {/* Lovable: right column owns vertical scroll; thin scrollbar on the window’s far right */}
-      <div className="dash-scroll relative min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
-        <div className="relative flex min-h-full w-full flex-col p-2 pl-2">
+      {/* Keep the workbench fixed; other dashboard views scroll in this column. */}
+      <div className={cn('dash-scroll relative h-full min-h-0 min-w-0 flex-1 overflow-x-hidden', chatSkeleton ? 'overflow-hidden' : 'overflow-y-auto')}>
+        <div className={cn('relative flex w-full flex-col p-2 pl-2', chatSkeleton ? 'h-full min-h-0 overflow-hidden' : 'min-h-full')}>
           {children}
           {disconnected && (chatSkeleton ? <ConnectionCanvas /> : <div className="absolute inset-2 z-30 rounded-[28px] bg-[#141615]/80" />)}
         </div>
@@ -2828,12 +3661,14 @@ function DashboardFrame({
 
 // ── Sidebar (desktop) ──────────────────────────────────────────────────────────
 function SidebarDesktop({
-  user, tab, setTab, onSignOut, onNewStore, open, onToggle,
+  user, credits, onUpgrade, tab, setTab, onSignOut, onNewStore, open, onToggle,
   conversations, activeConversationId, onLoadConversation, onDeleteConversation,
 }: SidebarSharedProps) {
   const [profileOpen, setProfileOpen] = useState(false)
   const [workspaceOpen, setWorkspaceOpen] = useState(true)
   const [historyOpen, setHistoryOpen] = useState(true)
+  const creditBalance = credits?.balance ?? Math.max(0, (credits?.limit ?? 0) - (credits?.used ?? 0))
+  const creditsLow = Boolean(credits && creditBalance <= credits.limit * 0.2)
   const profileItems = [
     { id: 'account', label: 'Account', icon: UserCircle },
     { id: 'billing', label: 'Billing', icon: CreditCard },
@@ -2925,6 +3760,22 @@ function SidebarDesktop({
         )}
       </div>
 
+      <div
+        className={cn(
+          'mx-2.5 overflow-hidden transition-[max-height,opacity,transform,margin] duration-500 ease-out motion-reduce:transition-none',
+          creditsLow ? 'mb-2.5 max-h-28 translate-y-0 opacity-100' : 'mb-0 max-h-0 translate-y-3 opacity-0 pointer-events-none',
+        )}
+        aria-hidden={!creditsLow}
+      >
+        <div className="rounded-xl border border-emerald-400/25 bg-[#07150e]/95 p-3 shadow-[0_0_16px_rgba(16,185,129,0.12)] transition-all duration-300 hover:border-emerald-300/55 hover:shadow-[0_0_28px_rgba(16,185,129,0.3)]">
+          <div className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="text-white/60">Seltra credits</span>
+            <span className="font-medium text-white/90">{credits ? `${creditBalance.toLocaleString()} left` : 'Loading…'}</span>
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-gradient-to-r from-emerald-500 to-teal-300 transition-[width] duration-500" style={{ width: `${credits ? Math.max(0, Math.min(100, (creditBalance / Math.max(credits.limit, 1)) * 100)) : 0}%` }} /></div>
+          <div className="mt-1.5 flex items-center justify-between gap-2"><span className="text-[10px] text-emerald-100/65">{credits && creditBalance === 0 ? 'Daily credits used · resets midnight UTC' : 'Credits reset at midnight UTC'}</span><button type="button" tabIndex={creditsLow ? 0 : -1} onClick={onUpgrade} className="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-emerald-200 transition-colors hover:bg-emerald-300/10 hover:text-white">{user?.plan === 'premium' ? 'Manage Pro' : 'Upgrade to Pro'}</button></div>
+        </div>
+      </div>
       {profileOpen && user && (
         <div className="fixed bottom-[64px] left-2 z-50 w-[200px] overflow-hidden rounded-2xl border border-white/10 bg-[#262826] shadow-2xl">
           <div className="border-b border-white/10 px-4 py-3">
@@ -3105,27 +3956,82 @@ function MobileSidebarDrawer({
 
 // ── Empty state ────────────────────────────────────────────────────────────────
 function storeCover(store: StoreData) {
+  const visuals = store.dashboardApp?.blueprint?.visuals
+  const visualImage = Array.isArray(visuals)
+    ? visuals.map((visual) => visual && typeof visual === 'object' ? (visual as { url?: unknown }).url : null).find((url): url is string => typeof url === 'string' && Boolean(imageUrl(url)))
+    : undefined
   const productImage = store.products?.flatMap((product) => product.images ?? []).find((image) => imageUrl(image?.url))?.url
-  return imageUrl(store.canonical?.heroImageUrl) || imageUrl(productImage) || imageUrl(store.heroSource) || imageUrl(store.canonical?.logoUrl)
+  return imageUrl(visualImage) || imageUrl(store.canonical?.heroImageUrl) || imageUrl(productImage) || imageUrl(store.heroSource) || imageUrl(store.canonical?.logoUrl)
 }
 
 function storeStatusLabel(store: StoreData) {
-  const status = (store.status ?? 'active').toLowerCase()
-  if (status === 'active') return 'Published'
-  if (status === 'draft') return 'Draft'
-  return status.charAt(0).toUpperCase() + status.slice(1)
+  if (store.dashboardApp) {
+    const app = store.dashboardApp
+    if (app.publishedUrl || ['published', 'deployed'].includes(app.status.toLowerCase())) return 'Published'
+    if (['building', 'pending', 'failed'].includes(app.status.toLowerCase())) return 'Pending'
+    if (app.version > 0 || Boolean(app.previewUrl)) return 'Draft'
+    return 'Pending'
+  }
+  if (store.storeUrl) return 'Published'
+  if (store.storefrontCode || store.manifest) return 'Draft'
+  return 'Pending'
+}
+
+function ProjectCardPreview({ store, cover }: { store: StoreData; cover: string }) {
+  const [previewReady, setPreviewReady] = useState(false)
+  const blueprint = store.dashboardApp?.blueprint
+  const primaryColor = typeof blueprint?.primaryColor === 'string' && /^#[\da-f]{3,8}$/i.test(blueprint.primaryColor)
+    ? blueprint.primaryColor
+    : '#27b47e'
+  const projectPrompt = typeof blueprint?.userPrompt === 'string' ? blueprint.userPrompt.trim() : ''
+  const direction = typeof blueprint?.designDirection === 'string' ? blueprint.designDirection.trim() : ''
+  const summary = projectPrompt || direction || `A first look at ${store.name}.`
+
+  return (
+    <div className="absolute inset-0 overflow-hidden bg-[#101916]">
+      {cover ? (
+        <img src={cover} alt="" className="absolute inset-0 h-full w-full object-cover" />
+      ) : (
+        <div className="absolute inset-0 p-4" style={{ background: `linear-gradient(145deg, ${primaryColor}55, #101916 68%)` }}>
+          <div className="flex items-center justify-between border-b border-white/20 pb-2 text-[9px] font-semibold text-white/90">
+            <span className="max-w-[65%] truncate">{store.name}</span>
+            <span className="flex gap-2 text-white/55"><i className="h-1 w-5 rounded bg-white/50"/><i className="h-1 w-5 rounded bg-white/35"/><i className="h-1 w-5 rounded bg-white/25"/></span>
+          </div>
+          <div className="flex h-[calc(100%-22px)] flex-col justify-center">
+            <span className="mb-1 text-[8px] font-semibold uppercase tracking-[0.22em]" style={{ color: primaryColor }}>{direction || 'Project preview'}</span>
+            <span className="line-clamp-2 text-xl font-semibold leading-tight text-white">{store.name}</span>
+            <span className="mt-1 line-clamp-2 max-w-[90%] text-[9px] leading-relaxed text-white/65">{summary}</span>
+            <span className="mt-2 h-5 w-16 rounded-md" style={{ backgroundColor: primaryColor }} />
+          </div>
+        </div>
+      )}
+      {store.dashboardApp?.previewUrl && (
+        <iframe
+          src={store.dashboardApp.previewUrl}
+          title={`${store.name} project preview`}
+          sandbox="allow-scripts"
+          tabIndex={-1}
+          aria-hidden="true"
+          onLoad={() => setPreviewReady(true)}
+          onError={() => setPreviewReady(false)}
+          className={`pointer-events-none absolute left-0 top-0 h-[400%] w-[400%] origin-top-left border-0 transition-opacity ${previewReady ? 'opacity-100' : 'opacity-0'}`}
+          style={{ transform: 'scale(0.25)' }}
+        />
+      )}
+      {cover && store.dashboardApp?.previewUrl && !previewReady && <div className="absolute inset-0 bg-black/20" />}
+    </div>
+  )
 }
 
 function EmptyState({
-  input, setInput, send, sending, name, merchantProfile, recentActivity, hasHistory, onAttach, pendingAttachment, onClearAttachment, coreFiles = [], onRemoveCoreFile,
+  input, setInput, send, sending, name, userId, merchantProfile, onAttach, pendingAttachment, onClearAttachment, coreFiles = [], onRemoveCoreFile,
   builderMode = 'build', onBuilderModeChange, onOpenCoreComposer,
   stores, sidebarOpen, onToggleSidebar, onMenu, onUpgrade, showUpgrade, activeStore, onOpenStore, onSeeAllStores,
   announcementVisible, onDismissAnnouncement,
 }: {
   input: string; setInput: (v: string) => void; send: () => void
+  userId: string
   merchantProfile?: { businessType?: string; businessName?: string; storeName?: string; whatYouSell?: string; basedIn?: string } | null
-  recentActivity?: string
-  hasHistory?: boolean
   sending: boolean; name: string; onAttach: (f: File) => void
   pendingAttachment?: PendingAttachment | null; onClearAttachment?: () => void
   coreFiles?: File[]; onRemoveCoreFile?: (name: string) => void
@@ -3143,8 +4049,6 @@ function EmptyState({
   announcementVisible?: boolean
   onDismissAnnouncement?: () => void
 }) {
-  const [hasMounted, setHasMounted] = useState(false)
-  useEffect(() => setHasMounted(true), [])
   const [library, setLibrary] = useState<'recents' | 'stores'>('recents')
   const [query, setQuery] = useState('')
   const [recentIds, setRecentIds] = useState<string[]>([])
@@ -3166,12 +4070,10 @@ function EmptyState({
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const modeButtonRef = useRef<HTMLButtonElement>(null)
   const attachmentsButtonRef = useRef<HTMLButtonElement>(null)
-  const suggestionsSectionRef = useRef<HTMLDivElement>(null)
   const modeMenuMeasureRef = useRef<HTMLDivElement>(null)
   const attachmentsMenuMeasureRef = useRef<HTMLDivElement>(null)
   const [portalReady, setPortalReady] = useState(false)
   const [composerMenuPosition, setComposerMenuPosition] = useState<{ top: number; left: number; maxHeight: number } | null>(null)
-  const [suggestionOffset, setSuggestionOffset] = useState(0)
   useEffect(() => { setPortalReady(true) }, [])
   useEffect(() => {
     if (!composerMenu) { setComposerMenuPosition(null); return }
@@ -3180,11 +4082,22 @@ function EmptyState({
       if (!button) return
       const rect = button.getBoundingClientRect()
       const menuWidth = composerMenu === 'attachments' ? 240 : 256
-      // Keep the menu below its trigger and inside the current device viewport.
-      const top = Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 120))
-      const maxHeight = Math.max(72, Math.min(260, window.innerHeight - top - 8))
-      const preferredLeft = composerMenu === 'attachments' ? rect.left : rect.right - menuWidth
-      const left = Math.max(8, Math.min(preferredLeft, window.innerWidth - menuWidth - 8))
+      const desiredHeight = composerMenu === 'attachments' ? 156 : 220
+      const availableAbove = rect.top - 16
+      const availableBelow = window.innerHeight - rect.bottom - 16
+      const opensAbove = availableBelow < desiredHeight && availableAbove > availableBelow
+      const availableHeight = Math.max(0, opensAbove ? availableAbove : availableBelow)
+      const maxHeight = Math.min(260, desiredHeight, availableHeight)
+      const preferredTop = opensAbove ? rect.top - maxHeight - 8 : rect.bottom + 8
+      const top = Math.max(8, Math.min(preferredTop, Math.max(8, window.innerHeight - maxHeight - 8)))
+      const fittedWidth = Math.min(menuWidth, window.innerWidth - 16)
+      const composerRect = button.closest('[data-tour="main-composer"]')?.getBoundingClientRect()
+      const preferredLeft = composerMenu === 'attachments'
+        ? rect.left
+        : window.innerWidth < 640 && composerRect
+          ? composerRect.right - fittedWidth - 8
+          : rect.right - fittedWidth
+      const left = Math.max(8, Math.min(preferredLeft, window.innerWidth - fittedWidth - 8))
       setComposerMenuPosition({ top, left, maxHeight })
     }
     updatePosition()
@@ -3195,30 +4108,13 @@ function EmptyState({
       window.removeEventListener('scroll', updatePosition, true)
     }
   }, [composerMenu])
-  useLayoutEffect(() => {
-    if (!portalReady) return
-    const reserveMenuSpace = () => {
-      const trigger = window.innerWidth >= 640 ? modeButtonRef.current : attachmentsButtonRef.current
-      const section = suggestionsSectionRef.current
-      const menu = window.innerWidth >= 640 ? modeMenuMeasureRef.current : attachmentsMenuMeasureRef.current
-      if (!trigger || !section || !menu) return
-      const triggerRect = trigger.getBoundingClientRect()
-      const sectionBaseTop = section.getBoundingClientRect().top - suggestionOffset
-      const menuTop = Math.max(8, Math.min(triggerRect.bottom + 8, window.innerHeight - 120))
-      const availableHeight = Math.max(72, window.innerHeight - menuTop - 8)
-      const menuHeight = Math.min(menu.getBoundingClientRect().height, availableHeight)
-      const currentClearance = sectionBaseTop - triggerRect.bottom
-      const fixedGap = 20
-      const needed = Math.max(0, menuHeight + 8 + fixedGap - currentClearance)
-      setSuggestionOffset((current) => Math.abs(current - needed) > 1 ? needed : current)
-    }
-    reserveMenuSpace()
-    window.addEventListener('resize', reserveMenuSpace)
-    return () => window.removeEventListener('resize', reserveMenuSpace)
-  }, [portalReady, suggestionOffset])
-  const firstName = name?.split(' ')[0] || ''
-  const [localHour, setLocalHour] = useState<number | null>(null)
-  useEffect(() => { setLocalHour(new Date().getHours()) }, [])
+  const firstName = name?.trim().split(/\s+/)[0] || ''
+  const [greetingContext, setGreetingContext] = useState<{ hour: number; seed: string } | null>(null)
+  useEffect(() => {
+    const now = new Date()
+    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    setGreetingContext({ hour: now.getHours(), seed: `${userId || 'guest'}:${localDate}` })
+  }, [userId])
   useEffect(() => { setRecentIds(readRecentStoreIds()) }, [stores])
   useEffect(() => {
     const el = composerRef.current
@@ -3226,7 +4122,15 @@ function EmptyState({
     el.style.height = '22px'
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 22), 160)}px`
   }, [input])
-  const filtered = stores.filter((store) => store.name.toLowerCase().includes(query.trim().toLowerCase()))
+  const projectCards = stores.flatMap((store) => store.apps?.length
+    ? store.apps.map((app) => {
+        const blueprintName = typeof app.blueprint?.appName === 'string' ? app.blueprint.appName.trim() : ''
+        const appName = app.name.trim()
+        const name = (!appName || /^seltra app$|^app \d+$/i.test(appName)) && blueprintName ? blueprintName : appName || store.name
+        return { ...store, name, updatedAt: app.updatedAt, dashboardApp: app }
+      })
+    : [store])
+  const filtered = projectCards.filter((store) => store.name.toLowerCase().includes(query.trim().toLowerCase()))
   const viewed = recentIds
     .map((id) => filtered.find((store) => store.id === id || store.slug === id))
     .filter((store): store is StoreData => Boolean(store))
@@ -3332,25 +4236,17 @@ function EmptyState({
     `Design a homepage and product pages that make ${businessName} stand out${location}.`,
     `Set up checkout, delivery details, and a welcome message for ${businessName}.`,
   ]
-  const timeGreeting = localHour === null ? null : localHour < 12 ? 'Good morning' : localHour < 18 ? 'Good afternoon' : 'Good evening'
-  const recentTitle = usableProfileValue(recentActivity)
-  const projectTitle = recentTitle && !/^new chat$/i.test(recentTitle) ? recentTitle.slice(0, 34) : null
-  const greeting = !hasMounted
-    ? "What is your vision?"
-    : projectTitle
-      ? "Back to " + projectTitle + "?"
-      : activeStore
-        ? "What is next for " + businessName + "?"
-        : stores.length === 0 && !hasHistory
-          ? timeGreeting ? timeGreeting + ", " + (firstName || "there") : firstName ? "What is your vision, " + firstName + "?" : "What is your vision?"
-          : firstName ? "What is the work for today, " + firstName + "?" : "What is the work for today?"
+  const hasProjects = stores.length > 0 || Boolean(activeStore)
+  const greeting = greetingContext
+    ? getGreeting({ firstName, hasProjects, hour: greetingContext.hour, seed: greetingContext.seed })
+    : firstName ? `Welcome, ${firstName}.` : 'Welcome.'
 
   return (
     <div className="relative flex w-full flex-col">
       <Aurora tone="hero" />
 
       {/* Block 1 — hero: fills viewport minus ~85px peek for the dark panel */}
-      <section className="relative z-10 flex w-full min-h-[calc(100dvh-1rem-77px)] flex-col items-center">
+      <section className="relative z-10 flex w-full min-h-0 flex-col items-center pb-6 sm:min-h-[calc(100dvh-1rem-77px)] sm:pb-0">
         <div className="absolute inset-x-0 top-0 z-40 grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 pt-5 sm:px-7 sm:pt-6 lg:px-8">
           <div className="flex items-center gap-2">
             <button type="button" onClick={onMenu} className="grid h-10 w-10 place-items-center rounded-xl bg-[#1c1e1d] text-white lg:hidden" aria-label="Open menu">
@@ -3389,8 +4285,10 @@ function EmptyState({
           <div className="flex w-full max-w-[640px] flex-col items-center">
             <div className="flex w-full items-center justify-center gap-2.5 sm:gap-3">
               <img src="/assets/brand/mark.png" alt="" className="h-7 w-7 flex-shrink-0 object-contain sm:h-8 sm:w-8" />
-              <h1 className="min-w-0 max-w-[calc(100%-2.5rem)] text-balance text-center text-[1.5rem] font-semibold leading-tight tracking-[-0.03em] text-neutral-950 sm:text-[1.75rem] lg:text-[2rem]">
-                {greeting}
+              <h1 className="flex min-h-8 min-w-0 flex-1 items-center justify-center overflow-hidden whitespace-nowrap text-center text-[clamp(0.8rem,3.6vw,1.375rem)] font-semibold leading-tight tracking-[-0.03em] text-neutral-950 sm:min-h-9 sm:text-[1.75rem] lg:text-[2rem]">
+                <span key={greeting} className={greetingContext ? 'greeting-fade-in block max-w-full truncate' : 'block max-w-full truncate'}>
+                  {greeting}
+                </span>
               </h1>
             </div>
 
@@ -3399,13 +4297,14 @@ function EmptyState({
                 {pendingAttachment && <div className="relative z-10 mb-3"><PendingImageChip attachment={pendingAttachment} onRemove={onClearAttachment} /></div>}
                 {coreFiles.length > 0 && <div className="relative z-10 mb-3 flex w-full flex-wrap gap-2">{coreFiles.map((file, index) => <CoreAttachmentChip key={`${file.name}-${index}`} file={file} onRemove={() => onRemoveCoreFile?.(file.name)} />)}</div>}
                 {!recording && <div className="relative z-10 w-full">
+                  {!input && !hasProjects && <TypewriterPlaceholder prompts={NEW_USER_PLACEHOLDERS} typingSpeed={35} deleteSpeed={18} pauseDuration={1600} active className="pointer-events-none absolute inset-x-0 top-0 z-0 text-[15px] leading-[22px] text-neutral-400" />}
                   <textarea
                     ref={composerRef}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
                     rows={1}
-                    placeholder="Ask Seltra to build a store..."
+                    placeholder={hasProjects ? 'Ask Seltra to build or update a store…' : ''}
                     aria-label="Describe the store you want to build"
                     className={cn(
                       'composer-textarea composer-textarea-light relative z-10 m-0 block w-full resize-none overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent p-0 text-[15px] leading-[22px] text-neutral-900 shadow-none outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0',
@@ -3417,18 +4316,18 @@ function EmptyState({
                   <button type="button" onClick={cancelVoice} aria-label="Cancel voice recording" title="Discard recording" className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-neutral-500 hover:bg-neutral-100"><X size={19} /></button>
                   <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><Mic size={15} className={voicePaused ? 'text-neutral-400' : 'text-red-500'} /><span className="text-xs font-medium text-neutral-500">{voicePaused ? 'Recording paused' : 'Listening'}</span><div className="ml-auto flex h-6 min-w-0 flex-1 items-center justify-end gap-[2px] overflow-hidden pl-3" aria-label="Live microphone waveform" role="img">{waveformLevels.map((level,index) => <span key={index} className="w-[3px] shrink-0 rounded-full bg-emerald-600/80 transition-[height] duration-75" style={{height:`${Math.max(2, Math.round(level * (voicePaused ? 12 : 22)))}px`}} />)}</div></div><p className="mt-1 min-h-5 break-words text-sm text-neutral-800" aria-live="polite">{voicePaused ? ([voiceTranscript, voiceInterim].filter(Boolean).join(' ') || 'Pause here, then continue when ready.') : 'Transcribing...'}</p></div>
                   <button type="button" onClick={voicePaused ? resumeVoice : pauseVoice} aria-label={voicePaused ? 'Continue recording' : 'Pause recording'} className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-neutral-500 hover:bg-neutral-100">{voicePaused ? <ArrowRight size={18} /> : <span className="h-3.5 w-3.5 rounded-sm bg-current" />}</button><button type="button" onClick={sendVoice} aria-label="Use voice transcript" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-500 text-white"><Send size={18} /></button>
-                </div> : <div className="relative z-10 mt-3 flex h-8 shrink-0 items-center justify-between">
-                  <div className="relative"><button ref={attachmentsButtonRef} type="button" data-tour="attachments" onClick={() => setComposerMenu((current) => current === 'attachments' ? null : 'attachments')} className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-[rgba(0,0,0,0.08)] bg-white text-neutral-400 transition-colors hover:border-black/15 hover:text-neutral-700" title="Attachments and imports" aria-label="Attachments and imports" aria-expanded={composerMenu === 'attachments'}>
-                    <Plus className="h-4 w-4" strokeWidth={2} />
-                  </button>{portalReady && typeof document !== 'undefined' && createPortal(<div ref={attachmentsMenuMeasureRef} style={{ position: 'fixed', top: composerMenu === 'attachments' && composerMenuPosition ? composerMenuPosition.top : 8, left: composerMenu === 'attachments' && composerMenuPosition ? composerMenuPosition.left : -10000, maxHeight: composerMenu === 'attachments' && composerMenuPosition ? composerMenuPosition.maxHeight : undefined, visibility: composerMenu === 'attachments' && composerMenuPosition ? 'visible' : 'hidden', pointerEvents: composerMenu === 'attachments' ? 'auto' : 'none' }} className="z-[1000] w-60 overflow-y-auto rounded-xl border border-black/10 bg-white p-1 text-neutral-800 shadow-xl"><button type="button" onClick={() => { builderFilesInputRef.current?.removeAttribute('accept'); builderFilesInputRef.current?.click() }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-100"><Paperclip className="h-4 w-4" /> Attach files</button><button type="button" onClick={() => { builderFilesInputRef.current?.setAttribute('accept','image/*'); builderFilesInputRef.current?.click() }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-100"><ImageIcon className="h-4 w-4" /> Attach image</button><button type="button" onClick={() => { setComposerMenu(null); onOpenCoreComposer?.('figma') }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-100"><Figma className="h-4 w-4 text-fuchsia-600" /> Import from Figma</button><input ref={builderFilesInputRef} type="file" multiple className="hidden" onChange={(e) => { const files = Array.from(e.target.files ?? []); if (!files.length) return; (window as Window & { __seltraBuilderFiles?: File[] }).__seltraBuilderFiles = files; onOpenCoreComposer?.('files'); setComposerMenu(null); e.currentTarget.value = '' }} /></div>, document.body)}</div>
-                  <div className="flex h-8 items-center gap-2">
-                    <div className="relative"><button ref={modeButtonRef} type="button" onClick={() => setComposerMenu((current) => current === 'mode' ? null : 'mode')} className="hidden h-8 items-center gap-1 text-[14px] font-medium text-neutral-500 sm:inline-flex" aria-expanded={composerMenu === 'mode'}>{builderMode === 'plan' ? 'Plan' : builderMode === 'chat' ? 'Chat' : 'Build'} <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} /></button>{portalReady && typeof document !== 'undefined' && createPortal(<div ref={modeMenuMeasureRef} style={{ position: 'fixed', top: composerMenu === 'mode' && composerMenuPosition ? composerMenuPosition.top : 8, left: composerMenu === 'mode' && composerMenuPosition ? composerMenuPosition.left : -10000, maxHeight: composerMenu === 'mode' && composerMenuPosition ? composerMenuPosition.maxHeight : undefined, visibility: composerMenu === 'mode' && composerMenuPosition ? 'visible' : 'hidden', pointerEvents: composerMenu === 'mode' ? 'auto' : 'none' }} className="z-[1000] w-64 overflow-y-auto rounded-xl border border-black/10 bg-white p-1 text-neutral-800 shadow-xl">{([{mode:'build',title:'Build',description:'Make changes directly',icon:Wrench},{mode:'chat',title:'Chat',description:'Ask anything, explore ideas',icon:MessageSquare},{mode:'plan',title:'Plan',description:'Detailed spec for complex builds',icon:ListTodo}] as const).map(({mode,title,description,icon:ModeIcon})=><button key={mode} type="button" onClick={() => { onBuilderModeChange?.(mode); setComposerMenu(null) }} className="flex w-full items-start gap-2.5 rounded-lg px-3 py-2.5 text-left hover:bg-neutral-100"><ModeIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600"/><span className="min-w-0 flex-1"><span className="flex items-center gap-2 text-sm font-medium">{title}{mode==='chat'&&<span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">Free</span>}</span><span className="mt-0.5 block text-xs text-neutral-500">{description}</span></span>{builderMode===mode&&<Check className="mt-0.5 h-4 w-4 text-emerald-600"/>}</button>)}</div>, document.body)}</div>
-                    <button type="button" data-tour="voice" onClick={toggleVoice} className={`flex h-8 w-8 items-center justify-center rounded-full ${recording ? 'text-red-500' : 'text-neutral-400 hover:text-neutral-700'}`} title="Voice to text" aria-label={recording ? 'Stop voice transcription' : 'Voice to text'}><Mic className={`h-[18px] w-[18px] ${recording ? 'animate-pulse' : ''}`} strokeWidth={2} /></button>
+                </div> : <div className="relative z-10 mt-3 flex h-10 shrink-0 items-center justify-between sm:h-8">
+                  <div className="relative"><button ref={attachmentsButtonRef} type="button" data-tour="attachments" onClick={() => setComposerMenu((current) => current === 'attachments' ? null : 'attachments')} className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-[rgba(0,0,0,0.08)] bg-white text-neutral-400 transition-all duration-200 hover:-translate-y-0.5 hover:border-emerald-600/25 hover:bg-emerald-50 hover:text-emerald-700 hover:shadow-md active:translate-y-0 active:scale-95 sm:h-8 sm:w-8" title="Attachments and imports" aria-label={composerMenu === 'attachments' ? 'Close attachments menu' : 'Attachments and imports'} aria-expanded={composerMenu === 'attachments'}>
+                    {composerMenu === 'attachments' ? <X className="h-4 w-4" strokeWidth={2} /> : <Plus className="h-4 w-4" strokeWidth={2} />}
+                  </button>{portalReady && typeof document !== 'undefined' && createPortal(<div ref={attachmentsMenuMeasureRef} style={{ position: 'fixed', top: composerMenu === 'attachments' && composerMenuPosition ? composerMenuPosition.top : 8, left: composerMenu === 'attachments' && composerMenuPosition ? composerMenuPosition.left : -10000, maxHeight: composerMenu === 'attachments' && composerMenuPosition ? composerMenuPosition.maxHeight : undefined, visibility: composerMenu === 'attachments' && composerMenuPosition ? 'visible' : 'hidden', pointerEvents: composerMenu === 'attachments' ? 'auto' : 'none' }} className="z-[1000] w-60 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-black/10 bg-white p-1 text-neutral-800 shadow-xl"><button type="button" onClick={() => { builderFilesInputRef.current?.removeAttribute('accept'); builderFilesInputRef.current?.click() }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-100"><Paperclip className="h-4 w-4" /> Attach files</button><button type="button" onClick={() => { builderFilesInputRef.current?.setAttribute('accept','image/*'); builderFilesInputRef.current?.click() }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-100"><ImageIcon className="h-4 w-4" /> Attach image</button><button type="button" onClick={() => { setComposerMenu(null); onOpenCoreComposer?.('figma') }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-100"><Figma className="h-4 w-4 text-fuchsia-600" /> Import from Figma</button><input ref={builderFilesInputRef} type="file" multiple className="hidden" onChange={(e) => { const files = Array.from(e.target.files ?? []); if (!files.length) return; (window as Window & { __seltraBuilderFiles?: File[] }).__seltraBuilderFiles = files; onOpenCoreComposer?.('files'); setComposerMenu(null); e.currentTarget.value = '' }} /></div>, document.body)}</div>
+                  <div className="flex h-10 items-center gap-1 sm:h-8 sm:gap-2">
+                    <div className="relative"><button ref={modeButtonRef} type="button" onClick={() => setComposerMenu((current) => current === 'mode' ? null : 'mode')} className={cn('inline-flex h-9 items-center gap-1 rounded-full px-2 text-[13px] font-medium transition-colors sm:h-8 sm:px-3 sm:text-[14px]', composerMenu === 'mode' ? 'bg-neutral-100 text-neutral-900' : 'text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800')} aria-expanded={composerMenu === 'mode'}>{builderMode === 'plan' ? 'Plan' : builderMode === 'chat' ? 'Chat' : 'Build'} <ChevronDown className={cn('h-3.5 w-3.5 transition-transform duration-200', composerMenu === 'mode' && 'rotate-180')} strokeWidth={2} /></button>{portalReady && typeof document !== 'undefined' && createPortal(<div ref={modeMenuMeasureRef} style={{ position: 'fixed', top: composerMenu === 'mode' && composerMenuPosition ? composerMenuPosition.top : 8, left: composerMenu === 'mode' && composerMenuPosition ? composerMenuPosition.left : -10000, maxHeight: composerMenu === 'mode' && composerMenuPosition ? composerMenuPosition.maxHeight : undefined, visibility: composerMenu === 'mode' && composerMenuPosition ? 'visible' : 'hidden', pointerEvents: composerMenu === 'mode' ? 'auto' : 'none' }} className="z-[1000] w-64 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-black/10 bg-white p-1 text-neutral-800 shadow-xl shadow-black/10">{([{mode:'build',title:'Build',description:'Make changes directly',icon:Wrench},{mode:'chat',title:'Chat',description:'Ask anything, explore ideas',icon:MessageSquare},{mode:'plan',title:'Plan',description:'Detailed spec for complex builds',icon:ListTodo}] as const).map(({mode,title,description,icon:ModeIcon})=><button key={mode} type="button" onClick={() => { onBuilderModeChange?.(mode); setComposerMenu(null) }} className={cn('flex w-full items-start gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors', builderMode===mode ? 'bg-neutral-100' : 'hover:bg-neutral-100')}><ModeIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600"/><span className="min-w-0 flex-1"><span className="flex items-center gap-2 text-sm font-medium">{title}{mode==='chat'&&<span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">Free</span>}</span><span className="mt-0.5 block text-xs text-neutral-500">{description}</span></span>{builderMode===mode&&<Check className="mt-0.5 h-4 w-4 text-emerald-600"/>}</button>)}</div>, document.body)}</div>
+                    <button type="button" data-tour="voice" onClick={toggleVoice} className={`flex h-10 w-10 items-center justify-center rounded-full sm:h-8 sm:w-8 ${recording ? 'text-red-500' : 'text-neutral-400 hover:text-neutral-700'}`} title="Voice to text" aria-label={recording ? 'Stop voice transcription' : 'Voice to text'}><Mic className={`h-[18px] w-[18px] ${recording ? 'animate-pulse' : ''}`} strokeWidth={2} /></button>
                     <button
                       type="button"
                       onClick={send}
                       disabled={sending || pendingAttachment?.uploading || (!input.trim() && !pendingAttachment && coreFiles.length === 0)}
-                      className="flex h-8 w-8 items-center justify-center rounded-full bg-[#22c55e] text-white transition-colors hover:bg-[#16a34a] disabled:opacity-40"
+                      className="flex h-10 w-10 items-center justify-center rounded-full bg-[#22c55e] text-white transition-colors hover:bg-[#16a34a] disabled:opacity-40 sm:h-8 sm:w-8"
                       title="Build store"
                     >
                       {sending ? (
@@ -3446,7 +4345,7 @@ function EmptyState({
       </section>
 
       {/* Block 2 — dark panel; only ~85px peeks on first load */}
-      <div ref={suggestionsSectionRef} className="relative z-10 -mt-16 w-full px-12 pb-8 sm:-mt-20" style={suggestionOffset ? { transform: `translateY(${suggestionOffset}px)`, marginBottom: `${suggestionOffset}px` } : undefined}>
+      <div className="relative z-10 mt-0 w-full px-4 pb-8 sm:-mt-20 sm:px-12">
         {stores.length === 0 ? (
           <section className="rounded-[32px] bg-[#161817] px-4 py-5 text-white sm:px-6 sm:py-6">
             <h2 className="px-1 text-base font-semibold">Getting started</h2>
@@ -3499,9 +4398,9 @@ function EmptyState({
                 {visibleStores.map((store) => {
                   const cover = storeCover(store)
                   return (
-                    <button key={store.id ?? store.slug} type="button" onClick={() => onOpenStore(store)} className="overflow-hidden rounded-2xl bg-[#242624] text-left transition-colors hover:bg-[#2c2e2c]">
+                    <button key={store.dashboardApp ? `${store.id}:${store.dashboardApp.coreAppId}` : store.id ?? store.slug} type="button" onClick={() => onOpenStore(store)} className="overflow-hidden rounded-2xl bg-[#242624] text-left transition-colors hover:bg-[#2c2e2c]">
                       <div className="relative h-36 bg-[#101211] sm:h-[168px]">
-                        {cover ? (
+                        {store.dashboardApp ? <ProjectCardPreview store={store} cover={cover} /> : cover ? (
                           <img src={cover} alt="" className="h-full w-full object-cover" />
                         ) : (
                           <div className="flex h-full items-end bg-[radial-gradient(circle_at_30%_20%,rgba(74,222,128,0.35),transparent_55%),linear-gradient(160deg,#10241a,#1a1c1b)] p-4">
@@ -3561,7 +4460,7 @@ function ChatInput({ input, setInput, send, sending, onAttach, compact = false, 
   const builderFilesInputRef = useRef<HTMLInputElement>(null)
   const attachmentsButtonRef = useRef<HTMLButtonElement>(null)
   const modeButtonRef = useRef<HTMLButtonElement>(null)
-  const [floatingMenuPosition, setFloatingMenuPosition] = useState<{ top: number; left: number } | null>(null)
+  const [floatingMenuPosition, setFloatingMenuPosition] = useState<{ top: number; left: number; maxHeight: number } | null>(null)
 
   useEffect(() => {
     const open = variant === 'chat' && (attachmentsOpen || modeOpen)
@@ -3573,13 +4472,18 @@ function ChatInput({ input, setInput, send, sending, onAttach, compact = false, 
     const updatePosition = () => {
       const rect = anchor.getBoundingClientRect()
       const menuWidth = attachmentsOpen ? 240 : 256
-      const menuHeight = attachmentsOpen ? 156 : 176
-      const left = attachmentsOpen
-        ? Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8))
-        : Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8))
-      const above = rect.top - menuHeight - 8
-      const top = above >= 8 ? above : Math.min(rect.bottom + 8, window.innerHeight - menuHeight - 8)
-      setFloatingMenuPosition({ top, left })
+      const menuHeight = attachmentsOpen ? 176 : 196
+      const availableAbove = rect.top - 16
+      const availableBelow = window.innerHeight - rect.bottom - 16
+      const opensAbove = availableBelow < menuHeight && availableAbove > availableBelow
+      const availableHeight = Math.max(0, opensAbove ? availableAbove : availableBelow)
+      const maxHeight = Math.min(menuHeight, availableHeight)
+      const fittedWidth = Math.min(menuWidth, window.innerWidth - 16)
+      const preferredLeft = attachmentsOpen ? rect.left : rect.right - fittedWidth
+      const left = Math.max(8, Math.min(preferredLeft, window.innerWidth - fittedWidth - 8))
+      const preferredTop = opensAbove ? rect.top - maxHeight - 8 : rect.bottom + 8
+      const top = Math.max(8, Math.min(preferredTop, Math.max(8, window.innerHeight - maxHeight - 8)))
+      setFloatingMenuPosition({ top, left, maxHeight })
     }
     updatePosition()
     window.addEventListener('resize', updatePosition)
@@ -3703,13 +4607,13 @@ function ChatInput({ input, setInput, send, sending, onAttach, compact = false, 
       <div className={cn(
         'flex items-end gap-2 px-3 py-2',
         variant === 'chat'
-          ? 'min-h-[92px] rounded-[22px] border border-white/10 bg-[#161817]'
+          ? 'min-h-[100px] flex-wrap gap-1 rounded-[22px] border border-white/10 bg-[#161817] px-2 sm:min-h-[92px] sm:flex-nowrap sm:gap-2 sm:px-3'
           : 'rounded-[28px] border border-border bg-card/60 shadow-sm transition-all focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10',
       )}>
         {variant === 'chat' ? (
-          <div className="relative mb-0.5">
-            <button ref={attachmentsButtonRef} type="button" onClick={() => { setModeOpen(false); setAttachmentsOpen((value) => !value) }} className="grid h-9 w-9 place-items-center rounded-full border border-white/10 text-white/65 hover:border-emerald-300/40 hover:text-emerald-200" aria-label="Add images, files, or Figma context" title="Add images, files, or Figma context" aria-expanded={attachmentsOpen}><Plus className="h-[17px] w-[17px]" /></button>
-            {attachmentsOpen && typeof document !== 'undefined' && createPortal(<div style={{ position: 'fixed', top: floatingMenuPosition?.top ?? 8, left: floatingMenuPosition?.left ?? 8, visibility: floatingMenuPosition ? 'visible' : 'hidden' }} className="z-[1000] max-h-[min(70vh,240px)] w-60 overflow-y-auto rounded-xl border border-white/10 bg-[#222624] p-1 shadow-xl">
+          <div className="relative order-2 mb-0.5 sm:order-none">
+            <button ref={attachmentsButtonRef} type="button" onClick={() => { setModeOpen(false); setAttachmentsOpen((value) => !value) }} className="grid h-10 w-10 place-items-center rounded-full border border-white/10 text-white/65 transition-all duration-200 hover:-translate-y-0.5 hover:border-emerald-300/40 hover:bg-emerald-300/10 hover:text-emerald-200 hover:shadow-lg hover:shadow-emerald-950/20 active:translate-y-0 active:scale-95 sm:h-9 sm:w-9" aria-label={attachmentsOpen ? 'Close attachments menu' : 'Add images, files, or Figma context'} title="Add images, files, or Figma context" aria-expanded={attachmentsOpen}>{attachmentsOpen ? <X className="h-[17px] w-[17px]" /> : <Plus className="h-[17px] w-[17px]" />}</button>
+            {attachmentsOpen && typeof document !== 'undefined' && createPortal(<div style={{ position: 'fixed', top: floatingMenuPosition?.top ?? 8, left: floatingMenuPosition?.left ?? 8, maxHeight: floatingMenuPosition?.maxHeight, visibility: floatingMenuPosition ? 'visible' : 'hidden' }} className="z-[1000] w-60 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-white/10 bg-[#222624] p-1 shadow-xl shadow-black/30">
               <p className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-white/40">Add to your prompt</p>
               <button type="button" onClick={() => { builderFilesInputRef.current?.removeAttribute('accept'); builderFilesInputRef.current?.click() }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm text-white/80 hover:bg-white/5"><Paperclip className="h-4 w-4" /> Attach files</button>
               <button type="button" onClick={() => { builderFilesInputRef.current?.setAttribute('accept','image/*'); builderFilesInputRef.current?.click() }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm text-white/80 hover:bg-white/5"><ImageIcon className="h-4 w-4" /> Attach image</button>
@@ -3726,19 +4630,19 @@ function ChatInput({ input, setInput, send, sending, onAttach, compact = false, 
           rows={1}
           wrap="soft"
           placeholder={placeholder ?? (pendingAttachment ? 'Describe what to do with this image...' : 'Message your agent...')}
-          className={cn('min-w-0 flex-1 resize-none bg-transparent py-1.5 px-1 text-sm outline-none leading-[1.5] overflow-x-hidden whitespace-pre-wrap break-words composer-textarea', variant === 'chat' ? 'text-white placeholder:text-white/35' : 'placeholder:text-muted-foreground')}
+          className={cn('min-w-0 flex-1 resize-none bg-transparent py-1.5 px-1 text-sm outline-none leading-[1.5] overflow-x-hidden whitespace-pre-wrap break-words composer-textarea', variant === 'chat' ? 'order-1 basis-full text-white placeholder:text-white/35 sm:order-none sm:basis-auto' : 'placeholder:text-muted-foreground')}
           style={{ minHeight: 36, maxHeight: compact || variant === 'chat' ? 120 : 160, overflowY: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
         />
-        {variant === 'chat' && <div className="relative mb-0.5"><button ref={modeButtonRef} type="button" onClick={() => { setAttachmentsOpen(false); setModeOpen((value) => !value) }} className="inline-flex items-center gap-1 rounded-lg px-2 py-2 text-sm text-white/55 hover:bg-white/5 hover:text-white">{builderMode === 'plan' ? 'Plan' : builderMode === 'chat' ? 'Chat' : 'Build'} <ChevronDown className="h-4 w-4" /></button>{modeOpen && typeof document !== 'undefined' && createPortal(<div style={{ position: 'fixed', top: floatingMenuPosition?.top ?? 8, left: floatingMenuPosition?.left ?? 8, visibility: floatingMenuPosition ? 'visible' : 'hidden' }} className="z-[1000] max-h-[min(70vh,260px)] w-64 overflow-y-auto rounded-xl border border-white/10 bg-[#222624] p-1 shadow-xl">{([{mode:'build',title:'Build',description:'Make changes directly',icon:Wrench},{mode:'chat',title:'Chat',description:'Ask anything, explore ideas',icon:MessageSquare},{mode:'plan',title:'Plan',description:'Detailed spec for complex builds',icon:ListTodo}] as const).map(({mode,title,description,icon:ModeIcon})=><button key={mode} type="button" onClick={() => { onBuilderModeChange?.(mode); setModeOpen(false) }} className="flex w-full items-start gap-2.5 rounded-lg px-3 py-2.5 text-left text-white/80 hover:bg-white/5"><ModeIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300"/><span className="min-w-0 flex-1"><span className="flex items-center gap-2 text-sm font-medium">{title}{mode==='chat'&&<span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-[10px] font-semibold text-blue-200">Free</span>}</span><span className="mt-0.5 block text-xs text-white/50">{description}</span></span>{builderMode===mode&&<Check className="mt-0.5 h-4 w-4 text-emerald-300"/>}</button>)}</div>, document.body)}</div>}
+        {variant === 'chat' && <div className="relative order-3 mb-0.5 ml-auto sm:order-none sm:ml-0"><button ref={modeButtonRef} type="button" onClick={() => { setAttachmentsOpen(false); setModeOpen((value) => !value) }} className={cn('inline-flex items-center gap-1 rounded-lg px-2 py-2 text-[13px] transition-colors sm:text-sm', modeOpen ? 'bg-white/10 text-white' : 'text-white/55 hover:bg-white/5 hover:text-white')}>{builderMode === 'plan' ? 'Plan' : builderMode === 'chat' ? 'Chat' : 'Build'} <ChevronDown className={cn('h-4 w-4 transition-transform duration-200', modeOpen && 'rotate-180')} /></button>{modeOpen && typeof document !== 'undefined' && createPortal(<div style={{ position: 'fixed', top: floatingMenuPosition?.top ?? 8, left: floatingMenuPosition?.left ?? 8, maxHeight: floatingMenuPosition?.maxHeight, visibility: floatingMenuPosition ? 'visible' : 'hidden' }} className="z-[1000] w-64 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-white/10 bg-[#222624] p-1 shadow-xl shadow-black/30">{([{mode:'build',title:'Build',description:'Make changes directly',icon:Wrench},{mode:'chat',title:'Chat',description:'Ask anything, explore ideas',icon:MessageSquare},{mode:'plan',title:'Plan',description:'Detailed spec for complex builds',icon:ListTodo}] as const).map(({mode,title,description,icon:ModeIcon})=><button key={mode} type="button" onClick={() => { onBuilderModeChange?.(mode); setModeOpen(false) }} className={cn('flex w-full items-start gap-2.5 rounded-lg px-3 py-2.5 text-left text-white/80 transition-colors', builderMode===mode ? 'bg-white/10' : 'hover:bg-white/5')}><ModeIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300"/><span className="min-w-0 flex-1"><span className="flex items-center gap-2 text-sm font-medium">{title}{mode==='chat'&&<span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-[10px] font-semibold text-blue-200">Free</span>}</span><span className="mt-0.5 block text-xs text-white/50">{description}</span></span>{builderMode===mode&&<Check className="mt-0.5 h-4 w-4 text-emerald-300"/>}</button>)}</div>, document.body)}</div>}
         {variant === 'chat' && (
-          <button type="button" onClick={toggleVoice} className={`mb-0.5 grid h-9 w-9 place-items-center rounded-full ${recording ? 'text-red-300' : 'text-white/50 hover:bg-white/5 hover:text-white'}`} aria-label={recording ? 'Stop voice transcription' : 'Voice prompt'} title="Voice to text"><Mic className={`h-4 w-4 ${recording ? 'animate-pulse' : ''}`} /></button>
+          <button type="button" onClick={toggleVoice} className={`order-4 mb-0.5 grid h-10 w-10 place-items-center rounded-full sm:order-none sm:h-9 sm:w-9 ${recording ? 'text-red-300' : 'text-white/50 hover:bg-white/5 hover:text-white'}`} aria-label={recording ? 'Stop voice transcription' : 'Voice prompt'} title="Voice to text"><Mic className={`h-4 w-4 ${recording ? 'animate-pulse' : ''}`} /></button>
         )}
         <button
           type="button"
           onClick={() => { if (busy) { onStop?.(); return } send() }}
           disabled={!busy && (sending || pendingAttachment?.uploading || (!input.trim() && !pendingAttachment && coreFiles.length === 0))}
           aria-label={busy ? 'Stop' : 'Send'}
-          className="mb-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[#22c55e] text-white transition-opacity hover:opacity-90 disabled:opacity-35"
+          className={cn('mb-0.5 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-[#22c55e] text-white transition-opacity hover:opacity-90 disabled:opacity-35 sm:h-9 sm:w-9', variant === 'chat' && 'order-5 sm:order-none')}
         >
           {busy ? <span className="block h-3 w-3 rounded-[3px] bg-white" /> : variant === 'chat' ? <img src="/seltra/icons/send.png" alt="" className="h-[18px] w-[18px] object-contain" /> : <Send className="h-4 w-4" />}
         </button>
@@ -3749,15 +4653,16 @@ function ChatInput({ input, setInput, send, sending, onAttach, compact = false, 
 
 // ── Tab content router ─────────────────────────────────────────────────────────
 function TabContent({
-  tab, activeStore, stores, onSelectStore, onStoreDeleted, onStoreUpdated, reloadStores, user, credits,
+  tab, activeStore, stores, onSelectStore, onStoreDeleted, deleteStoreAppsFromCore, onStoreUpdated, reloadStores, user, credits,
 }: {
   tab: string; activeStore: StoreData | null; stores: StoreData[]
   onSelectStore: (s: StoreData) => void; onStoreDeleted: (id: string) => void
+  deleteStoreAppsFromCore: (tenantId: string) => Promise<void>
   onStoreUpdated: (s: StoreData) => void; reloadStores: () => Promise<void>
   user: { email: string; name: string; avatar: string; joinedAt?: string } | null
   credits: { used: number; limit: number; resetsAt: string } | null
 }) {
-  if (tab === 'store') return <StoreTab stores={stores} activeStore={activeStore} onSelectStore={onSelectStore} onStoreDeleted={onStoreDeleted} reloadStores={reloadStores} />
+  if (tab === 'store') return <StoreTab stores={stores} activeStore={activeStore} onSelectStore={onSelectStore} onStoreDeleted={onStoreDeleted} deleteStoreAppsFromCore={deleteStoreAppsFromCore} reloadStores={reloadStores} />
   if (tab === 'mission') return <MissionControlTab activeStore={activeStore} />
   if (tab === 'orders') return <OrdersTab activeStore={activeStore} />
   if (tab === 'sales') return <SalesTab activeStore={activeStore} />
@@ -3952,7 +4857,7 @@ function InvoicesTab({ activeStore }: { activeStore: StoreData | null }) {
   const load = useCallback(async () => {
     if (!tenantId) { setRows([]); setTotal(0); return }
     const { data, error } = await apiFetch<Paginated<InvoiceRecord>>(`/api/v5/invoices?tenantId=${encodeURIComponent(tenantId)}&page=${page}&perPage=${pageSize}`)
-    if (error) { toast.error(error); return }
+    if (error) { toast.error(`Core app cleanup finished, but the store record could not be deleted: ${error}`); return }
     setRows(data?.data ?? [])
     setTotal(data?.total ?? 0)
   }, [tenantId, page])
@@ -4134,9 +5039,10 @@ function InvoicesTab({ activeStore }: { activeStore: StoreData | null }) {
   )
 }
 
-function StoreTab({ stores, activeStore, onSelectStore, onStoreDeleted, reloadStores }: {
+function StoreTab({ stores, activeStore, onSelectStore, onStoreDeleted, deleteStoreAppsFromCore, reloadStores }: {
   stores: StoreData[]; activeStore: StoreData | null
-  onSelectStore: (s: StoreData) => void; onStoreDeleted: (id: string) => void; reloadStores: () => Promise<void>
+  onSelectStore: (s: StoreData) => void; onStoreDeleted: (id: string) => void
+  deleteStoreAppsFromCore: (tenantId: string) => Promise<void>; reloadStores: () => Promise<void>
 }) {
   const [storeToDelete, setStoreToDelete] = useState<StoreData | null>(null)
   const [confirmName, setConfirmName] = useState('')
@@ -4153,6 +5059,13 @@ function StoreTab({ stores, activeStore, onSelectStore, onStoreDeleted, reloadSt
     if (!storeToDelete || !canDelete || deleting) return
     const id = storeToDelete.id ?? storeToDelete.slug
     setDeleting(true)
+    try {
+      if (storeToDelete.id) await deleteStoreAppsFromCore(storeToDelete.id)
+    } catch (error) {
+      setDeleting(false)
+      toast.error(error instanceof Error ? error.message : 'Could not remove this store’s app files. The store was not deleted.')
+      return
+    }
     const { error } = await apiFetch<{ success: boolean }>(`/api/v5/seltra/store/${encodeURIComponent(id)}`, { method: 'DELETE' })
     setDeleting(false)
     if (error) { toast.error(error); return }
@@ -4215,7 +5128,7 @@ function StoreTab({ stores, activeStore, onSelectStore, onStoreDeleted, reloadSt
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 px-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl">
             <h2 className="text-lg font-semibold">Delete {storeToDelete.name}</h2>
-            <p className="mt-2 text-sm text-muted-foreground">This removes the storefront, catalog, images, payment setup, and orders. To confirm, type the store name exactly.</p>
+            <p className="mt-2 text-sm text-muted-foreground">This removes this project’s storefront, orders, generated app files, images, and project activity. Your Seltra account, shared credits, and other projects stay intact. To confirm, type the store name exactly.</p>
             <div className="mt-4 rounded-xl border border-border bg-muted/30 px-3 py-2 font-mono text-sm">{storeToDelete.name}</div>
             <label className="mt-4 grid gap-1.5 text-sm">Store name
               <input value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={storeToDelete.name}
@@ -5648,19 +6561,19 @@ function ProfileCenterTab({ mode, activeStore, user, stores, credits, onStoreUpd
                   <p className="mt-1 text-sm text-muted-foreground">
                     {plan === 'premium'
                       ? 'AI credit usage for the current window.'
-                      : 'Default monthly merchant credit limit for MVP operations.'}
+                      : 'AI credits are linked to your user account and shared across all your projects. 1 credit equals 1,000 weighted model tokens.'}
                   </p>
                 </div>
                 {plan === 'free' && (
                   <div className="rounded-full border border-border px-3 py-1 font-mono text-xs text-muted-foreground">
-                    30 day trial
+                    Daily allowance
                   </div>
                 )}
               </div>
 
               <div className="mt-5 flex flex-wrap items-center gap-2">
                 <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-mono text-xs text-primary">
-                  {plan === 'premium' ? '100 credits / month' : '100 credits / month'}
+                  {credits ? `${credits.limit.toLocaleString()} credits / day` : 'Loading daily allowance'}
                 </span>
                 {credits && (
                   <span className={`rounded-full border px-3 py-1 font-mono text-xs ${creditsExhausted ? 'border-red-500/30 text-red-400' : 'border-border text-muted-foreground'}`}>
@@ -5678,7 +6591,7 @@ function ProfileCenterTab({ mode, activeStore, user, stores, credits, onStoreUpd
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
                 <MetricCard label="free tier" value="$0/m" />
                 <MetricCard label="premium" value="$10/m" />
-                <MetricCard label="trial" value="30 days" />
+                <MetricCard label="token budget" value={credits ? `${(credits.limit * 1000).toLocaleString()} / day` : '—'} />
               </div>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -5854,29 +6767,57 @@ function ProfileCenterTab({ mode, activeStore, user, stores, credits, onStoreUpd
         </div>
       )}
 
-      {upgradeOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary/15"><LockKeyhole className="h-5 w-5 text-primary" /></div>
-                <div>
-                  <h2 className="text-lg font-semibold">Upgrade to Premium</h2>
-                  <p className="font-mono text-xs text-muted-foreground">$10 due today</p>
-                </div>
+      {false && upgradeOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/65 px-3 py-4 backdrop-blur-sm sm:px-6 sm:py-8" onMouseDown={(event) => { if (event.target === event.currentTarget) setUpgradeOpen(false) }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="seltra-pro-title" className="grid max-h-[min(720px,calc(100dvh-2rem))] w-full max-w-[980px] overflow-hidden rounded-[30px] border border-white/50 bg-[#f8faf8] text-slate-950 shadow-[0_32px_100px_rgba(0,0,0,.42)] md:grid-cols-[0.92fr_1.08fr]">
+            <div className="relative min-h-[220px] overflow-hidden bg-[#071b19] md:min-h-[590px]">
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_48%_43%,rgba(53,224,173,.26),transparent_40%),radial-gradient(ellipse_at_15%_80%,rgba(39,129,111,.28),transparent_48%),linear-gradient(155deg,#071a1b_0%,#0a2927_53%,#10261e_100%)]" />
+              <svg aria-hidden="true" viewBox="0 0 620 760" preserveAspectRatio="xMidYMid slice" className="absolute inset-0 h-full w-full opacity-95">
+                <defs>
+                  <radialGradient id="seltra-upgrade-core" cx="50%" cy="50%" r="50%"><stop offset="0" stopColor="#e6fff7" stopOpacity=".96"/><stop offset=".12" stopColor="#70f2c8" stopOpacity=".88"/><stop offset=".34" stopColor="#24bf91" stopOpacity=".3"/><stop offset="1" stopColor="#24bf91" stopOpacity="0"/></radialGradient>
+                  <linearGradient id="seltra-upgrade-orbit" x1="0" x2="1" y1="0" y2="1"><stop stopColor="#c7fff1" stopOpacity=".8"/><stop offset=".52" stopColor="#46d9ad" stopOpacity=".16"/><stop offset="1" stopColor="#d7fff4" stopOpacity=".62"/></linearGradient>
+                  <filter id="seltra-upgrade-glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="12" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+                </defs>
+                <g fill="none" stroke="url(#seltra-upgrade-orbit)" strokeWidth="1.2">
+                  <ellipse cx="310" cy="340" rx="218" ry="92" transform="rotate(-26 310 340)" opacity=".66"/>
+                  <ellipse cx="310" cy="340" rx="188" ry="136" transform="rotate(43 310 340)" opacity=".44"/>
+                  <ellipse cx="310" cy="340" rx="246" ry="174" transform="rotate(-67 310 340)" opacity=".28"/>
+                  <path d="M47 505 166 424l79 34 71-166 105 35 125-134M78 214l117 71 81-51 99 76 128-32" opacity=".38"/>
+                </g>
+                <g fill="#8df6d4" opacity=".8">
+                  <circle cx="166" cy="424" r="3"/><circle cx="245" cy="458" r="3"/><circle cx="316" cy="292" r="3.5"/><circle cx="421" cy="327" r="3"/><circle cx="546" cy="193" r="3"/><circle cx="195" cy="285" r="2.5"/><circle cx="375" cy="310" r="2.5"/><circle cx="503" cy="310" r="2.5"/>
+                </g>
+                <circle cx="310" cy="340" r="142" fill="url(#seltra-upgrade-core)" filter="url(#seltra-upgrade-glow)"/>
+                <g transform="translate(310 340)" filter="url(#seltra-upgrade-glow)">
+                  <circle r="58" fill="#0c2823" fillOpacity=".84" stroke="#95f8d9" strokeOpacity=".9" strokeWidth="1.5"/>
+                  <path d="M-20-15h40v30h-40zM-42-8h22v16h-22zM20-8h22v16h-22zM-8-37h16v22H-8zM-8 15h16v22H-8z" fill="#36d6a5"/>
+                  <path d="M-8-15 8-30v30L-8 15z" fill="#a0f7dc" fillOpacity=".85"/>
+                </g>
+                <g fill="#d9fff3" opacity=".7"><circle cx="102" cy="154" r="1.5"/><circle cx="500" cy="486" r="1.7"/><circle cx="131" cy="597" r="1.3"/><circle cx="456" cy="113" r="1.4"/><circle cx="356" cy="593" r="1.2"/><circle cx="557" cy="590" r="1.3"/></g>
+              </svg>
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#061412]/95 via-[#061412]/65 to-transparent px-6 pb-6 pt-24 sm:px-8 sm:pb-8">
+                <div className="mb-3 flex items-center gap-2"><img src="/assets/brand/mark.png" alt="" className="h-6 w-6 object-contain"/><span className="text-[10px] font-semibold tracking-[0.2em] text-emerald-100/80">SELTRA / PRO</span></div>
+                <p className="max-w-sm text-2xl font-semibold leading-tight tracking-[-0.035em] text-white sm:text-[30px]">Build what you imagine. Keep growing.</p>
+                <p className="mt-2 max-w-sm text-sm leading-6 text-emerald-50/65">More room for your ideas, your projects, and the next version of your business.</p>
               </div>
-              <button type="button" onClick={() => setUpgradeOpen(false)} className="rounded-xl p-1 text-muted-foreground hover:bg-muted hover:text-foreground"><X className="h-4 w-4" /></button>
             </div>
-            <div className="mt-5 space-y-2 text-sm text-muted-foreground">
-              {['3 stores', '100 product upgrades for each store', 'User roles and permissions', 'Custom domains', 'Remove the Seltra badge', 'ChatBot on stores for customer assistance', 'Instant and priority support', 'Unused credits rollover', 'On-demand credit top-ups'].map((item) => (
-                <div key={item} className="flex items-center gap-2"><CheckCheck className="h-4 w-4 text-primary" /> {item}</div>
-              ))}
+            <div className="relative flex min-h-0 flex-col overflow-y-auto px-6 py-6 sm:px-9 sm:py-8">
+              <button type="button" onClick={() => setUpgradeOpen(false)} aria-label="Close Seltra Pro details" className="absolute right-5 top-5 grid h-9 w-9 place-items-center rounded-full text-slate-500 transition hover:bg-slate-200/70 hover:text-slate-900"><X className="h-4 w-4" /></button>
+              <p className="text-[11px] font-semibold tracking-[0.17em] text-emerald-700">SELTRA PRO</p>
+              <h2 id="seltra-pro-title" className="mt-4 max-w-md pr-8 text-[28px] font-semibold leading-[1.08] tracking-[-0.04em] sm:text-[36px]">More room for your next big idea.</h2>
+              <p className="mt-3 max-w-md text-sm leading-6 text-slate-600">Keep building with more space and capabilities, all connected to one account and one shared credit balance.</p>
+              <div className="mt-7 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+                <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">Your plan</p><p className="mt-2 text-base font-semibold">Free</p></div><div className="text-right"><p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">Seltra Pro</p><p className="mt-2 text-base font-semibold text-emerald-800">More room to build</p></div></div>
+                <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full w-full rounded-full bg-emerald-500"/></div>
+                <p className="mt-2 text-xs text-slate-500">Your workspace is ready to grow</p>
+              </div>
+              <ul className="mt-6 space-y-3.5 text-sm text-slate-700">{['Create up to 3 projects', 'One shared credit balance across your projects', 'Custom domains and business tools', 'Team access and priority assistance'].map((item) => <li key={item} className="flex items-start gap-3"><span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md bg-emerald-100 text-emerald-800"><CheckCheck className="h-3.5 w-3.5"/></span><span>{item}</span></li>)}</ul>
+              <div className="mt-auto pt-8"><button type="button" onClick={() => { setUpgradeOpen(false); toast.message('Seltra Pro checkout will be available here soon.') }} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-emerald-700">Upgrade <ArrowRight className="h-4 w-4" /></button><p className="mt-3 text-center text-xs leading-5 text-slate-500">Upgrade checkout is coming soon.</p></div>
             </div>
-            <p className="mt-4 text-xs text-muted-foreground">Your plan will update to $10 / month for 100 credits. Downgrade or cancel at any time. By upgrading you agree to our terms.</p>
-            <Button className="mt-5 w-full rounded-full" onClick={() => { setUpgradeOpen(false); toast.success('Premium checkout coming online for MVP') }}>Upgrade to Premium</Button>
           </div>
         </div>
       )}
+      <AnimatePresence>{upgradeOpen && <BillingPlansModal plan={plan} credits={credits} onClose={() => setUpgradeOpen(false)} onUpgrade={() => { setUpgradeOpen(false); toast.message('Seltra Pro checkout will be available here soon.') }} />}</AnimatePresence>
     </div>
   )
 }

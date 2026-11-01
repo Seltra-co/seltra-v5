@@ -20,7 +20,7 @@ import {
 } from "../types/audio";
 import type { TranscribeAudioParams } from "../types/audio";
 import { transcribeWithDyadEngine } from "../utils/llm_engine_provider";
-import { getDyadEngineBaseUrl } from "../utils/dyad_engine_url";
+import { getSeltraEngineBaseUrl } from "../utils/seltra_engine_url";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
 
 import { fetchUserInfo } from "../services/user_budget_service";
@@ -234,7 +234,7 @@ export function registerProHandlers() {
         input.requestId,
         {
           apiKey,
-          baseURL: getDyadEngineBaseUrl(),
+          baseURL: getSeltraEngineBaseUrl(),
           dyadOptions: {},
           settings,
         },

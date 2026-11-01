@@ -387,6 +387,9 @@ crashRecoveryWindowReadiness = new DeepLinkWindowReadiness<BrowserWindow>({
 
 // Load environment variables from .env file
 dotenv.config();
+console.info(
+  `Seltra Engine configured: ${process.env.SELTRA_ENGINE_URL ?? process.env.DYAD_ENGINE_URL ?? "<not configured>"} (key present: ${Boolean(process.env.SELTRA_ENGINE_API_KEY) ? "yes" : "no"})`,
+);
 
 // Register IPC handlers before app is ready
 registerIpcHandlers();

@@ -23,6 +23,9 @@ bin-release/
 seltra-web/core/.web-dev/
 seltra-web/core/out/
 
-# Local integration planning documents
+# Root-level planning and reference documents stay local; nested Markdown is unaffected.
+/*.md
+!/README.md
+# Local integration planning documents (kept explicit for clarity).
 /SELTRA-CORE-INTEGRATION-FINAL.md
 /AI-CORE-INTEGRATION-ARCHITECTURE.md

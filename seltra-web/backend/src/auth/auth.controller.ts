@@ -3,6 +3,7 @@ import type { Request, Response } from 'express'
 import { AuthService } from './auth.service'
 import { ApiExcludeController } from '@nestjs/swagger'
 import { IsBoolean, IsEmail, IsOptional, IsString, MaxLength, MinLength } from 'class-validator'
+import { REFRESH_COOKIE_NAME, REFRESH_TOKEN_TTL_MS } from './auth.constants'
 
 class OnboardingPreferencesDto {
   @IsOptional() @IsString() @MaxLength(80)
@@ -133,13 +134,21 @@ export class AuthController {
   }
 
   @Post('reset-password')
-  resetPassword(@Body() body: ResetPasswordDto) {
-    return this.authService.resetPassword(body.email, body.code, body.password)
+  async resetPassword(@Body() body: ResetPasswordDto, @Res() response: Response) {
+    const result = await this.authService.resetPassword(body.email, body.code, body.password)
+    return this.sendSession(response, result)
   }
 
   @Post('otp/verify')
-  verifyOtp(@Body() body: OtpVerifyDto, @Req() req: Request) {
-    return this.authService.verifyOtp(body.merchantId, body.code, this.requestIp(req))
+  async verifyOtp(@Body() body: OtpVerifyDto, @Req() req: Request, @Res() response: Response) {
+    const result = await this.authService.verifyOtp(body.merchantId, body.code, this.requestIp(req))
+    return this.sendSession(response, result)
+  }
+
+  @Post('refresh')
+  async refresh(@Req() req: Request, @Res() response: Response) {
+    const result = await this.authService.refreshSession(this.readRefreshCookie(req))
+    return this.sendSession(response, result)
   }
 
   @Get('me')
@@ -157,13 +166,47 @@ export class AuthController {
   }
 
   @Delete('logout')
-  logout() {
-    return { success: true }
+  async logout(@Req() req: Request, @Res() response: Response) {
+    await this.authService.revokeRefreshToken(this.readRefreshCookie(req))
+    return response.clearCookie(REFRESH_COOKIE_NAME, this.refreshCookieOptions()).json({ success: true })
   }
 
   @Post('logout')
-  logoutPost() {
-    return { success: true }
+  async logoutPost(@Req() req: Request, @Res() response: Response) {
+    await this.authService.revokeRefreshToken(this.readRefreshCookie(req))
+    return response.clearCookie(REFRESH_COOKIE_NAME, this.refreshCookieOptions()).json({ success: true })
+  }
+
+  private sendSession(response: Response, result: { refreshToken: string; [key: string]: unknown }) {
+    const { refreshToken, ...body } = result
+    response.cookie(REFRESH_COOKIE_NAME, refreshToken, {
+      ...this.refreshCookieOptions(),
+      maxAge: REFRESH_TOKEN_TTL_MS,
+    })
+    return response.json(body)
+  }
+
+  private refreshCookieOptions() {
+    return {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax' as const,
+      path: '/api/v5/auth',
+    }
+  }
+
+  private readRefreshCookie(req: Request) {
+    const cookie = req.headers.cookie
+      ?.split(';')
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(`${REFRESH_COOKIE_NAME}=`))
+    if (!cookie) return undefined
+
+    try {
+      return decodeURIComponent(cookie.slice(REFRESH_COOKIE_NAME.length + 1))
+    } catch {
+      return undefined
+    }
   }
 
   private requestIp(req: Request) {

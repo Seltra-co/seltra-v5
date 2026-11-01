@@ -132,18 +132,6 @@ export function installBridge(): void {
       new CustomEvent("seltra:web-connection", { detail: { status } }),
     );
   };
-  const failChats = () => {
-    for (const [key, chat] of activeChats) {
-      dispatch("chat:response:error", [
-        {
-          ...chat,
-          error:
-            "Connection lost while the chat response was streaming. Reconnect and try again.",
-        },
-      ]);
-      activeChats.delete(key);
-    }
-  };
   const connect = () => {
     if (stopped) return;
     announceConnection("connecting");
@@ -218,12 +206,10 @@ export function installBridge(): void {
       );
       sessionId = undefined;
       sessionOpenedAt = undefined;
-      for (const controller of pending) {
-        if (!sessionPending.has(controller.signal))
-          controller.abort(new Error("Connection lost"));
-      }
-      pending.clear();
-      failChats();
+      // The event socket is a notification channel, not the lifetime of an
+      // accepted RPC. Keep in-flight HTTP invokes and active chat subscriptions
+      // alive while the socket reconnects; the server may still be completing
+      // a build and will return its RPC receipt independently.
       announceConnection("connecting");
       const delay = retry;
       retry = Math.min(retry * 2, 10_000);
@@ -276,8 +262,11 @@ export function installBridge(): void {
       sessionPending.add(signal);
       signal.addEventListener("abort", onAbort, { once: true });
       timeout = window.setTimeout(
-        () => finish(new Error("Runtime did not reconnect within 60 seconds")),
-        60_000,
+        // Workspace startup/reconnect can take a few minutes for remote
+        // regions or a cold runtime. Keep the RPC pending through that window
+        // instead of failing the submitted chat before Core can receive it.
+        () => finish(new Error("Runtime did not reconnect within 10 minutes")),
+        10 * 60_000,
       );
       if (sessionId) waiter.resolve(sessionId);
     });
@@ -377,16 +366,9 @@ export function installBridge(): void {
         try {
           response = await request(channel, args);
         } catch (error) {
-          if (
-            channel === "distributed-machine:dispatch" &&
-            input?.encodedEvent?.type === "SUBMIT"
-          ) {
-            const intent = input.encodedEvent.intent;
-            if (intent?.chatId && intent.invocationRef?.operationId)
-              activeChats.delete(
-                `${intent.chatId}:${intent.invocationRef.operationId}`,
-              );
-          }
+          // A failed response can mean the transport dropped after the server
+          // accepted the dispatch. Keep tracking the chat until an end/error
+          // event arrives on the reconnected socket.
           throw error;
         }
         return isIpcInvokeEnvelope(response)
@@ -446,19 +428,7 @@ export function installBridge(): void {
             );
           }
         }
-        return request(channel, args).catch((error) => {
-          if (
-            channel === "distributed-machine:dispatch" &&
-            input?.encodedEvent?.type === "SUBMIT"
-          ) {
-            const intent = input.encodedEvent.intent;
-            if (intent?.chatId && intent.invocationRef?.operationId)
-              activeChats.delete(
-                `${intent.chatId}:${intent.invocationRef.operationId}`,
-              );
-          }
-          throw error;
-        });
+        return request(channel, args);
       },
       send: (channel, ...args) => {
         if (!sendChannels.has(channel))

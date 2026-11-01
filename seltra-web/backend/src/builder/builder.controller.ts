@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Headers, Post, Query, UseGuards } from '@nestjs/common'
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger'
-import { BuilderSessionDto, SyncTenantAppDto } from './builder.dto'
+import { BuilderSessionDto, SyncCoreAppStateDto, SyncTenantAppDto } from './builder.dto'
 import { BuilderService } from './builder.service'
 import { CoreServiceGuard } from '../core-internal/core-service.guard'
 
@@ -13,6 +13,11 @@ export class BuilderController {
   @Post('session')
   createSession(@Headers('authorization') authorization: string | undefined, @Body() body: BuilderSessionDto) {
     return this.builder.createSession(authorization, body.tenantId)
+  }
+
+  @Get('credits')
+  getCredits(@Headers('authorization') authorization: string | undefined, @Query('tenantId') tenantId?: string) {
+    return this.builder.getCredits(authorization, tenantId)
   }
 
   @Post('ws-ticket')
@@ -29,5 +34,16 @@ export class BuilderController {
   @UseGuards(CoreServiceGuard)
   syncApp(@Body() body: SyncTenantAppDto) {
     return this.builder.syncApp(body)
+  }
+
+  @Post('apps/state')
+  syncCoreAppState(@Headers('authorization') authorization: string | undefined, @Body() body: SyncCoreAppStateDto) {
+    return this.builder.syncCoreAppState(authorization, body)
+  }
+
+  @Post('workspace/files-sync')
+  @UseGuards(CoreServiceGuard)
+  syncWorkspaceFiles(@Body() body: { tenantId: string; workspaceId?: string; coreAppId?: number; runId?: string; files: Array<{ path: string; content: string }> }) {
+    return this.builder.syncWorkspaceFiles(body)
   }
 }

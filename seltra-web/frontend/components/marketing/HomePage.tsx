@@ -74,7 +74,7 @@ const composerPrompts = [
 ]
 
 // ─── Merchant logos ────────────────────────────────────────────────────────
-// Supabase-style trust strip: grayscale by default, full color/visible on
+// Trust strip: grayscale by default, full color/visible on
 // hover. Real merchant logos for Kem's Outlet and De-Yogo Bar; the rest are
 // styled text wordmarks treated the same way.
 type BrandLogo = {
@@ -346,14 +346,14 @@ const sectionTitle = 'text-balance text-[2.1rem] font-semibold leading-[1.12] tr
 // ─── Hero ─────────────────────────────────────────────────────────────────────
 function Hero({ onNeedAuth: _onNeedAuth }: { onNeedAuth: () => void }) {
   return (
-    <section className="landing-hero-wash relative flex min-h-[66svh] items-center justify-center overflow-visible px-5 py-16 sm:min-h-[78svh] sm:px-6 lg:min-h-[100svh]">
+    <section className="landing-hero-wash relative flex min-h-[58svh] items-center justify-center overflow-visible px-4 py-12 sm:min-h-[78svh] sm:px-6 sm:py-16 lg:min-h-[100svh]">
       <div className="relative z-10 mx-auto w-full max-w-3xl text-center">
         <div className="fade-in w-full">
-          <h1 className="text-balance text-[2.1rem] font-semibold leading-[1.12] tracking-[-0.035em] text-neutral-900 sm:text-[2.1rem] md:text-[2.1rem]">
+          <h1 className="text-balance text-[clamp(1.75rem,8vw,2.1rem)] font-semibold leading-[1.12] tracking-[-0.035em] text-neutral-900 sm:text-[2.1rem]">
             Build your online store
           </h1>
 
-          <p className="text-balance mx-auto mt-2 max-w-xl text-[16px] font-normal leading-relaxed text-[#555b59] sm:text-base">
+          <p className="text-balance mx-auto mt-2 max-w-[22rem] px-2 text-[15px] font-normal leading-relaxed text-[#555b59] sm:max-w-xl sm:px-0 sm:text-base">
             Create a storefront by describing what you need.
           </p>
 

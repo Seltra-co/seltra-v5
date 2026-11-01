@@ -9,7 +9,7 @@ import {
   escapeXmlAttr,
   escapeXmlContent,
 } from "./types";
-import { engineFetch } from "./engine_fetch";
+import { engineFetch, isSeltraEngineConfigured } from "./engine_fetch";
 import { DYAD_MEDIA_DIR_NAME } from "@/ipc/utils/media_path_utils";
 import { ImageGenerationApiResponseSchema } from "@/ipc/types/image_generation";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
@@ -123,8 +123,11 @@ export const generateImageTool: ToolDefinition<
   defaultConsent: "always",
   modifiesState: true,
   usesEngineEndpoint: true,
+  allowInFreeModelMode: true,
 
-  isEnabled: (ctx) => ctx.isDyadPro,
+  // Do not expose image generation when the configured Seltra engine has no
+  // credentials: this endpoint cannot generate images anonymously.
+  isEnabled: () => isSeltraEngineConfigured(),
 
   getConsentPreview: (args) => `Generate image: "${args.prompt}"`,
 

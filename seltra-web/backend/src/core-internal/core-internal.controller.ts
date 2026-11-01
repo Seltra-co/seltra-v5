@@ -1,15 +1,18 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common'
-import { IsBoolean, IsInt, IsString, Min } from 'class-validator'
+import { IsBoolean, IsInt, IsString, IsOptional, Min } from 'class-validator'
 import { ApiExcludeController } from '@nestjs/swagger'
 import { BuilderService } from '../builder/builder.service'
 import { CoreServiceGuard } from './core-service.guard'
 
 class CoreUsageDto {
   @IsString() tenantId!: string
+  @IsString() workspaceId!: string
   @IsString() userId!: string
   @IsString() role!: string
   @IsString() model!: string
-  @IsInt() @Min(0) tokens!: number
+  @IsOptional() @IsInt() @Min(0) tokens?: number
+  @IsOptional() @IsInt() @Min(0) tokensIn?: number
+  @IsOptional() @IsInt() @Min(0) tokensOut?: number
   @IsBoolean() cached!: boolean
   @IsBoolean() ok!: boolean
   @IsString() runId!: string

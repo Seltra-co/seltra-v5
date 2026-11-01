@@ -1,6 +1,7 @@
 //seltra-web/frontend/app/store/[slug]/page.tsx
 import { Suspense } from 'react'
 import type { Metadata } from 'next'
+import { redirect } from 'next/navigation'
 import { StorefrontCanvas } from '@/components/storefront/StorefrontCanvas'
 
 const API_BASE = process.env.API_BASE_URL ?? 'http://localhost:3001'
@@ -80,7 +81,36 @@ function fallback(slug: string) {
 
 export default async function StorefrontPage({ params }: StoreRouteProps) {
   const { slug } = await params
-  const store = (await getStore(slug)) ?? fallback(slug)
+  const savedStore = await getStore(slug)
+  const v5App = savedStore?.apps?.find((app: { publishedUrl?: string | null }) => app.publishedUrl)
+  let publishedDestination: string | undefined
+  if (v5App?.publishedUrl) {
+    try {
+      const destination = new URL(v5App.publishedUrl)
+      if (destination.protocol === 'https:' || destination.protocol === 'http:') publishedDestination = destination.toString()
+    } catch {
+      // Ignore an invalid deployment URL and show the unpublished state below.
+    }
+  }
+  if (publishedDestination) redirect(publishedDestination)
+
+  // Core preview URLs are ephemeral workspace addresses (for example
+  // *.localhost:8080). Only a published V5 deployment is safe to expose from
+  // a public Seltra subdomain; never silently send a V5 project back to the
+  // legacy storefront renderer while deployment is pending.
+  if (savedStore?.apps?.length) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-[#f7f8f7] px-6 text-center text-slate-900">
+        <section className="max-w-lg">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Seltra</p>
+          <h1 className="mt-4 text-3xl font-semibold tracking-tight">This V5 app is not published yet</h1>
+          <p className="mt-3 leading-7 text-slate-600">The app is available in its builder preview. Its Seltra subdomain will open the V5 app once a public deployment is connected.</p>
+        </section>
+      </main>
+    )
+  }
+
+  const store = savedStore ?? fallback(slug)
   const dna  = (store as { storeDNA?: { brandPersonality?: string } }).storeDNA
   const cv   = (store as { canonical?: { layoutVariant?: string } }).canonical
   const themeKey =

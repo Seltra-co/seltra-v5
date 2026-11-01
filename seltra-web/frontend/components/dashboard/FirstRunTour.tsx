@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { ArrowRight, Bell, Check, Mic, Paperclip, Settings2, Sparkles, X } from 'lucide-react'
+import { fetchWithSeltraAuth } from '@/lib/auth-session'
 
 const TOUR_VERSION = 'v2'
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001'
 
 const steps = [
   { target: 'main-composer', title: 'Your Seltra workspace', text: 'Describe the store or change you have in mind. Seltra Core turns your prompt into a working build and preview.', icon: Sparkles },
@@ -29,7 +29,7 @@ export function FirstRunTour() {
     if (!authToken) return
     let cancelled = false
     setToken(authToken)
-    void fetch(`${API_BASE}/api/v5/auth/me`, { headers: { Authorization: `Bearer ${authToken}` } })
+    void fetchWithSeltraAuth('/api/v5/auth/me', { cache: 'no-store' })
       .then(async (response) => {
         if (!response.ok) throw new Error('Could not load onboarding status')
         return response.json() as Promise<{ user?: { completedTours?: string[] } }>
@@ -68,7 +68,7 @@ export function FirstRunTour() {
   }, [activeSteps, index, open, pathname])
 
   const finish = useCallback(() => {
-    if (token) void fetch(`${API_BASE}/api/v5/auth/preferences/onboarding`, {
+    if (token) void fetchWithSeltraAuth('/api/v5/auth/preferences/onboarding', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ completedTourVersion: TOUR_VERSION }),

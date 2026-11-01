@@ -28,6 +28,7 @@ interface BuildSession {
   currentStep?: string
   startedAt: string
   events: BuildEvent[]
+  seq: number
   subscribers: Set<Subscriber>
 }
 
@@ -42,6 +43,7 @@ export class BuildEventsService {
       status: 'running',
       startedAt: new Date().toISOString(),
       events: [],
+      seq: 0,
       subscribers: new Set(),
     })
     return {
@@ -74,14 +76,16 @@ export class BuildEventsService {
     if (event.type === 'done') session.status = 'done'
     session.events.push(event)
     session.events = session.events.slice(-300)
+    session.seq += 1
     for (const subscriber of session.subscribers) subscriber(event)
   }
 
-  stream(buildId: string): Observable<MessageEvent> {
+  stream(buildId: string, after = 0): Observable<MessageEvent> {
     const session = this.sessions.get(buildId)
     if (!session) throw new NotFoundException(`Build session "${buildId}" not found`)
 
     return new Observable<MessageEvent>((observer) => {
+      let replayed = 0
       const send = (event: BuildEvent) => {
         // 'error' is a reserved/special SSE event name for EventSource — a server-sent
         // frame literally named `event: error` can race with or get swallowed by the
@@ -90,11 +94,17 @@ export class BuildEventsService {
         // The JSON payload still says type: 'error' (client logic is unaffected) — only
         // the wire-level SSE event name changes.
         const wireType = event.type === 'error' ? 'build-error' : event.type
-        observer.next({ type: wireType, data: event })
+        replayed += 1
+        observer.next({ type: wireType, id: String(replayed), data: event })
         if (event.type === 'done' || event.type === 'error') observer.complete()
       }
 
-      for (const event of session.events) send(event)
+      for (let index = 0; index < session.events.length; index += 1) {
+        const seq = Math.max(0, session.seq - session.events.length + index + 1)
+        if (seq <= after) continue
+        replayed = seq
+        send(session.events[index])
+      }
       if (session.status !== 'running') {
         observer.complete()
         return undefined
@@ -106,7 +116,7 @@ export class BuildEventsService {
         if (session.status === 'running') {
           observer.next({ type: 'heartbeat', data: { type: 'heartbeat' } })
         }
-      }, 8000)
+      }, 10000)
 
       return () => {
         clearInterval(heartbeat)

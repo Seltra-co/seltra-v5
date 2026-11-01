@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs/promises'
 import net from 'node:net'
@@ -8,6 +8,7 @@ export type WorkspaceRuntime = {
   workspaceId: string
   workspaceKey: string
   storeSlug: string
+  userId: string
   baseUrl: string
   rpcSecret: string
   modelToken: string
@@ -16,6 +17,8 @@ export type WorkspaceRuntime = {
 }
 
 type Options = { root: string; dataRoot: string; maxActive: number; idleMs: number; publicApiUrl: string; env: NodeJS.ProcessEnv }
+
+const RUNTIME_STARTUP_TIMEOUT_MS = 120_000
 
 function terminateTree(child: ChildProcess) {
   if (child.exitCode !== null || !child.pid) return
@@ -39,19 +42,31 @@ function reservePort() {
 }
 
 async function waitForRuntime(port: number, child: ChildProcess) {
-  const deadline = Date.now() + 60_000
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error('Workspace runtime exited during startup.')
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const socket = net.createConnection(port, '127.0.0.1')
-        socket.once('connect', () => { socket.end(); resolve() })
-        socket.once('error', reject)
-      })
-      return
-    } catch { await new Promise((resolve) => setTimeout(resolve, 200)) }
+  const deadline = Date.now() + RUNTIME_STARTUP_TIMEOUT_MS
+  let spawnError: Error | undefined
+  const onError = (error: Error) => { spawnError = error }
+  child.once('error', onError)
+  try {
+    while (Date.now() < deadline) {
+      if (spawnError) throw new Error(`Workspace runtime could not be started: ${spawnError.message}`)
+      if (child.exitCode !== null || child.signalCode !== null) {
+        throw new Error(`Workspace runtime exited during startup (code ${child.exitCode ?? 'none'}, signal ${child.signalCode ?? 'none'}).`)
+      }
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const socket = net.createConnection(port, '127.0.0.1')
+          socket.once('connect', () => { socket.end(); resolve() })
+          socket.once('error', reject)
+        })
+        return
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 200))
+      }
+    }
+    throw new Error('Workspace runtime did not become ready within 120 seconds.')
+  } finally {
+    child.off('error', onError)
   }
-  throw new Error('Workspace runtime did not become ready within 60 seconds.')
 }
 
 async function getOrCreateSecretsKey(root: string) {
@@ -76,16 +91,17 @@ export class WorkspaceSupervisor {
     this.timer.unref()
   }
 
-  async get(workspaceId: string, workspaceKey: string, storeSlug: string) {
+  async get(workspaceId: string, workspaceKey: string, storeSlug: string, userId: string) {
     const active = this.runtimes.get(workspaceId)
     if (active && active.child.exitCode === null) {
       if (active.workspaceKey !== workspaceKey) throw Object.assign(new Error('Workspace key does not match the active runtime.'), { code: 'WORKSPACE_KEY_MISMATCH', status: 403 })
       if (active.storeSlug !== storeSlug) throw Object.assign(new Error('Store slug changed. Restart the workspace runtime before continuing.'), { code: 'STORE_SLUG_MISMATCH', status: 409 })
+      if (active.userId !== userId) throw Object.assign(new Error('Workspace owner changed. Restart the workspace runtime before continuing.'), { code: 'WORKSPACE_OWNER_MISMATCH', status: 403 })
       active.touchedAt = Date.now(); return active
     }
     const pending = this.starts.get(workspaceId)
     if (pending) return pending
-    const start = this.start(workspaceId, workspaceKey, storeSlug)
+    const start = this.start(workspaceId, workspaceKey, storeSlug, userId)
     this.starts.set(workspaceId, start)
     try { return await start } finally { this.starts.delete(workspaceId) }
   }
@@ -100,7 +116,7 @@ export class WorkspaceSupervisor {
     return null
   }
 
-  private async start(workspaceId: string, workspaceKey: string, storeSlug: string): Promise<WorkspaceRuntime> {
+  private async start(workspaceId: string, workspaceKey: string, storeSlug: string, userId: string): Promise<WorkspaceRuntime> {
     if (this.runtimes.size >= this.options.maxActive) {
       throw Object.assign(new Error('Builder capacity is full. Try again shortly.'), { code: 'WORKSPACE_CAPACITY', status: 429 })
     }
@@ -113,6 +129,10 @@ export class WorkspaceSupervisor {
     const secretsKey = await getOrCreateSecretsKey(root)
     const rpcSecret = randomBytes(32).toString('hex')
     const modelToken = randomBytes(32).toString('hex')
+    const identitySecret = this.options.env.CORE_SERVICE_SECRET
+    if (!identitySecret) throw new Error('CORE_SERVICE_SECRET is required to bind Engine usage to the authenticated user.')
+    const creditIdentityPayload = Buffer.from(JSON.stringify({ userId, tenantId: workspaceId, expiresAt: Date.now() + 24 * 60 * 60 * 1000 })).toString('base64url')
+    const creditIdentitySignature = createHmac('sha256', identitySecret).update(creditIdentityPayload).digest('base64url')
     const runtimeEnv = { ...this.options.env }
     for (const key of ['CORE_TOKEN_SECRET', 'CORE_SERVICE_SECRET', 'NEST_INTERNAL_URL', 'MODEL_API_KEY', 'MODEL_ACCOUNT_ID', 'DATABASE_URL', 'FIGMA_ACCESS_TOKEN']) delete runtimeEnv[key]
     const child = spawn(process.execPath, [
@@ -134,6 +154,7 @@ export class WorkspaceSupervisor {
         RUNTIME_RPC_SECRET: rpcSecret,
         RUNTIME_SECRETS_KEY: secretsKey,
         WORKSPACE_MODEL_TOKEN: modelToken,
+        SELTRA_ENGINE_CREDIT_IDENTITY: `${creditIdentityPayload}.${creditIdentitySignature}`,
         MODEL_GATEWAY_URL: `http://127.0.0.1:${this.options.env.GATEWAY_PORT}/v1`,
         VITE_SELTRA_API_URL: this.options.publicApiUrl.replace(/\/$/, ''),
         VITE_SELTRA_STORE_SLUG: storeSlug,
@@ -142,10 +163,18 @@ export class WorkspaceSupervisor {
       windowsHide: true,
       detached: process.platform !== 'win32',
     })
-    const runtime = { workspaceId, workspaceKey, storeSlug, baseUrl: `http://127.0.0.1:${port}`, rpcSecret, modelToken, child, touchedAt: Date.now() }
+    const runtime = { workspaceId, workspaceKey, storeSlug, userId, baseUrl: `http://127.0.0.1:${port}`, rpcSecret, modelToken, child, touchedAt: Date.now() }
     this.runtimes.set(workspaceId, runtime)
     child.once('exit', () => { if (this.runtimes.get(workspaceId) === runtime) this.runtimes.delete(workspaceId) })
-    try { await waitForRuntime(port, child) } catch (error) { child.kill(); this.runtimes.delete(workspaceId); throw error }
+    try { await waitForRuntime(port, child) } catch (error) {
+      console.error(JSON.stringify({
+        event: 'workspace_runtime_start_failed',
+        error: error instanceof Error ? error.message : String(error),
+      }))
+      terminateTree(child)
+      this.runtimes.delete(workspaceId)
+      throw error
+    }
     return runtime
   }
 

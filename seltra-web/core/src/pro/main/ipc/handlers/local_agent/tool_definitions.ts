@@ -31,6 +31,7 @@ import { setChatSummaryTool } from "./tools/set_chat_summary";
 import { addIntegrationTool } from "./tools/add_integration";
 import { enableNitroTool } from "./tools/enable_nitro";
 import { readLogsTool } from "./tools/read_logs";
+import { repairAppTool } from "./tools/repair_app";
 import { searchReplaceTool } from "./tools/search_replace";
 import { webSearchTool } from "./tools/web_search";
 import { webCrawlTool } from "./tools/web_crawl";
@@ -184,6 +185,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   addIntegrationTool,
   enableNitroTool,
   readLogsTool,
+  repairAppTool,
   webSearchTool,
   webCrawlTool,
   webFetchTool,
@@ -445,8 +447,8 @@ function serializeActivityOutput(result: ToolResult): string {
 export interface BuildAgentToolSetOptions {
   /**
    * Selects the fail-closed surface for the active writable mode. Build mode
-   * intentionally exposes only the tools needed to create an app without
-   * Agent-only orchestration, Engine, diagnostics, or verification tools.
+   * intentionally exposes only the tools needed to create an app, including
+   * explicitly authorized image generation and repair diagnostics.
    */
   toolProfile?: "agent" | "build";
   /**
@@ -465,8 +467,8 @@ export interface BuildAgentToolSetOptions {
    */
   basicAgentMode?: boolean;
   /**
-   * If true, exclude tools that call separate Dyad Engine endpoints.
-   * The free Pro model only uses the engine chat-completions endpoint.
+   * If true, exclude engine tools that are not separately allowed for a
+   * free-model turn. Image generation still requires Seltra Engine credentials.
    */
   freeModelMode?: boolean;
   /**
@@ -476,6 +478,11 @@ export interface BuildAgentToolSetOptions {
 }
 
 export const BUILD_MODE_TOOL_NAMES = [
+  // Asset generation and repair are core Build-mode capabilities. Each still
+  // checks engine credentials at tool discovery, and repair works without
+  // vision when the engine is offline.
+  "generate_image",
+  "repair_app",
   "write_file",
   "search_replace",
   "copy_file",
@@ -772,7 +779,11 @@ export function shouldIncludeTool(
   if (options.basicAgentMode && PRO_AGENT_ONLY_TOOLS.has(tool.name)) {
     return false;
   }
-  if (options.freeModelMode && tool.usesEngineEndpoint) {
+  if (
+    options.freeModelMode &&
+    tool.usesEngineEndpoint &&
+    !tool.allowInFreeModelMode
+  ) {
     return false;
   }
   if (tool.subagentOnly && !ctx.isDyadPro) {

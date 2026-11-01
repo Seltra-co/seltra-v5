@@ -1,12 +1,30 @@
 /**
- * Shared utility for making fetch requests to the Dyad engine API.
+ * Shared utility for making fetch requests to Seltra's OpenAI-compatible pro
+ * engine API. DYAD_ENGINE_URL remains supported as a migration fallback.
  * Handles common headers including Authorization and X-Dyad-Request-Id.
  */
 
 import { readSettings } from "@/main/settings";
+import log from "electron-log";
 import type { AgentContext } from "./types";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
-import { getDyadEngineBaseUrl } from "@/ipc/utils/dyad_engine_url";
+import { getSeltraEngineBaseUrl } from "@/ipc/utils/seltra_engine_url";
+
+let warnedLegacyKey = false;
+
+function getSeltraEngineApiKey(settings = readSettings()): string | undefined {
+  const seltraKey = process.env.SELTRA_ENGINE_API_KEY?.trim();
+  if (seltraKey) return seltraKey;
+  const configuredKey = settings.seltraEngineApiKey?.value;
+  if (configuredKey) return configuredKey;
+  if (process.env.SELTRA_ENGINE_URL) return undefined;
+  const legacyKey = settings.providerSettings?.auto?.apiKey?.value;
+  if (legacyKey && !warnedLegacyKey) {
+    warnedLegacyKey = true;
+    logger.warn("legacy engine settings in use; migrate to SELTRA_ENGINE_*");
+  }
+  return legacyKey;
+}
 
 export interface EngineFetchOptions extends Omit<RequestInit, "headers"> {
   /** Additional headers to include */
@@ -25,12 +43,22 @@ export interface EngineFetchResponse {
   json(): Promise<unknown>;
 }
 
+const logger = log.scope("seltra_engine_fetch");
+
 export const DEFAULT_ENGINE_FETCH_TIMEOUT_MS = 300_000;
+
+export function isSeltraEngineConfigured(): boolean {
+  try {
+    return Boolean(getSeltraEngineApiKey() && getSeltraEngineBaseUrl());
+  } catch {
+    return false;
+  }
+}
 
 export class EngineFetchTimeoutError extends DyadError {
   constructor(endpoint: string, timeoutMs = DEFAULT_ENGINE_FETCH_TIMEOUT_MS) {
     super(
-      `Dyad engine request to ${endpoint} timed out after ${timeoutMs}ms`,
+      `Seltra Engine request to ${endpoint} timed out after ${timeoutMs}ms`,
       DyadErrorKind.External,
     );
     this.name = "EngineFetchTimeoutError";
@@ -69,10 +97,10 @@ export async function engineFetch(
   }
 
   const settings = readSettings();
-  const apiKey = settings.providerSettings?.auto?.apiKey?.value;
+  const apiKey = getSeltraEngineApiKey(settings);
 
   if (!apiKey) {
-    throw new DyadError("Dyad Pro API key is required", DyadErrorKind.Auth);
+    throw new DyadError("Seltra engine API key is required", DyadErrorKind.Auth);
   }
 
   const {
@@ -120,13 +148,16 @@ export async function engineFetch(
 
   try {
     requestController.signal.throwIfAborted();
-    const response = await fetch(`${getDyadEngineBaseUrl()}${endpoint}`, {
+    const response = await fetch(`${getSeltraEngineBaseUrl()}${endpoint}`, {
       ...restOptions,
       signal: requestController.signal,
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
-        "X-Dyad-Request-Id": ctx.dyadRequestId,
+        "X-Request-ID": ctx.dyadRequestId,
+        ...(process.env.SELTRA_ENGINE_CREDIT_IDENTITY?.trim()
+          ? { "x-seltra-credit-identity": process.env.SELTRA_ENGINE_CREDIT_IDENTITY.trim() }
+          : {}),
         ...extraHeaders,
       },
     });

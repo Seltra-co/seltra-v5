@@ -1,7 +1,10 @@
+import { fetchWithSeltraAuth } from '../auth-session'
+
 export type CoreSession = {
   coreToken: string
   expiresIn: number
   workspaceId: string
+  creditWorkspaceId?: string
   coreWorkspaceKey: string
   storeSlug: string
   plan: string
@@ -14,6 +17,19 @@ type CoreIpcEnvelope<T> = {
   value?: T
   error?: { name?: string; message?: string; code?: string }
 }
+
+const RETRYABLE_RPC_CHANNELS = new Set([
+  'distributed-machine:dispatch',
+  'distributed-machine:subscribe',
+  'app-blueprint:edit-field',
+  'app-blueprint:approve',
+  'get-app',
+  'get-chat',
+  'list-apps',
+  'select-app-for-preview',
+  'set-app-theme',
+  'user-input:get-pending',
+])
 
 function unwrapCoreIpcEnvelope<T>(value: unknown): T {
   if (!value || typeof value !== 'object' || (value as { __dyadIpcEnvelope?: unknown }).__dyadIpcEnvelope !== 'dyad-ipc-envelope-v1') {
@@ -48,14 +64,28 @@ export class CoreClient {
 
   async invoke<T>(channel: string, args: unknown[] = [], runtimeSession?: string): Promise<T> {
     let session = await this.getSession()
+    const body = JSON.stringify({ args, undefinedArgs: args.flatMap((arg, i) => arg === undefined ? [i] : []) })
     const send = () => fetch(`${this.baseUrl}/api/rpc/${encodeURIComponent(channel)}`, {
       method: 'POST', headers: {
         authorization: `Bearer ${session.coreToken}`,
         'content-type': 'application/json',
         ...(runtimeSession ? { 'x-runtime-session': runtimeSession } : {}),
-      }, body: JSON.stringify({ args, undefinedArgs: args.flatMap((arg, i) => arg === undefined ? [i] : []) }),
+      }, body,
     })
-    let response = await send()
+    // Retry only idempotent operations. A dispatch reuses its messageId, so a
+    // lost response replays the same actor command rather than duplicating it.
+    const retryable = RETRYABLE_RPC_CHANNELS.has(channel)
+    let response: Response | undefined
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        response = await send()
+        if (!retryable || attempt >= 2 || ![502, 503, 504].includes(response.status)) break
+      } catch (error) {
+        if (!retryable || attempt >= 2) throw error
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 500 * (attempt + 1)))
+    }
+    if (!response) throw new Error('Builder request did not return a response.')
     if (response.status === 401) {
       session = await this.refreshSession()
       response = await send()
@@ -72,12 +102,11 @@ export class CoreClient {
   async wsTicket(): Promise<string> {
     const accessToken = localStorage.getItem('seltra:token')
     const session = await this.getSession()
-    const response = await fetch('/api/v5/builder/ws-ticket', {
+    const response = await fetchWithSeltraAuth('/api/v5/builder/ws-ticket', {
       method: 'POST', headers: { authorization: `Bearer ${accessToken || ''}`, 'content-type': 'application/json' },
       body: JSON.stringify({ tenantId: session.workspaceId }), cache: 'no-store',
     })
     const payload = await response.json().catch(() => ({})) as { ticket?: string; message?: string }
-    if (response.status === 401) window.dispatchEvent(new Event('seltra:auth-expired'))
     if (!response.ok || !payload.ticket) throw new Error(payload.message || 'Could not reconnect to the builder.')
     return payload.ticket
   }

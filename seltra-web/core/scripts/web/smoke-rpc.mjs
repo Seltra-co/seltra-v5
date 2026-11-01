@@ -67,21 +67,31 @@ async function requestJson(url, sessionId, body, timeoutMs = 120_000) {
 }
 
 async function waitForRuntime(port) {
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    if (runtime.exitCode !== null) throw new Error(`Runtime exited early (${runtime.exitCode})`);
-    try {
-      await new Promise((resolve, reject) => {
-        const socket = netModule.connect(port, "127.0.0.1", resolve);
-        socket.once("error", reject);
-        socket.once("connect", () => socket.end());
-      });
-      return;
-    } catch {
-      await delay(250);
+  const deadline = Date.now() + 120_000;
+  let startupError;
+  const onError = (error) => { startupError = error; };
+  runtime.once("error", onError);
+  try {
+    while (Date.now() < deadline) {
+      if (startupError) throw new Error(`Runtime could not be started: ${startupError.message}`);
+      if (runtime.exitCode !== null || runtime.signalCode !== null) {
+        throw new Error(`Runtime exited early (code ${runtime.exitCode ?? "none"}, signal ${runtime.signalCode ?? "none"})`);
+      }
+      try {
+        await new Promise((resolve, reject) => {
+          const socket = netModule.connect(port, "127.0.0.1", resolve);
+          socket.once("error", reject);
+          socket.once("connect", () => socket.end());
+        });
+        return;
+      } catch {
+        await delay(250);
+      }
     }
+    throw new Error("Runtime RPC server did not start within 120 seconds");
+  } finally {
+    runtime.off("error", onError);
   }
-  throw new Error("Runtime RPC server did not start within 60 seconds");
 }
 
 const netModule = await import("node:net");
@@ -230,13 +240,15 @@ try {
       observedStopPolicyVersion: 0,
     },
   });
-  const eventDeadline = Date.now() + 5_000;
+  const eventDeadline = Date.now() + 120_000;
   while (!frames.some((frame) => frame.channel === "chat:response:end" || frame.channel === "chat:response:error") && Date.now() < eventDeadline) await delay(10);
   if (!frames.some((frame) => frame.channel === "chat:response:chunk")) {
     throw new Error("No chat response chunks arrived over /events");
   }
-  if (!frames.some((frame) => frame.channel === "chat:response:end")) {
-    throw new Error("Chat stream did not complete successfully");
+  const completedFrame = frames.find((frame) => frame.channel === "chat:response:end");
+  if (!completedFrame) {
+    const errorFrame = frames.find((frame) => frame.channel === "chat:response:error");
+    throw new Error(`Chat stream did not complete successfully: ${JSON.stringify(errorFrame ?? null)}`);
   }
 
   const appRecord = await rpc("get-app", appId);

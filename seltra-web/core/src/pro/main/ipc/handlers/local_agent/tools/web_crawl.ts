@@ -1,7 +1,7 @@
 import { z } from "zod";
 import log from "electron-log";
 import { ToolDefinition, escapeXmlContent, AgentContext } from "./types";
-import { engineFetch } from "./engine_fetch";
+import { engineFetch, isSeltraEngineConfigured } from "./engine_fetch";
 import {
   getImageDimensionsFromDataUrl,
   isImageTooLarge,
@@ -116,7 +116,7 @@ export const webCrawlTool: ToolDefinition<z.infer<typeof webCrawlSchema>> = {
   usesEngineEndpoint: true,
 
   // Requires Dyad Pro engine API
-  isEnabled: (ctx) => ctx.isDyadPro,
+  isEnabled: () => isSeltraEngineConfigured(),
 
   getConsentPreview: (args) => `Crawl URL: "${args.url}"`,
 

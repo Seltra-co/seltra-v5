@@ -1,7 +1,7 @@
 import { z } from "zod";
 import log from "electron-log";
 import { ToolDefinition, escapeXmlContent, AgentContext } from "./types";
-import { engineFetch } from "./engine_fetch";
+import { engineFetch, isSeltraEngineConfigured } from "./engine_fetch";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
 import {
   recordResearchSources,
@@ -93,7 +93,7 @@ export const webFetchTool: ToolDefinition<z.infer<typeof webFetchSchema>> = {
   usesEngineEndpoint: true,
 
   // Requires Dyad Pro engine API
-  isEnabled: (ctx) => ctx.isDyadPro,
+  isEnabled: () => isSeltraEngineConfigured(),
 
   getConsentPreview: (args) => `Fetch URL: "${args.url}"`,
 

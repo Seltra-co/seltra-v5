@@ -3,6 +3,7 @@
 import { Loader2, Sparkles } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { StoreData } from './StorefrontPreview'
+import { playCompletionTone, unlockCompletionTone } from '../../lib/completion-tone'
 
 type BuildEvent =
   | { type: 'step'; step: string; status: 'started' | 'completed' | 'failed'; label?: string }
@@ -154,6 +155,7 @@ export function AgentBuildStream({
 
   useEffect(() => {
     if (!buildId) return
+    unlockCompletionTone()
 
     setPriorThought(null)
     setCurrent(null)
@@ -169,8 +171,7 @@ export function AgentBuildStream({
     publish(null)
 
     let source: EventSource | null = null
-    const MAX_RECONNECTS = 6
-    const RECONNECT_DELAY_MS = 3000
+    const MAX_RECONNECTS = 12
 
     const clearKeepAlive = () => {
       if (keepAliveTimeout.current) {
@@ -212,7 +213,7 @@ export function AgentBuildStream({
       reconnectTimeout.current = window.setTimeout(() => {
         if (finishedRef.current) return
         source = createSource()
-      }, RECONNECT_DELAY_MS)
+      }, Math.min(15000, 1000 * (2 ** Math.min(reconnectAttempts.current - 1, 4))) + Math.floor(Math.random() * 400))
     }
 
     const resetTimeout = () => {
@@ -278,7 +279,7 @@ export function AgentBuildStream({
             const next = {
               kind: 'action' as const,
               title: deriveActionTitle(parsed.step, label),
-              subtext: 'Working on the current build step',
+              subtext: label && label !== parsed.step ? label : 'Building this step',
               resolved: false,
             }
             setCurrent(next)
@@ -393,6 +394,7 @@ export function AgentBuildStream({
           source?.close()
           publish(stepRef.current, true)
           const nextStore = parsed.store && typeof parsed.store === 'object' ? (parsed.store as StoreData) : undefined
+          playCompletionTone()
           onDone?.(nextStore)
           return
         }

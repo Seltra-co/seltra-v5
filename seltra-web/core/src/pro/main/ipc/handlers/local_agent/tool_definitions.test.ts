@@ -10,8 +10,10 @@ import {
 } from "./tool_definitions";
 
 describe("Build mode tool profile", () => {
-  it("is an exact, engine-free, non-sub-agent allowlist", () => {
+  it("is an exact, non-sub-agent allowlist with explicitly authorized engine capabilities", () => {
     expect(BUILD_MODE_TOOL_NAMES).toEqual([
+      "generate_image",
+      "repair_app",
       "write_file",
       "search_replace",
       "copy_file",
@@ -47,7 +49,9 @@ describe("Build mode tool profile", () => {
         definition,
         `${name} must exist in TOOL_DEFINITIONS`,
       ).toBeDefined();
-      expect(definition?.usesEngineEndpoint, name).not.toBe(true);
+      if (definition?.usesEngineEndpoint) {
+        expect(definition.allowInFreeModelMode, name).toBe(true);
+      }
       expect(definition?.subagentOnly, name).not.toBe(true);
     }
   });
@@ -152,6 +156,41 @@ describe("Build mode tool profile", () => {
 });
 
 describe("discovery versus invocation availability", () => {
+  it("exposes image generation only with a configured Seltra Engine URL and key", () => {
+    const tool = TOOL_DEFINITIONS.find((entry) => entry.name === "generate_image")!;
+    const ctx = { isDyadPro: false } as import("./tools/types").AgentContext;
+    const oldUrl = process.env.SELTRA_ENGINE_URL;
+    const oldKey = process.env.SELTRA_ENGINE_API_KEY;
+    delete process.env.SELTRA_ENGINE_URL;
+    delete process.env.SELTRA_ENGINE_API_KEY;
+    expect(shouldIncludeTool(tool, ctx, {}, "invocation")).toBe(false);
+    process.env.SELTRA_ENGINE_URL = "http://localhost:3001/v1";
+    process.env.SELTRA_ENGINE_API_KEY = "sk_seltra_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
+    expect(shouldIncludeTool(tool, ctx, {}, "invocation")).toBe(true);
+    if (oldUrl === undefined) delete process.env.SELTRA_ENGINE_URL;
+    else process.env.SELTRA_ENGINE_URL = oldUrl;
+    if (oldKey === undefined) delete process.env.SELTRA_ENGINE_API_KEY;
+    else process.env.SELTRA_ENGINE_API_KEY = oldKey;
+  });
+
+  it("exposes image generation and repair in Build mode with a configured engine, including free-model mode", () => {
+    const imageTool = TOOL_DEFINITIONS.find((entry) => entry.name === "generate_image")!;
+    const repairTool = TOOL_DEFINITIONS.find((entry) => entry.name === "repair_app")!;
+    const ctx = { isDyadPro: false, freeModelMode: true } as import("./tools/types").AgentContext;
+    const oldUrl = process.env.SELTRA_ENGINE_URL;
+    const oldKey = process.env.SELTRA_ENGINE_API_KEY;
+    process.env.SELTRA_ENGINE_URL = "http://localhost:3001/v1";
+    process.env.SELTRA_ENGINE_API_KEY = "sk_seltra_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
+
+    expect(shouldIncludeTool(imageTool, ctx, { toolProfile: "build", freeModelMode: true })).toBe(true);
+    expect(shouldIncludeTool(repairTool, ctx, { toolProfile: "build", freeModelMode: true })).toBe(true);
+
+    if (oldUrl === undefined) delete process.env.SELTRA_ENGINE_URL;
+    else process.env.SELTRA_ENGINE_URL = oldUrl;
+    if (oldKey === undefined) delete process.env.SELTRA_ENGINE_API_KEY;
+    else process.env.SELTRA_ENGINE_API_KEY = oldKey;
+  });
+
   it("keeps operationally unavailable pre-commit calls invocable but enforces read-only boundaries", () => {
     const tool = TOOL_DEFINITIONS.find(
       (tool) => tool.name === "run_pre_commit",
@@ -194,7 +233,7 @@ describe("discovery versus invocation availability", () => {
       isDyadPro: true,
     } as import("./tools/types").AgentContext;
     expect(shouldIncludeTool(tool, ctx)).toBe(false);
-    expect(shouldIncludeTool(tool, ctx, {}, "invocation")).toBe(true);
+    expect(shouldIncludeTool(tool, ctx, {}, "invocation")).toBe(false);
     expect(
       shouldIncludeTool(tool, { ...ctx, isDyadPro: false }, {}, "invocation"),
     ).toBe(false);

@@ -417,6 +417,11 @@ export function writeSettings(settings: Partial<UserSettings>): void {
         newSettings.cloudflareAccessToken.value,
       );
     }
+    if (newSettings.seltraEngineApiKey) {
+      newSettings.seltraEngineApiKey = encrypt(
+        newSettings.seltraEngineApiKey.value,
+      );
+    }
     if (newSettings.coolify?.accessToken) {
       newSettings.coolify = {
         ...newSettings.coolify,
@@ -701,6 +706,16 @@ function readExistingSettingsFile(
     } else {
       delete combinedSettings.cloudflareAccessToken;
     }
+  }
+  if (combinedSettings.seltraEngineApiKey) {
+    const resolved = resolveStoredSecret(
+      combinedSettings.seltraEngineApiKey,
+      "Seltra Engine API key",
+      ["seltraEngineApiKey"],
+      ctx,
+    );
+    if (resolved) combinedSettings.seltraEngineApiKey = resolved;
+    else delete combinedSettings.seltraEngineApiKey;
   }
   if (combinedSettings.coolify?.accessToken) {
     const resolved = resolveStoredSecret(

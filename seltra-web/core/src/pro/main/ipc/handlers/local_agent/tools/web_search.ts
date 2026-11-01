@@ -6,7 +6,7 @@ import {
   escapeXmlAttr,
   escapeXmlContent,
 } from "./types";
-import { engineFetch } from "./engine_fetch";
+import { engineFetch, isSeltraEngineConfigured } from "./engine_fetch";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
 import {
   recordResearchSources,
@@ -183,7 +183,7 @@ export const webSearchTool: ToolDefinition<z.infer<typeof webSearchSchema>> = {
   usesEngineEndpoint: true,
 
   // Requires Dyad Pro engine API
-  isEnabled: (ctx) => ctx.isDyadPro,
+  isEnabled: () => isSeltraEngineConfigured(),
 
   getConsentPreview: (args) => `Search the web: "${args.query}"`,
 

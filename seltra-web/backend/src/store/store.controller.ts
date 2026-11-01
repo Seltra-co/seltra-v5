@@ -1,5 +1,5 @@
 //seltra-web/backend/src/store/store.controller.ts
-import { BadRequestException, Body, Controller, Delete, Get, Headers, HttpCode, Param, Patch, Post, Sse } from '@nestjs/common'
+import { BadRequestException, Body, Controller, Delete, Get, Headers, HttpCode, Param, Patch, Post, Query, Sse } from '@nestjs/common'
 import { StoreService } from './store.service'
 import { BuildEventsService } from './build-events.service'
 import { planFromPrompt } from '../ai/agents/business-planner.agent'
@@ -121,8 +121,9 @@ export class StoreController {
   }
 
   @Sse('build/:id/events')
-  streamBuild(@Param('id') id: string) {
-    return this.buildEvents.stream(id)
+  streamBuild(@Param('id') id: string, @Query('after') after?: string) {
+    const sequence = Number.isFinite(Number(after)) ? Math.max(0, Number(after)) : 0
+    return this.buildEvents.stream(id, sequence)
   }
 
   @Get()

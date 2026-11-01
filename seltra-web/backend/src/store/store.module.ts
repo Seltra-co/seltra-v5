@@ -8,6 +8,10 @@ import { BuildEventsService } from './build-events.service'
 import { TenantEventsService } from '../internal-ops/events/tenant-events.service'
 import { StoreImageController } from './store-image.controller'
 import { StoreImageService } from './store-image.service'
+import { RunService } from '../build/run.service'
+import { RunController } from '../build/run.controller'
+import { ProjectController } from '../build/project.controller'
+import { CreditsService } from '../credits/credits.service'
 
 @Module({
   imports: [
@@ -16,8 +20,8 @@ import { StoreImageService } from './store-image.service'
       signOptions: { expiresIn: '7d' },
     }),
   ],
-  controllers: [StoreController, ProductsController, CloudinaryController, StoreImageController],
-  providers: [StoreService, BuildEventsService, TenantEventsService, StoreImageService],
-  exports: [StoreService, StoreImageService],
+  controllers: [StoreController, ProductsController, CloudinaryController, StoreImageController, RunController, ProjectController],
+  providers: [StoreService, BuildEventsService, TenantEventsService, StoreImageService, RunService, CreditsService],
+  exports: [StoreService, StoreImageService, CreditsService],
 })
 export class StoreModule {}

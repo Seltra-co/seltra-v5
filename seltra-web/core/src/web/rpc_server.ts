@@ -31,6 +31,8 @@ export type RunningRpcServer = {
 };
 
 const abandonedInvocations = new Map<string, { channel: string; at: number }>();
+// Keep this in sync with the Core gateway's distributed-machine RPC limit.
+const MAX_RPC_BODY_BYTES = 40 * 1024 * 1024;
 
 export function getAbandonedRpcInvocations() {
   return [...abandonedInvocations.values()];
@@ -98,8 +100,8 @@ async function readBody(request: IncomingMessage): Promise<unknown> {
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.length;
-    if (size > 1024 * 1024)
-      throw Object.assign(new Error("Request body too large"), {
+    if (size > MAX_RPC_BODY_BYTES)
+      throw Object.assign(new Error("Request body exceeds the allowed size."), {
         code: "BODY_TOO_LARGE",
       });
     chunks.push(buffer);
@@ -112,10 +114,12 @@ export function createRpcServer(
 ): RunningRpcServer {
   const secret = options.secret ?? process.env.RUNTIME_RPC_SECRET;
   if (!secret) throw new Error("RUNTIME_RPC_SECRET must be configured");
-  const defaultTimeoutMs = options.defaultTimeoutMs ?? 120_000;
+  // Builder setup can involve cold starts and slow package installs. Give
+  // ordinary RPCs enough time to finish across distant regions; chat dispatch
+  // and restart retain their longer channel-specific limit below.
+  const defaultTimeoutMs = options.defaultTimeoutMs ?? 10 * 60_000;
   const sockets = new Set<WebSocket>();
   const sessions = new Map<string, WebSession>();
-  const chatsBySession = new Map<string, Set<number>>();
   const server = createServer(async (request, response) => {
     if (!authorized(request, secret)) {
       sendJson(response, 401, {
@@ -192,9 +196,13 @@ export function createRpcServer(
     try {
       body = (await readBody(request)) as { args?: unknown };
     } catch (error) {
-      sendJson(response, 400, {
+      const tooLarge = (error as { code?: string }).code === "BODY_TOO_LARGE";
+      sendJson(response, tooLarge ? 413 : 400, {
         ok: false,
-        error: { code: "INVALID_REQUEST", message: (error as Error).message },
+        error: {
+          code: tooLarge ? "BODY_TOO_LARGE" : "INVALID_REQUEST",
+          message: (error as Error).message,
+        },
       });
       return;
     }
@@ -246,17 +254,6 @@ export function createRpcServer(
         ? (body.args[0] as { encodedKey?: { chatId?: unknown } }).encodedKey
             ?.chatId
         : undefined;
-    let chatCancelStarted = false;
-    const cancelDispatchedChat = () => {
-      if (chatCancelStarted || typeof dispatchedChatId !== "number") return;
-      chatCancelStarted = true;
-      void ipcMain
-        .invoke("chat:cancel", [dispatchedChatId], {
-          session,
-          signal: new AbortController().signal,
-        })
-        .catch(() => undefined);
-    };
     const abandon = (reason: "timeout" | "disconnect") => {
       if (settled || !invocation || !invocationId) return;
       if (!abandonedInvocations.has(invocationId)) {
@@ -271,8 +268,9 @@ export function createRpcServer(
     };
     const abortOnDisconnect = () => {
       abandon("disconnect");
-      abort.abort(new Error("RPC client disconnected"));
-      cancelDispatchedChat();
+      // Losing the response connection is not a user cancellation. Let the
+      // current operation finish; explicit cancellation uses the chat machine
+      // stop event, and RPCs still have a bounded server-side timeout.
     };
     request.once("aborted", abortOnDisconnect);
     response.once("close", () => {
@@ -291,9 +289,6 @@ export function createRpcServer(
       const isInvoke = (VALID_INVOKE_CHANNELS as readonly string[]).includes(
         channel,
       );
-      if (typeof dispatchedChatId === "number") {
-        chatsBySession.get(session.id)?.add(dispatchedChatId);
-      }
       if (!isInvoke) {
         ipcMain.sendForSession(channel, body.args, session);
         sendJson(response, 200, { ok: true, result: null });
@@ -366,42 +361,40 @@ export function createRpcServer(
       request.off("aborted", abortOnDisconnect);
     }
   });
+  // Keep long running RPC responses alive for cold workspaces and users with
+  // higher latency. These are inactivity limits; WebSocket heartbeats below
+  // keep the event channel alive independently.
+  server.timeout = 16 * 60_000;
+  server.requestTimeout = 16 * 60_000;
+  server.keepAliveTimeout = 75_000;
 
   const websocketServer = new WebSocketServer({ noServer: true });
   websocketServer.on("connection", (socket) => {
     sockets.add(socket);
     const id = randomUUID();
     const openedAt = Date.now();
-    const activeChatIds = new Set<number>();
-    chatsBySession.set(id, activeChatIds);
+    let isAlive = true;
+    const heartbeat = setInterval(() => {
+      if (socket.readyState !== socket.OPEN) return;
+      if (!isAlive) {
+        socket.terminate();
+        return;
+      }
+      isAlive = false;
+      socket.ping();
+    }, 30_000);
+    socket.on("pong", () => { isAlive = true; });
     sessions.set(id, {
       id,
       send: (channel, payload) => {
-        if (
-          (channel === "chat:response:end" ||
-            channel === "chat:response:error") &&
-          payload &&
-          typeof payload === "object" &&
-          typeof (payload as { chatId?: unknown }).chatId === "number"
-        ) {
-          activeChatIds.delete((payload as { chatId: number }).chatId);
-        }
         if (socket.readyState === socket.OPEN)
           socket.send(
             JSON.stringify({ channel, payload: rewritePreviewUrls(payload) }),
           );
       },
       close: () => {
-        for (const chatId of activeChatIds) {
-          void ipcMain
-            .invoke("chat:cancel", [chatId], {
-              session: sessions.get(id)!,
-              signal: new AbortController().signal,
-            })
-            .catch(() => undefined);
-        }
-        activeChatIds.clear();
-        chatsBySession.delete(id);
+        // Socket loss is transient and must not be treated like the user's
+        // explicit Stop action. Active chat actors remain resumable.
       },
     });
     socket.send(JSON.stringify({ channel: "web:session", payload: { id } }));
@@ -418,6 +411,7 @@ export function createRpcServer(
         }),
       );
       sockets.delete(socket);
+      clearInterval(heartbeat);
       const session = sessions.get(id);
       if (session) {
         closeWebSession(session);

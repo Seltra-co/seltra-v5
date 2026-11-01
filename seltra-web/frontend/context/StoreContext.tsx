@@ -1,6 +1,6 @@
 //seltra-web/frontend/context/StoreContext.tsx
 'use client'
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
 import type { StoreData } from '@/components/storefront/StorefrontPreview'
 
 const KEY = 'seltra:active_store'
@@ -9,17 +9,12 @@ type Ctx = { activeStore: StoreData | null; setActiveStore: (s: StoreData | null
 
 const StoreContext = createContext<Ctx | undefined>(undefined)
 
-function read(): StoreData | null {
-  if (typeof window === 'undefined') return null
-  try { const r = localStorage.getItem(KEY); return r ? JSON.parse(r) : null } catch { return null }
-}
-
 export function StoreProvider({ children }: { children: ReactNode }) {
-  // Keep the server and first browser render identical. The persisted store
-  // is restored after hydration so pages don't render different business
-  // copy (or project state) on the two sides of the boundary.
+  // A persisted store is only a selection hint. It must be revalidated against
+  // the signed-in user's store list before components use it for tenant APIs.
+  // Restoring it here caused requests to run against a previous account or
+  // database before the dashboard could reconcile ownership.
   const [store, setStoreState] = useState<StoreData | null>(null)
-  useEffect(() => { setStoreState(read()) }, [])
   const value = useMemo<Ctx>(() => ({
     activeStore: store,
     setActiveStore: (s) => {

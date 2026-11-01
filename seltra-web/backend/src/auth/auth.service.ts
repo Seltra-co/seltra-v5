@@ -2,13 +2,15 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import * as bcrypt from 'bcryptjs'
-import { createHmac, randomInt, timingSafeEqual } from 'crypto'
+import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'crypto'
 import { Cron } from '@nestjs/schedule'
 import { prisma } from '../db'
 import { TenantEventsService } from '../internal-ops/events/tenant-events.service'
 import { ResendService } from '../resend/resend.service'
-import { getSupabaseAdmin, getSupabaseAnon } from '../supabase/supabase.client'
 import { resolveUserIdFromAuthorization } from './resolve-user'
+import { REFRESH_TOKEN_TTL_MS } from './auth.constants'
+import { creditAllowanceForPlan } from '../common/credit-plan'
+import { mirrorWorkspaceCredit } from '../credits/workspace_credit_mirror'
 
 const GENERIC_LOGIN_ERROR = 'That email or password is incorrect.'
 const MERCHANT_ID_PATTERN = /^(SELTRA-[A-Z0-9]+-[0-9A-Z]+|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i
@@ -26,6 +28,16 @@ type MerchantLoginInput = {
 type LoginAttemptWindow = {
   count: number
   resetAt: number
+}
+
+type AuthenticatedUser = {
+  id: string
+  email: string
+  name: string | null
+  createdAt?: Date
+  plan?: string | null
+  completedTours?: string[]
+  dismissedAnnouncements?: string[]
 }
 
 @Injectable()
@@ -90,6 +102,10 @@ export class AuthService {
     try {
       user = await prisma.$transaction(async (tx) => {
         const created = await tx.user.create({ data: { email, name, passwordHash } })
+        const freeAllowance = creditAllowanceForPlan('free')
+        const creditAccount = await tx.userCredit.create({ data: { userId: created.id, balance: freeAllowance, lifetimeGranted: freeAllowance, windowAllowance: freeAllowance, plan: 'free' } })
+        await tx.userCreditLedger.create({ data: { id: randomUUID(), userId: created.id, kind: 'grant', delta: freeAllowance, balanceAfter: freeAllowance, meta: { reason: 'new_free_user_allowance', tokensPerCredit: 1000 } } })
+        await mirrorWorkspaceCredit(tx, creditAccount)
         const applicationData = { ...normalized, status: 'approved' as const, merchantId, userId: created.id, reviewedAt: new Date(), credentialsGeneratedAt: new Date() }
         if (existing) await tx.merchantApplication.update({ where: { id: existing.id }, data: applicationData })
         else await tx.merchantApplication.create({ data: applicationData })
@@ -347,13 +363,11 @@ export class AuthService {
       data: { passwordHash },
     })
 
-    const session = await this.ensureSupabaseUser(email, nextPassword, user.name)
-
-    return {
-      ...this.authPayload(user, session?.access_token),
-      refresh_token: session?.refresh_token,
-      otpRequired: false,
-    }
+    await prisma.refreshToken.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    })
+    return { ...(await this.issueSession(user)), otpRequired: false }
   }
 
   private async signinWithPassword(email: string, password: string, ip: string) {
@@ -384,58 +398,6 @@ export class AuthService {
     } catch (error) {
       console.error('[auth] unable to persist login notification', error)
     }
-  }
-
-  private async signInWithSupabase(email: string, password: string) {
-    const client = getSupabaseAnon()
-    if (!client) return null
-    const { data, error } = await client.auth.signInWithPassword({ email, password })
-    if (error || !data.session) return null
-    return {
-      access_token: data.session.access_token,
-      refresh_token: data.session.refresh_token,
-    }
-  }
-
-  private async ensureSupabaseUser(email: string, password: string, name: string | null) {
-    const admin = getSupabaseAdmin()
-    if (!admin) return null
-
-    const metadata = { name: name || undefined, full_name: name || undefined }
-    const { error: createError } = await admin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: metadata,
-    })
-
-    if (createError && !/already|registered|exists/i.test(createError.message)) {
-      console.error('[Supabase] createUser failed', createError.message)
-      return null
-    }
-
-    if (createError) {
-      const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
-        type: 'recovery',
-        email,
-      })
-      const userId = linkData?.user?.id
-      if (linkError || !userId) {
-        console.error('[Supabase] lookup user failed', linkError?.message)
-        return null
-      }
-      const { error: updateError } = await admin.auth.admin.updateUserById(userId, {
-        password,
-        email_confirm: true,
-        user_metadata: metadata,
-      })
-      if (updateError) {
-        console.error('[Supabase] updateUser failed', updateError.message)
-        return null
-      }
-    }
-
-    return this.signInWithSupabase(email, password)
   }
 
   private resetKey(email: string) {
@@ -535,7 +497,69 @@ export class AuthService {
     })
     if (!application?.user) throw new UnauthorizedException('Merchant account is not available.')
     await this.recordLogin(application.email)
-    return { success: true, ...this.authPayload(application.user) }
+    return { success: true, ...(await this.issueSession(application.user)) }
+  }
+
+  async refreshSession(refreshToken: string | undefined) {
+    if (!refreshToken) throw new UnauthorizedException('Refresh token is missing')
+    const now = new Date()
+    const tokenHash = this.hashRefreshToken(refreshToken)
+    const rotated = await prisma.$transaction(async (tx) => {
+      const current = await tx.refreshToken.findUnique({
+        where: { tokenHash },
+        include: { user: true },
+      })
+      if (!current || current.revokedAt || current.expiresAt <= now) return null
+
+      const revoked = await tx.refreshToken.updateMany({
+        where: { id: current.id, revokedAt: null, expiresAt: { gt: now } },
+        data: { revokedAt: now },
+      })
+      if (revoked.count !== 1) return null
+
+      const nextToken = this.newRefreshToken()
+      await tx.refreshToken.create({
+        data: {
+          userId: current.userId,
+          tokenHash: this.hashRefreshToken(nextToken),
+          expiresAt: new Date(now.getTime() + REFRESH_TOKEN_TTL_MS),
+        },
+      })
+      return { user: current.user, refreshToken: nextToken }
+    })
+
+    if (!rotated) throw new UnauthorizedException('Refresh token is invalid or expired')
+    return { ...this.authPayload(rotated.user), refreshToken: rotated.refreshToken }
+  }
+
+  async revokeRefreshToken(refreshToken: string | undefined) {
+    if (refreshToken) {
+      await prisma.refreshToken.updateMany({
+        where: { tokenHash: this.hashRefreshToken(refreshToken), revokedAt: null },
+        data: { revokedAt: new Date() },
+      })
+    }
+    return { success: true }
+  }
+
+  private async issueSession(user: AuthenticatedUser) {
+    const refreshToken = this.newRefreshToken()
+    await prisma.refreshToken.create({
+      data: {
+        userId: user.id,
+        tokenHash: this.hashRefreshToken(refreshToken),
+        expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
+      },
+    })
+    return { ...this.authPayload(user), refreshToken }
+  }
+
+  private newRefreshToken() {
+    return randomBytes(48).toString('base64url')
+  }
+
+  private hashRefreshToken(token: string) {
+    return createHash('sha256').update(token).digest('hex')
   }
 
   async me(token: string) {
@@ -686,12 +710,9 @@ export class AuthService {
   //   })
   // }
 
-  private authPayload(
-    user: { id: string; email: string; name: string | null; createdAt?: Date; plan?: string | null },
-    accessToken?: string,
-  ) {
+  private authPayload(user: AuthenticatedUser) {
     const publicUser = this.publicUser(user)
-    const token = accessToken || this.jwtService.sign({ sub: user.id, email: user.email })
+    const token = this.jwtService.sign({ sub: user.id, email: user.email })
     return {
       token,
       access_token: token,
@@ -699,7 +720,7 @@ export class AuthService {
     }
   }
 
-  private publicUser(user: { id: string; email: string; name: string | null; createdAt?: Date; plan?: string | null; completedTours?: string[]; dismissedAnnouncements?: string[] }) {
+  private publicUser(user: AuthenticatedUser) {
     return {
       id: user.id,
       email: user.email,

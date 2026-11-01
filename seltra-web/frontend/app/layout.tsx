@@ -1,6 +1,5 @@
 //seltra-web/frontend/app/layout.tsx
 import type { Metadata } from 'next'
-import Script from 'next/script'
 import { GeistSans } from 'geist/font/sans'
 import { GeistMono } from 'geist/font/mono'
 import { Fraunces, Poppins } from 'next/font/google'
@@ -129,9 +128,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <head>
         <link rel="preload" href="/assets/brand/logo.png" as="image" />
-        <Script
+        <script
           id="seltra-structured-data"
-          strategy="beforeInteractive"
           type="application/ld+json"
           dangerouslySetInnerHTML={{
             __html: JSON.stringify({

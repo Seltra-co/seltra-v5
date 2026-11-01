@@ -29,14 +29,11 @@ const schema = z.object({
   WORKSPACE_IDLE_TTL_SECONDS: z.coerce.number().int().positive().default(1800),
   AI_PROVIDER: z.string().default("cloudflare"),
   AI_MODEL_DEFAULT: z.string().default("@cf/moonshotai/kimi-k2.7-code"),
-  AI_MODEL_FALLBACKS: z
-    .string()
-    .default(
-      "alibaba/qwen3.5-397b-a17b,@cf/qwen/qwen2.5-coder-32b-instruct,@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
-    ),
-  AI_MODEL_TOOL_FALLBACKS: z
-    .string()
-    .default("alibaba/qwen3.5-397b-a17b"),
+  AI_MODEL_TOOL: z.string().optional(),
+  // Fallbacks are opt-in. Silent model changes can use a different provider
+  // or billing pool than the model explicitly selected by the workspace.
+  AI_MODEL_FALLBACKS: z.string().default(""),
+  AI_MODEL_TOOL_FALLBACKS: z.string().default(""),
   AI_MODEL_REASONING: z.string().optional(),
   AI_MODEL_FAST: z.string().optional(),
   AI_MODEL_VISION: z.string().optional(),

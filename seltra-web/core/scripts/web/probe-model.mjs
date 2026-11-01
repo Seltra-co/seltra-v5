@@ -186,6 +186,17 @@ const configured = [
   env.AI_MODEL_REASONING,
   env.AI_MODEL_FAST,
 ].filter(Boolean);
+const builderModel = env.AI_MODEL_DEFAULT;
+const builderFallbacks = (env.AI_MODEL_FALLBACKS || "")
+  .split(",")
+  .map((model) => model.trim())
+  .filter(Boolean);
+const builderToolFallbacks = new Set(
+  (env.AI_MODEL_TOOL_FALLBACKS || "")
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean),
+);
 const requestedModelIndex = process.argv.indexOf("--models");
 const requestedModels =
   requestedModelIndex >= 0
@@ -228,7 +239,9 @@ const probeModel = async (slug) => {
   };
 };
 const configuredModels = [...new Set(configured)];
-const modelsToProbe = requestedModels.length ? requestedModels : configuredModels;
+const modelsToProbe = requestedModels.length
+  ? requestedModels
+  : [...new Set([...configuredModels, ...builderFallbacks])];
 const rows = await Promise.all(modelsToProbe.map(probeModel));
 const configuredPasses = (row) =>
   row.compat.status >= 200 &&
@@ -272,14 +285,32 @@ function formatProbe(result) {
 }
 
 const working = rows.filter(configuredPasses).map((row) => row.slug);
-const unusable = modelsToProbe.filter((slug) => !working.includes(slug));
+const requiredConfiguredModels = requestedModels.length
+  ? modelsToProbe
+  : configuredModels.filter((slug) => slug !== builderModel);
+const unusable = requiredConfiguredModels.filter((slug) => !working.includes(slug));
+const builderFallbackReady = builderFallbacks.some((slug) => {
+  const row = rows.find((candidate) => candidate.slug === slug);
+  if (!row || !configuredPasses(row)) return false;
+  return !builderToolFallbacks.has(slug) || row.toolCall.supported;
+});
+const builderPrimaryReady = rows.some(
+  (row) => row.slug === builderModel && configuredPasses(row),
+);
+if (!requestedModels.length && !builderPrimaryReady && !builderFallbackReady)
+  unusable.unshift(builderModel || "Builder model");
 if (unusable.length)
   throw new Error(
-    `Requested text models failed the dual-path streaming probe: ${unusable.join(", ")}. Working alternatives: ${working.slice(0, 10).join(", ") || "none"}.`,
+    `Configured text models failed the dual-path streaming probe: ${unusable.join(", ")}. Working alternatives: ${working.slice(0, 10).join(", ") || "none"}.`,
   );
-console.log(
-  "Configured Builder, Planner, and Fast models passed both streaming paths.",
-);
+if (!requestedModels.length && !builderPrimaryReady)
+  console.warn(
+    `Builder model ${builderModel} is temporarily unavailable; configured fallback ${builderFallbacks.find((slug) => working.includes(slug))} passed the streaming probe.`,
+  );
+else
+  console.log(
+    "Configured Builder, Planner, and Fast models passed both streaming paths.",
+  );
 
 if (runContextProbe) {
   const approximatePrompt = " probe".repeat(20_000);

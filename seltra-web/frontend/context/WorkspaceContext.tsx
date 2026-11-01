@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useStore } from './StoreContext'
+import { fetchWithSeltraAuth } from '@/lib/auth-session'
 
 type CoreSession = {
   coreToken: string
@@ -45,14 +46,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch('/api/v5/builder/session', {
+      const response = await fetchWithSeltraAuth('/api/v5/builder/session', {
         method: 'POST',
         headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
         body: JSON.stringify({ tenantId }),
         cache: 'no-store',
       })
       const body = await response.json().catch(() => ({})) as Partial<CoreSession> & { message?: string }
-      if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('seltra:auth-expired'))
       if (!response.ok || !body.coreToken) {
         const reason = body.message || (response.status === 403 ? 'AI builder access is unavailable for this store.' : 'Could not connect to the Seltra builder.')
         throw new Error(reason)

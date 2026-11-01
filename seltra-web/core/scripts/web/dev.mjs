@@ -7,6 +7,10 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseDotenv } from "dotenv";
+import {
+  formatSeltraEngineStartup,
+  getSeltraEngineEnv,
+} from "./seltra-engine-env.mjs";
 
 const root = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -201,6 +205,7 @@ try {
     "MODEL_ACCOUNT_ID",
     "MODEL_BASE_URL",
     "AI_MODEL_DEFAULT",
+    "AI_MODEL_TOOL",
     "AI_MODEL_FALLBACKS",
     "AI_MODEL_REASONING",
     "AI_MODEL_FAST",
@@ -209,6 +214,15 @@ try {
   ].filter((name) => Boolean(config[name]?.trim()));
   console.log(
     "Web model configuration set: " + (configuredNames.join(", ") || "none"),
+  );
+  const builderModel = config.AI_MODEL_DEFAULT?.trim() || "@cf/moonshotai/kimi-k2.7-code";
+  const toolModel = config.AI_MODEL_TOOL?.trim() || builderModel;
+  const toolFallbackModels = (config.AI_MODEL_TOOL_FALLBACKS || "")
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean);
+  console.log(
+    `Web builder model: ${builderModel}; tool-call model: ${toolModel}; explicit tool fallbacks: ${toolFallbackModels.join(", ") || "none"}`,
   );
   const missing = ["CORE_TOKEN_SECRET", "CORE_SERVICE_SECRET", "NEST_INTERNAL_URL"].filter(
     (key) => !config[key]?.trim(),
@@ -235,6 +249,8 @@ try {
         "MODEL_ACCOUNT_ID",
         "MODEL_BASE_URL",
         "AI_MODEL_DEFAULT",
+        "AI_MODEL_FALLBACKS",
+        "AI_MODEL_TOOL_FALLBACKS",
         "AI_MODEL_REASONING",
         "AI_MODEL_FAST",
       ]
@@ -375,17 +391,17 @@ try {
     MODEL_GATEWAY_URL: "http://127.0.0.1:" + gatewayPort + "/v1",
     AI_MODEL_DEFAULT:
       config.AI_MODEL_DEFAULT || "@cf/moonshotai/kimi-k2.7-code",
-    AI_MODEL_FALLBACKS:
-      config.AI_MODEL_FALLBACKS ||
-      "alibaba/qwen3.5-397b-a17b,@cf/qwen/qwen2.5-coder-32b-instruct,@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
-    AI_MODEL_TOOL_FALLBACKS:
-      config.AI_MODEL_TOOL_FALLBACKS || "alibaba/qwen3.5-397b-a17b",
+    AI_MODEL_TOOL:
+      config.AI_MODEL_TOOL || config.AI_MODEL_DEFAULT || "@cf/moonshotai/kimi-k2.7-code",
+    AI_MODEL_FALLBACKS: config.AI_MODEL_FALLBACKS || "",
+    AI_MODEL_TOOL_FALLBACKS: config.AI_MODEL_TOOL_FALLBACKS || "",
     AI_MODEL_REASONING: config.AI_MODEL_REASONING || "",
     AI_MODEL_FAST: config.AI_MODEL_FAST || "",
     AI_MODEL_VISION: config.AI_MODEL_VISION || "",
   };
   const gatewayEnv = {
     ...runtimeEnv,
+    ...getSeltraEngineEnv(config),
     NODE_ENV: config.NODE_ENV || "development",
     GATEWAY_HOST: gatewayHost,
     GATEWAY_PUBLIC_HOSTS: gatewayPublicHosts,
@@ -406,11 +422,10 @@ try {
     AI_PROVIDER: config.AI_PROVIDER || "cloudflare",
     AI_MODEL_DEFAULT:
       config.AI_MODEL_DEFAULT || "@cf/moonshotai/kimi-k2.7-code",
-    AI_MODEL_FALLBACKS:
-      config.AI_MODEL_FALLBACKS ||
-      "alibaba/qwen3.5-397b-a17b,@cf/qwen/qwen2.5-coder-32b-instruct,@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
-    AI_MODEL_TOOL_FALLBACKS:
-      config.AI_MODEL_TOOL_FALLBACKS || "alibaba/qwen3.5-397b-a17b",
+    AI_MODEL_TOOL:
+      config.AI_MODEL_TOOL || config.AI_MODEL_DEFAULT || "@cf/moonshotai/kimi-k2.7-code",
+    AI_MODEL_FALLBACKS: config.AI_MODEL_FALLBACKS || "",
+    AI_MODEL_TOOL_FALLBACKS: config.AI_MODEL_TOOL_FALLBACKS || "",
     AI_MODEL_REASONING: config.AI_MODEL_REASONING || "",
     AI_MODEL_FAST: config.AI_MODEL_FAST || "",
     AI_MODEL_VISION: config.AI_MODEL_VISION || "",
@@ -476,6 +491,7 @@ try {
   console.log(
     `Seltra web gateway is listening on ${gatewayHost}:${gatewayPort}.`,
   );
+  console.log(formatSeltraEngineStartup(config));
 
   const childExit = new Promise((resolve) => {
     gateway.once("exit", (code) => resolve({ name: "Gateway", code }));

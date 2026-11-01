@@ -9,6 +9,19 @@ export async function checkSubscriptionCredits(
   apiKey: string,
   signal?: AbortSignal,
 ): Promise<void> {
+  // Web workspaces are billed by Seltra's backend against the authenticated
+  // user's shared user_credits account. The desktop account-info endpoint is
+  // intentionally unavailable in this runtime; its zero-value placeholder
+  // must not reject a request before the Seltra model gateway can enforce the
+  // real per-user balance.
+  if (process.env.DYAD_WEB_RUNTIME === "1") return;
+
+  // Seltra Engine keys are not Dyad subscription keys. A native/local process
+  // may use the Seltra Engine without DYAD_WEB_RUNTIME being set; querying the
+  // Dyad account-info endpoint with that key returns a misleading 402 and
+  // blocks a request before Seltra can enforce the user's shared account.
+  if (apiKey.startsWith("sk_seltra_")) return;
+
   let info;
   try {
     signal?.throwIfAborted();

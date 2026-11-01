@@ -6,7 +6,7 @@ import { freeModelQuotaContracts } from "../types/free_model_quota";
 import { readSettings } from "@/main/settings";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
 import { isDyadProEnabled } from "@/lib/schemas";
-import { getDyadEngineBaseUrl } from "../utils/dyad_engine_url";
+import { getSeltraEngineBaseUrl } from "../utils/seltra_engine_url";
 
 const logger = log.scope("free_model_quota_handlers");
 
@@ -35,7 +35,7 @@ export async function getFreeModelQuotaStatus() {
     );
   }
 
-  const baseURL = getDyadEngineBaseUrl().replace(/\/$/, "");
+  const baseURL = getSeltraEngineBaseUrl().replace(/\/$/, "");
   let response: Awaited<ReturnType<typeof fetch>>;
   try {
     response = await fetch(`${baseURL}/free/quota`, {

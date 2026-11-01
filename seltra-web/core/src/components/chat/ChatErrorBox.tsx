@@ -68,11 +68,13 @@ export function ChatErrorBox({
 
   if (
     normalizedError.includes("Seltra workspace token budget exceeded") ||
-    normalizedError.includes("Seltra run token budget exceeded")
+    normalizedError.includes("Seltra daily account token allowance") ||
+    normalizedError.includes("Seltra run token budget exceeded") ||
+    normalizedError.includes("CREDITS_EXHAUSTED")
   ) {
     const workspaceLimit = normalizedError.includes(
       "Seltra workspace token budget exceeded",
-    );
+    ) || normalizedError.includes("CREDITS_EXHAUSTED");
     const resetAt = nextUtcBudgetReset();
     const resetText = new Intl.DateTimeFormat(undefined, {
       month: "long",

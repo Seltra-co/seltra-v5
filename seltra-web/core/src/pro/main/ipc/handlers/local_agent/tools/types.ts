@@ -544,6 +544,8 @@ export interface ToolDefinition<T = any> {
    * generation endpoint.
    */
   readonly usesEngineEndpoint?: boolean;
+  /** Permit this individually authorized tool while the chat model is in free mode. */
+  readonly allowInFreeModelMode?: boolean;
   execute: (args: T, ctx: AgentContext) => Promise<ToolResult>;
 
   /**

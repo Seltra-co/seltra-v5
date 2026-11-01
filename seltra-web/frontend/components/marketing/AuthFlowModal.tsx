@@ -5,27 +5,13 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Eye, EyeOff } from 'lucide-react'
 import { toast } from 'sonner'
-import { getSupabase, storeSeltraSession } from '@/lib/supabase'
+import { storeSeltraSession } from '@/lib/auth-session'
 
-const PRODUCTION_API_BASE = 'https://seltra-merchant-backend.onrender.com'
 const SELTRA_PROXY = '/api/v5'
 const MERCHANT_ID_PATTERN = /^SELTRA-[A-Z0-9]+-[0-9A-Z]+$/i
 
 function apiBases(): string[] {
-  const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '')
-  const host = typeof window !== 'undefined' ? window.location.hostname : ''
-  const isLocalHost = host === 'localhost' || host === '127.0.0.1'
-  // Prefer dedicated proxy (does not forward Origin) then env / production.
-  const bases: string[] = [SELTRA_PROXY]
-
-  if (fromEnv && !bases.includes(fromEnv)) bases.push(fromEnv)
-  // Local UI often has approval credentials issued by production Ops/Render.
-  if (isLocalHost) {
-    if (!bases.includes('http://127.0.0.1:3001')) bases.push('http://127.0.0.1:3001')
-    if (!bases.includes('http://localhost:3001')) bases.push('http://localhost:3001')
-  }
-  if (!bases.includes(PRODUCTION_API_BASE)) bases.push(PRODUCTION_API_BASE)
-  return bases
+  return [SELTRA_PROXY]
 }
 
 /** Map `/api/v5/...` onto the seltra proxy or a full API base. */
@@ -39,7 +25,6 @@ type Step = 'login' | 'login-otp' | 'forgot-email' | 'otp' | 'reset'
 type AuthResponse = {
   access_token?: string
   token?: string
-  refresh_token?: string
   user?: unknown
   otpRequired?: boolean
   merchantId?: string
@@ -70,6 +55,7 @@ async function apiPost<T>(
     try {
       const res = await fetch(apiUrl(base, path), {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
@@ -96,18 +82,6 @@ async function apiPost<T>(
 async function storeSession(data: AuthResponse) {
   const token = data.access_token ?? data.token ?? ''
   storeSeltraSession({ access_token: token, user: data.user })
-
-  if (data.refresh_token) {
-    try {
-      const supabase = getSupabase()
-      await supabase.auth.setSession({
-        access_token: token,
-        refresh_token: data.refresh_token,
-      })
-    } catch (error) {
-      console.warn('[auth] Could not persist Supabase session', error)
-    }
-  }
 }
 
 function SlashMark() {
@@ -222,7 +196,14 @@ export function AuthFlowModal({
 
   const finish = async (data: AuthResponse) => {
     if (!data.user) return
-    await storeSession(data)
+    try {
+      await storeSession(data)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not save your sign-in session.'
+      setError(message)
+      toast.error(message)
+      return
+    }
     // On the standalone /auth page, onClose navigates to `/`. Running that
     // navigation alongside the successful nextPath redirect races and can
     // leave the user on the marketing landing page after signing in.

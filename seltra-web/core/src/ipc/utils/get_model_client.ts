@@ -42,7 +42,7 @@ import { getLmStudioBaseUrl } from "./lm_studio_utils";
 import { createOllamaProvider } from "./ollama_provider";
 import { getOllamaApiUrl } from "../handlers/local_model_ollama_handler";
 import { createFallback } from "./fallback_ai_model";
-import { getDyadEngineBaseUrl } from "./dyad_engine_url";
+import { getSeltraEngineBaseUrl } from "./seltra_engine_url";
 import { getTestFetchOption } from "./test_fetch_override";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
 import {
@@ -68,6 +68,22 @@ export { setModelClientFetchForTesting } from "./test_fetch_override";
 
 function getModelClientFetchOption(): { fetch?: FetchFunction } {
   return getTestFetchOption();
+}
+
+function getSeltraEngineFetchOption(): { fetch?: FetchFunction } {
+  const configured = getTestFetchOption();
+  const identity = process.env.SELTRA_ENGINE_CREDIT_IDENTITY?.trim();
+  if (!identity) return configured;
+  const fetcher = configured.fetch ?? fetch;
+  return {
+    ...configured,
+    fetch: ((input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(input instanceof Request ? input.headers : undefined);
+      new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
+      headers.set("x-seltra-credit-identity", identity);
+      return fetcher(input, { ...init, headers });
+    }) as FetchFunction,
+  };
 }
 
 const AUTO_MODEL_ALIASES = [
@@ -252,19 +268,27 @@ export async function getModelClient(
   }
   const allProviders = await getLanguageModelProviders();
 
-  const dyadApiKey = settings.enableDyadPro
-    ? getProviderApiKeyForRequest(
-        settings.providerSettings?.auto?.apiKey?.value,
-        "Dyad",
-      )
+  const seltraEngineApiKey = process.env.SELTRA_ENGINE_API_KEY?.trim();
+  const legacyDyadApiKey = settings.enableDyadPro && !process.env.SELTRA_ENGINE_URL
+    ? settings.providerSettings?.auto?.apiKey?.value
     : undefined;
+  const dyadApiKey = seltraEngineApiKey
+    ? getProviderApiKeyForRequest(seltraEngineApiKey, "Seltra Engine")
+    : settings.seltraEngineApiKey?.value
+      ? getProviderApiKeyForRequest(settings.seltraEngineApiKey.value, "Seltra Engine")
+    : legacyDyadApiKey
+      ? getProviderApiKeyForRequest(legacyDyadApiKey, "Seltra Engine")
+      : undefined;
   const isLocalProvider = ["ollama", "lmstudio"].includes(model.provider);
   const isDyadProEnabledForRequest = Boolean(
-    dyadApiKey && settings.enableDyadPro,
+    dyadApiKey &&
+      (Boolean(seltraEngineApiKey) ||
+        Boolean(settings.seltraEngineApiKey?.value) ||
+        settings.enableDyadPro),
   );
   if (connection === "pro" && !isDyadProEnabledForRequest)
     throw new DyadError(
-      "Enable Dyad Pro before using Pro credits.",
+      "Configure a Seltra Engine key before using Seltra Engine credits.",
       DyadErrorKind.Auth,
     );
 
@@ -274,7 +298,7 @@ export async function getModelClient(
     !isDyadProEnabledForRequest
   ) {
     throw new DyadError(
-      "Auto (balanced) requires Dyad Pro. Switch to another model or enable Dyad Pro.",
+      "Auto (balanced) requires a Seltra Engine key. Configure the Seltra Engine or switch to another model.",
       DyadErrorKind.Auth,
     );
   }
@@ -291,7 +315,7 @@ export async function getModelClient(
 
   if (isFreeProModel(model) && (!settings.enableDyadPro || !dyadApiKey)) {
     throw new DyadError(
-      "Dyad Free requires an active Dyad Pro API key. Switch to another model or enable Dyad Pro.",
+      "This free model requires a configured Seltra Engine key. Configure the engine or switch to another model.",
       DyadErrorKind.Auth,
     );
   }
@@ -335,20 +359,21 @@ export async function getModelClient(
     !isLocalProvider &&
     connection !== "api-key"
   ) {
-    const dyadEngineUrl = process.env.DYAD_ENGINE_URL;
+    const seltraEngineUrl =
+      process.env.SELTRA_ENGINE_URL ?? process.env.DYAD_ENGINE_URL;
     // Check if the selected provider supports Dyad Pro (has a gateway prefix) OR
     // we're using local engine.
     // IMPORTANT: some providers like OpenAI have an empty string gateway prefix,
     // so we do a nullish and not a truthy check here.
-    if (providerConfig.gatewayPrefix != null || dyadEngineUrl) {
+    if (providerConfig.gatewayPrefix != null || seltraEngineUrl) {
       // Native tool-backed modes select and edit files themselves. Retired
       // engine-side Build options remain in stored settings only for backwards
       // compatibility and must not affect requests.
       const enableSmartFilesContext = false;
       const provider = createDyadEngine({
         apiKey: dyadApiKey,
-        baseURL: getDyadEngineBaseUrl(),
-        ...getModelClientFetchOption(),
+        baseURL: getSeltraEngineBaseUrl(),
+        ...getSeltraEngineFetchOption(),
         dyadOptions: {
           enableLazyEdits: false,
           enableSmartFilesContext,
@@ -359,11 +384,11 @@ export async function getModelClient(
       });
 
       logger.debug(
-        `\x1b[1;97;44m Using Dyad Pro API key for model: ${model.name} \x1b[0m`,
+        `\x1b[1;97;44m Using Seltra Engine key for model: ${model.name} \x1b[0m`,
       );
 
       logger.debug(
-        `\x1b[1;30;42m Using Dyad Pro engine: ${dyadEngineUrl ?? "<prod>"} \x1b[0m`,
+        `\x1b[1;30;42m Using Seltra Engine: ${seltraEngineUrl ?? "<configured>"} \x1b[0m`,
       );
 
       // Do not use free variant (for openrouter).
