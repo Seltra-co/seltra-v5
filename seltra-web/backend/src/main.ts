@@ -7,13 +7,33 @@ import * as bodyParser from 'body-parser'
 import type { NextFunction, Request, Response } from 'express'
 import { InternalOpsModule } from './internal-ops/internal-ops.module'
 import { randomUUID } from 'node:crypto'
+import { GlobalExceptionFilter } from './common/global-exception.filter'
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap')
+  process.on('unhandledRejection', (reason) => {
+    console.error(JSON.stringify({
+      level: 'error',
+      event: 'process_unhandled_rejection',
+      timestamp: new Date().toISOString(),
+      errorName: reason instanceof Error ? reason.name : typeof reason,
+      errorMessage: reason instanceof Error ? reason.message : String(reason),
+    }))
+  })
+  process.on('uncaughtException', (error) => {
+    console.error(JSON.stringify({
+      level: 'error',
+      event: 'process_uncaught_exception',
+      timestamp: new Date().toISOString(),
+      errorName: error.name,
+      errorMessage: error.message,
+    }))
+  })
   if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32 || process.env.JWT_SECRET === 'change-me')) {
     throw new Error('JWT_SECRET must be configured with at least 32 characters in production.')
   }
   const app = await NestFactory.create(AppModule)
+  app.useGlobalFilters(new GlobalExceptionFilter())
   app.getHttpAdapter().getInstance().set('trust proxy', 1)
   app.use((req: Request, res: Response, next: NextFunction) => {
     const candidate = req.header('x-request-id') ?? req.header('x-dyad-request-id')

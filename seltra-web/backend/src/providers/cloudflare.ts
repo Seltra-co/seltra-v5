@@ -1,4 +1,5 @@
 //providers/cloudflare.ts
+import { logStructuredError } from '../common/structured-logger'
 
 export const CF_API_BASE = 'https://api.cloudflare.com/client/v4/accounts'
 
@@ -247,6 +248,10 @@ export async function callCloudflare(
     )
   } catch (e) {
     const msg = (e as Error).message ?? String(e)
+    logStructuredError('cloudflare_model_fetch_failed', {
+      model,
+      timeoutMs,
+    }, e)
     if (msg.includes('abort') || msg.includes('Abort') || (e as Error).name === 'AbortError') {
       recordError(model, 30_000)
       throw new Error(`[CF] ${model.split('/').pop()} timed out after ${timeoutMs / 1000}s`)
@@ -257,6 +262,11 @@ export async function callCloudflare(
 
   if (!res.ok) {
     const errText = await res.text().catch(() => `HTTP ${res.status}`)
+    logStructuredError('cloudflare_model_http_error', {
+      model,
+      status: res.status,
+      providerBody: errText.slice(0, 300),
+    })
 
     if (res.status === 429) {
       recordError(model, 60_000)

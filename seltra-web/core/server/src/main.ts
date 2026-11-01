@@ -31,6 +31,7 @@ import {
   parseFigmaFileUrl,
   retrieveFigmaReference,
 } from "../../src/web/figma_reference.js";
+import { logError } from "./logger.js";
 
 const encoder = new TextEncoder();
 // Chat attachments are sent as base64 in the distributed-machine intent.
@@ -1358,6 +1359,14 @@ async function main(): Promise<void> {
             candidateError = error;
             lastError = error;
             const status = (error as { status?: number }).status ?? 0;
+            logError("model_provider_attempt_failed", {
+              requestId: request.headers["x-request-id"],
+              model: candidateModel,
+              role: mapping.role,
+              status,
+              attempt: attempt + 1,
+              streaming,
+            }, error);
             const retryable = status === 429 || status >= 500 || status === 0;
             if (
               !retryable ||
@@ -1502,6 +1511,16 @@ async function main(): Promise<void> {
           : status === 400
             ? "client_error"
             : "retryable";
+      logError("model_request_failed", {
+        requestId: request.headers["x-request-id"],
+        model: usedModel,
+        role: mapping.role,
+        status,
+        errorClass,
+        streaming,
+        latencyMs: Date.now() - startedAt,
+        retryable: errorClass === "retryable",
+      }, error);
       if (!response.destroyed)
         openAiError(
           response,
