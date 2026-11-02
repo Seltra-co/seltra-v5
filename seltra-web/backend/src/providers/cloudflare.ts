@@ -1,6 +1,11 @@
 //providers/cloudflare.ts
 import { logStructuredError } from '../common/structured-logger'
 
+const cfAccountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.MODEL_ACCOUNT_ID
+const cfApiToken = process.env.CLOUDFLARE_API_TOKEN ?? process.env.MODEL_API_KEY
+if (cfAccountId && !process.env.CF_ACCOUNT_ID) process.env.CF_ACCOUNT_ID = cfAccountId
+if (cfApiToken && !process.env.CF_AI_API_TOKEN) process.env.CF_AI_API_TOKEN = cfApiToken
+
 export const CF_API_BASE = 'https://api.cloudflare.com/client/v4/accounts'
 
 // ── Fetch with timeout ────────────────────────────────────────────────────────
@@ -437,7 +442,10 @@ export async function cfCodegen(
 }
 
 export function isCFAvailable(): boolean {
-  return Boolean(process.env.CF_ACCOUNT_ID && process.env.CF_AI_API_TOKEN)
+  return Boolean(
+    (process.env.CF_ACCOUNT_ID ?? process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.MODEL_ACCOUNT_ID) &&
+    (process.env.CF_AI_API_TOKEN ?? process.env.CLOUDFLARE_API_TOKEN ?? process.env.MODEL_API_KEY),
+  )
 }
 
 export function getCFModelStatus(): Record<string, { available: boolean; cooldownEndsIn?: number; consecutiveErrors?: number }> {

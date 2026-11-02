@@ -40,6 +40,22 @@ async function bootstrap() {
     const requestId = candidate && /^[A-Za-z0-9._:-]{1,128}$/.test(candidate) ? candidate : randomUUID()
     req.headers['x-request-id'] = requestId
     res.setHeader('X-Request-ID', requestId)
+    const startedAt = Date.now()
+    res.on('finish', () => {
+      if (req.path === '/health' || req.path === '/api/v5/health') return
+      if (res.statusCode >= 400 || process.env.NODE_ENV !== 'production') {
+        console.error(JSON.stringify({
+          level: res.statusCode >= 400 ? 'error' : 'info',
+          event: 'http_request_completed',
+          timestamp: new Date().toISOString(),
+          requestId,
+          method: req.method,
+          path: req.originalUrl || req.url,
+          status: res.statusCode,
+          latencyMs: Date.now() - startedAt,
+        }))
+      }
+    })
     next()
   })
   app.use((req: Request, res: Response, next: NextFunction) => {

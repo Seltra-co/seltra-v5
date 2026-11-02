@@ -1036,6 +1036,21 @@ async function main(): Promise<void> {
     response: ServerResponse,
     modelsOnly: boolean,
   ): Promise<void> {
+    const requestId =
+      typeof request.headers["x-request-id"] === "string"
+        ? request.headers["x-request-id"]
+        : typeof request.headers["x-dyad-request-id"] === "string"
+          ? request.headers["x-dyad-request-id"]
+          : undefined;
+    console.log(JSON.stringify({
+      level: "info",
+      event: "core_model_request_started",
+      timestamp: new Date().toISOString(),
+      requestId,
+      method: request.method,
+      path: request.url,
+      modelsOnly,
+    }));
     const bearer = request.headers.authorization?.match(/^Bearer (.+)$/i)?.[1] ?? "";
     const modelClaims = modelTokens.get(bearer);
     const activeRuntime = modelClaims ? supervisor.getByKey(modelClaims.coreWorkspaceKey) : null;
