@@ -6,7 +6,7 @@ import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeE
 import { Cron } from '@nestjs/schedule'
 import { prisma } from '../db'
 import { TenantEventsService } from '../internal-ops/events/tenant-events.service'
-import { ResendService } from '../resend/resend.service'
+import { ResendService, sendSignupNotificationFireAndForget } from '../resend/resend.service'
 import { resolveUserIdFromAuthorization } from './resolve-user'
 import { REFRESH_TOKEN_TTL_MS } from './auth.constants'
 import { creditAllowanceForPlan } from '../common/credit-plan'
@@ -83,7 +83,10 @@ export class AuthService {
       businessType: String(input.business_type || '').trim(),
       storeName: String(input.store_name || '').trim(),
       whatYouSell: String(input.what_you_sell || '').trim(),
-      basedIn: String(input.based_in || '').trim(),
+      basedIn: null,
+      region: String(input.region || '').trim(),
+      country: String(input.country || '').trim(),
+      city: null,
       monthlyRevenue: String(input.monthly_revenue || '').trim(),
       existingLinks: input.existing_links ? String(input.existing_links).trim() : null,
       aiFamiliarity: input.ai_familiarity ? String(input.ai_familiarity) : null,
@@ -92,7 +95,7 @@ export class AuthService {
       aiFeelings: input.ai_feelings ? String(input.ai_feelings).trim() : null,
       allowAiHelp: input.allow_ai_help ? String(input.allow_ai_help) : null,
     }
-    if ([normalized.phone, normalized.businessName, normalized.businessType, normalized.storeName, normalized.whatYouSell, normalized.basedIn, normalized.monthlyRevenue].some((value) => !value)) {
+    if ([normalized.phone, normalized.businessName, normalized.businessType, normalized.storeName, normalized.whatYouSell, normalized.region, normalized.country, normalized.monthlyRevenue].some((value) => !value)) {
       throw new BadRequestException('Complete all required account and business fields.')
     }
     if (Object.values(normalized).some((value) => typeof value === 'string' && value.length > 600)) {
@@ -107,8 +110,12 @@ export class AuthService {
         await tx.userCreditLedger.create({ data: { id: randomUUID(), userId: created.id, kind: 'grant', delta: freeAllowance, balanceAfter: freeAllowance, meta: { reason: 'new_free_user_allowance', tokensPerCredit: 1000 } } })
         await mirrorWorkspaceCredit(tx, creditAccount)
         const applicationData = { ...normalized, status: 'approved' as const, merchantId, userId: created.id, reviewedAt: new Date(), credentialsGeneratedAt: new Date() }
-        if (existing) await tx.merchantApplication.update({ where: { id: existing.id }, data: applicationData })
-        else await tx.merchantApplication.create({ data: applicationData })
+        if (existing) {
+          const { basedIn: _basedIn, city: _city, ...preservedApplicationData } = applicationData
+          await tx.merchantApplication.update({ where: { id: existing.id }, data: preservedApplicationData })
+        } else {
+          await tx.merchantApplication.create({ data: applicationData })
+        }
         return created
       })
     } catch (error) {
@@ -117,6 +124,16 @@ export class AuthService {
       }
       throw error
     }
+    void sendSignupNotificationFireAndForget(() => this.resend.sendSignupNotification({
+      name,
+      email,
+      phone: normalized.phone,
+      businessName: normalized.businessName,
+      plan: 'free',
+      region: String(input.region || '').trim() || null,
+      country: String(input.country || '').trim() || null,
+      createdAt: user.createdAt?.toISOString?.() ?? new Date().toISOString()
+    }))
     let welcomeEmailSent = true
     try {
       await this.resend.sendNewMerchantWelcome({ to: email, name, merchantId })

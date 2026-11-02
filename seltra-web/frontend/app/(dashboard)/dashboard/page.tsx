@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button'
 import type { StoreData } from '@/components/storefront/StorefrontPreview'
 import { AgentBuildStream, type BuildProgress } from '@/components/storefront/AgentBuildStream'
 import { useStore } from '@/context/StoreContext'
+import { useWorkspace } from '@/context/WorkspaceContext'
 import { CoreClient, type CoreSession } from '@/lib/core/client'
 import { CoreEvents } from '@/lib/core/events'
 import { takePendingBuild } from '@/lib/builder/pending'
@@ -3991,6 +3992,8 @@ function storeStatusLabel(store: StoreData) {
 
 function ProjectCardPreview({ store, cover }: { store: StoreData; cover: string }) {
   const [previewReady, setPreviewReady] = useState(false)
+  const [previewSrc, setPreviewSrc] = useState('')
+  const { session, refreshSession } = useWorkspace()
   const blueprint = store.dashboardApp?.blueprint
   const primaryColor = typeof blueprint?.primaryColor === 'string' && /^#[\da-f]{3,8}$/i.test(blueprint.primaryColor)
     ? blueprint.primaryColor
@@ -3998,6 +4001,47 @@ function ProjectCardPreview({ store, cover }: { store: StoreData; cover: string 
   const projectPrompt = typeof blueprint?.userPrompt === 'string' ? blueprint.userPrompt.trim() : ''
   const direction = typeof blueprint?.designDirection === 'string' ? blueprint.designDirection.trim() : ''
   const summary = projectPrompt || direction || `A first look at ${store.name}.`
+
+  useEffect(() => {
+    let cancelled = false
+    const rawPreviewUrl = store.dashboardApp?.previewUrl
+    if (!rawPreviewUrl) {
+      setPreviewSrc('')
+      return
+    }
+
+    const refreshPreview = async () => {
+      try {
+        const client = new CoreClient(refreshSession, refreshSession)
+        const appId = store.dashboardApp?.coreAppId
+        if (appId) await client.invoke('select-app-for-preview', [{ appId }])
+        const app = appId ? await client.invoke<unknown>('get-app', [appId]) : null
+        let tokenizedPreviewUrl = ''
+        const visit = (value: unknown) => {
+          if (tokenizedPreviewUrl || typeof value !== 'object' || value === null) return
+          for (const nested of Object.values(value)) {
+            if (typeof nested === 'string' && /^https?:\/\//i.test(nested) && nested.includes('.preview.seltra.co')) {
+              tokenizedPreviewUrl = nested
+              return
+            }
+            visit(nested)
+          }
+        }
+        visit(app)
+        if (!cancelled) setPreviewSrc(tokenizedPreviewUrl || rawPreviewUrl)
+      } catch {
+        if (!cancelled) setPreviewSrc(rawPreviewUrl)
+      }
+    }
+
+    void refreshPreview()
+    if (!session) return () => { cancelled = true }
+    const timer = window.setTimeout(() => { void refreshPreview() }, Math.max(60_000, (session.expiresIn - 60) * 1000))
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [store.dashboardApp?.coreAppId, store.dashboardApp?.previewUrl, session?.expiresIn, refreshSession])
 
   return (
     <div className="absolute inset-0 overflow-hidden bg-[#101916]">
@@ -4017,9 +4061,9 @@ function ProjectCardPreview({ store, cover }: { store: StoreData; cover: string 
           </div>
         </div>
       )}
-      {store.dashboardApp?.previewUrl && (
+      {previewSrc && (
         <iframe
-          src={store.dashboardApp.previewUrl}
+          src={previewSrc}
           title={`${store.name} project preview`}
           sandbox="allow-scripts"
           tabIndex={-1}

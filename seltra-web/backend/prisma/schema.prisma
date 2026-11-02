@@ -560,7 +560,10 @@ model MerchantApplication {
   businessType           String
   storeName              String
   whatYouSell            String
-  basedIn                String //(city/state/country)
+  basedIn                String? //(legacy city/state/country)
+  region                 String?
+  country                String?
+  city                   String?
   monthlyRevenue         String
   existingLinks          String?
   aiFamiliarity          String?

@@ -4,12 +4,15 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  Logger,
 } from '@nestjs/common'
 import type { Request, Response } from 'express'
 import { logStructuredError } from './structured-logger'
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(GlobalExceptionFilter.name)
+
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp()
     const response = ctx.getResponse<Response>()
@@ -35,6 +38,16 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const exceptionResponse = exception instanceof HttpException
       ? exception.getResponse()
       : undefined
+    if (status >= 400 && status < 500) {
+      this.logger.warn(JSON.stringify({
+        event: 'http_4xx_response',
+        requestId: request.headers['x-request-id'],
+        method: request.method,
+        path: request.originalUrl || request.url,
+        status,
+        response: exceptionResponse,
+      }))
+    }
     let message: unknown = exception instanceof Error ? exception.message : String(exception)
     if (typeof exceptionResponse === 'object' && exceptionResponse && 'message' in exceptionResponse) {
       message = (exceptionResponse as { message: unknown }).message

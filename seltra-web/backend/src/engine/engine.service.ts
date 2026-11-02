@@ -73,7 +73,7 @@ export class SeltraEngineService implements OnModuleInit {
 
   async authenticate(header?: string, creditIdentityToken?: string): Promise<KeyIdentity | null> {
     if (!header?.startsWith('Bearer ')) return null
-    const key = header.slice(7)
+    const key = header.slice(7).trim()
     if (!/^sk_seltra_[A-Za-z0-9_-]{40,}$/.test(key)) return null
     const digest = Buffer.from(this.hashKey(key), 'hex')
     const candidates = await prisma.seltraEngineApiKey.findMany({ where: { revokedAt: null }, select: { id: true, workspaceId: true, keyHash: true } })

@@ -30,7 +30,9 @@ class SignupDto {
   @IsString() @MaxLength(80) business_type!: string
   @IsString() @MaxLength(160) store_name!: string
   @IsString() @MaxLength(400) what_you_sell!: string
-  @IsString() @MaxLength(120) based_in!: string
+  @IsOptional() @IsString() @MaxLength(120) based_in?: string
+  @IsString() @MinLength(1) @MaxLength(80) region!: string
+  @IsString() @MinLength(1) @MaxLength(120) country!: string
   @IsString() @MaxLength(100) monthly_revenue!: string
   @IsString() @MinLength(10) @MaxLength(128) password!: string
   @IsOptional() @IsString() @MaxLength(600) existing_links?: string
@@ -39,6 +41,8 @@ class SignupDto {
   @IsOptional() @IsString() @MaxLength(300) ai_tools_used?: string
   @IsOptional() @IsString() @MaxLength(600) ai_feelings?: string
   @IsOptional() @IsString() @MaxLength(100) allow_ai_help?: string
+  @IsOptional() @IsString() @MaxLength(255) source?: string
+  @IsOptional() @IsString() @MaxLength(255) referrer?: string
 }
 
 class SigninDto {

@@ -21,7 +21,9 @@ const resend = {
   },
 }
 const FROM = process.env.RESEND_FROM ?? 'Seltra <careers@send.seltra.co>'
-const NOTIFY_TO = process.env.RESEND_NOTIFY_TO ?? 'williamofosu677@gmail.com'
+const NOTIFY_TO = process.env.SIGNUP_NOTIFY_EMAIL?.trim()
+  || process.env.RESEND_NOTIFY_TO?.trim()
+  || ''
 
 function escapeHtml(value: unknown) {
   return String(value ?? '')
@@ -36,6 +38,22 @@ function otpTokenHeader(code: string) {
   const frontendUrl = process.env.SELTRA_FRONTEND_URL || 'https://seltra.co'
   const origin = new URL(frontendUrl).origin
   return `${JSON.stringify(code)}; origin=${JSON.stringify(origin)}`
+}
+
+export async function sendSignupNotificationFireAndForget(
+  send: () => Promise<void>,
+  warn: (error: unknown) => void = (error) => {
+    console.warn(JSON.stringify({
+      event: 'signup_notification_failed',
+      reason: error instanceof Error ? error.message : 'unknown_error',
+    }))
+  },
+): Promise<void> {
+  try {
+    await send()
+  } catch (error) {
+    warn(error)
+  }
 }
 
 type V5IntroductionEmailInput = {
@@ -114,6 +132,46 @@ function buildV5IntroductionText(input: V5IntroductionEmailInput) {
 @Injectable()
 export class ResendService {
   private readonly logger = new Logger(ResendService.name)
+
+  async sendSignupNotification(input: {
+    name: string
+    email: string
+    phone: string
+    businessName: string
+    plan: string
+    region: string | null
+    country: string | null
+    createdAt: string
+  }) {
+    const recipient = process.env.SIGNUP_NOTIFY_EMAIL?.trim()
+    if (!recipient) return
+    if (!getResend()) throw new Error('RESEND_API_KEY is not configured')
+
+    const rows = [
+      ['Name', input.name],
+      ['Email', input.email],
+      ['Phone', input.phone],
+      ['Business name', input.businessName],
+      ['Plan', input.plan],
+      ['Region', input.region || 'Unknown'],
+      ['Country', input.country || 'Unknown'],
+      ['Created at (UTC)', input.createdAt],
+    ]
+    const text = rows.map(([label, value]) => `${label}: ${value}`).join('\n')
+    const result = await resend.emails.send({
+      from: FROM,
+      to: recipient,
+      subject: `New Seltra signup: ${escapeHtml(input.name)}`,
+      text,
+      html: emailShell(`
+        <tr><td style="background:#ffffff;padding:36px 40px">
+          <p style="margin:0 0 18px;font-size:20px;font-weight:700;color:#111827">New account signup</p>
+          ${rows.map(([label, value]) => `<p style="margin:0 0 8px;font-size:14px;color:#52525b"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</p>`).join('')}
+        </td></tr>
+      `, true),
+    })
+    if (result.error) throw result.error
+  }
 
   async sendApplicationNotification(dto: ApplicationDto, applicationId: string) {
     await Promise.allSettled([

@@ -69,7 +69,8 @@ const schema = z.object({
   business_type: z.string().min(1, 'Pick a business type'),
   store_name: z.string().trim().min(1, 'Store name is required').max(160),
   what_you_sell: z.string().trim().min(1, 'Tell us what you sell').max(400),
-  based_in: z.string().trim().min(1, 'Tell us where you are based').max(120),
+  region: z.string().trim().min(1, 'Pick your region').max(80),
+  country: z.string().trim().min(1, 'Pick your country').max(120),
   monthly_revenue: z.string().min(1, 'Pick your current stage'),
   existing_links: z.string().max(600).optional(),
   ai_familiarity: z.string().optional(),
@@ -103,8 +104,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [welcomeEmailSent, setWelcomeEmailSent] = useState(true)
-  const [city, setCity] = useState('')
-  const [data, setData] = useState<Omit<FormData, 'based_in'>>({
+  const [data, setData] = useState<Omit<FormData, 'region' | 'country'>>({
     full_name: '',
     phone: '',
     email: '',
@@ -141,7 +141,6 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
       else if (phone.length < 5) e.phone = 'Number too short'
       if (!email) e.email = 'Required'
       else if (!EMAIL_RE.test(email)) e.email = 'Enter a valid email, e.g. you@mail.com'
-      if (!city.trim()) e.city = 'Required'
     }
     if (step === 2) {
       if (!data.business_name.trim()) e.business_name = 'Required'
@@ -151,7 +150,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
     }
     if (step === 3 && !data.monthly_revenue) e.monthly_revenue = 'Pick one'
     return e
-  }, [step, data, region, country, city])
+  }, [step, data, region, country])
 
   const formatErrors: Partial<Record<string, string>> = {
     phone: data.phone.trim() && data.phone.trim().length < 5 ? errors.phone : undefined,
@@ -173,9 +172,13 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
   }
 
   const submit = async () => {
-    const basedIn = [city.trim(), country === 'Other' ? region : country].filter(Boolean).join(', ')
     const aiTools = data.ai_used_before ? {} : { ai_tools_used: '', ai_feelings: '' }
-    const parsed = schema.safeParse({ ...data, ...aiTools, based_in: basedIn })
+    const parsed = schema.safeParse({
+      ...data,
+      ...aiTools,
+      region: region.trim(),
+      country: country.trim(),
+    })
     if (!parsed.success) {
       toast.error(parsed.error.issues[0].message)
       return
@@ -332,9 +335,6 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
                         </Field>
                         <Field label="Email *" error={errorFor('email')}>
                           <TextField invalid={Boolean(errorFor('email'))} value={data.email} onChange={(v) => set('email', v)} placeholder="you@business.com" type="email" autoComplete="email" />
-                        </Field>
-                        <Field label="City or town *" error={errorFor('city')}>
-                          <TextField invalid={Boolean(errorFor('city'))} value={city} onChange={setCity} placeholder="Accra" autoComplete="address-level2" />
                         </Field>
                       </div>
                     )}
