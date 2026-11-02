@@ -156,6 +156,20 @@ export function loadConfig(
       ? `https://api.cloudflare.com/client/v4/accounts/${value.MODEL_ACCOUNT_ID}/ai/v1`
       : "")
   ).replace(/\/+$/, "");
+  const allowedOrigins = new Set<string>();
+  for (const entry of value.GATEWAY_ALLOWED_ORIGINS.split(",")) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    try {
+      allowedOrigins.add(new URL(trimmed).origin);
+    } catch {
+      console.warn(JSON.stringify({
+        level: "warn",
+        event: "invalid_allowed_origin",
+        origin: trimmed,
+      }));
+    }
+  }
   if (modelBaseUrl.includes("${") || modelBaseUrl.includes("}")) {
     throw new Error(
       "MODEL_BASE_URL contains an unresolved environment template. Set MODEL_BASE_URL to an explicit URL or provide every referenced variable, such as MODEL_ACCOUNT_ID.",
@@ -163,11 +177,7 @@ export function loadConfig(
   }
   return {
     ...value,
-    allowedOrigins: new Set(
-      value.GATEWAY_ALLOWED_ORIGINS.split(",")
-        .map((origin) => origin.trim())
-        .filter(Boolean),
-    ),
+    allowedOrigins,
     previewScheme:
       value.PREVIEW_PUBLIC_SCHEME ??
       value.PREVIEW_SCHEME ??

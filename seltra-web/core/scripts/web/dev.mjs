@@ -261,7 +261,7 @@ try {
       env: { ...systemEnv(), DYAD_WEB_ENV_FILE: envFile, ...probeEnv },
     });
   }
-  const gatewayPort = Number(config.GATEWAY_PORT || 8080);
+  const gatewayPort = Number(config.GATEWAY_PORT || process.env.PORT || 8080);
   const isRenderDeployment = process.env.RENDER === "true";
   const gatewayHost = isRenderDeployment
     ? "0.0.0.0"
@@ -386,7 +386,21 @@ try {
       config.GATEWAY_ALLOWED_ORIGINS || gatewayOrigin
     )
       .split(",")
-      .map((origin) => new URL(origin.trim()).origin)
+      .map((entry) => {
+        const origin = entry.trim();
+        if (!origin) return null;
+        try {
+          return new URL(origin).origin;
+        } catch {
+          console.warn(JSON.stringify({
+            level: "warn",
+            event: "invalid_allowed_origin",
+            origin,
+          }));
+          return null;
+        }
+      })
+      .filter(Boolean)
       .join(" "),
     MODEL_GATEWAY_URL: "http://127.0.0.1:" + gatewayPort + "/v1",
     AI_MODEL_DEFAULT:
@@ -509,11 +523,13 @@ try {
   await cleanup();
   if (ended.name !== "Signal" || ended.code !== 0) process.exitCode = 1;
 } catch (error) {
-  console.error(
-    (error instanceof Error ? error.message : String(error)).replace(
+  const redactSecrets = (text) =>
+    text.replace(
       /(?:MODEL_API_KEY|CORE_TOKEN_SECRET|CORE_SERVICE_SECRET|FIGMA_ACCESS_TOKEN)=[^\s]+/g,
       "secret=[redacted]",
-    ),
+    );
+  console.error(
+    redactSecrets(error instanceof Error ? error.stack ?? error.message : String(error)),
   );
   await new Promise((resolve) => setTimeout(resolve, 500)); // let log streams flush
   for (const name of ["runtime.log", "gateway.log"]) {

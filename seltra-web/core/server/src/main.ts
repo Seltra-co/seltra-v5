@@ -201,7 +201,25 @@ function isHttpsRequest(request: IncomingMessage): boolean {
 function setSecurityHeaders(response: ServerResponse): void {
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("Referrer-Policy", "same-origin");
-  response.setHeader("X-Frame-Options", "SAMEORIGIN");
+}
+
+function frameAncestors(config: GatewayConfig): string {
+  return ["'self'", ...config.allowedOrigins].join(" ");
+}
+
+function setPreviewFrameHeaders(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: GatewayConfig,
+): void {
+  const host = (request.headers.host ?? "").split(":")[0].toLowerCase();
+  const previewSuffix = "." + config.PREVIEW_BASE_DOMAIN.toLowerCase();
+  if (!host.endsWith(previewSuffix)) return;
+  response.removeHeader("X-Frame-Options");
+  response.setHeader(
+    "Content-Security-Policy",
+    `frame-ancestors ${frameAncestors(config)}; default-src 'none'; script-src 'unsafe-inline'`,
+  );
 }
 
 function refererOrigin(request: IncomingMessage): string | null {
@@ -534,6 +552,7 @@ async function main(): Promise<void> {
     scheme: config.previewScheme,
     port: config.previewPort ?? null,
     allowedOrigins: [...config.allowedOrigins],
+    frameAncestors: frameAncestors(config),
   }));
   const runtimeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const supervisor = new WorkspaceSupervisor({
@@ -568,6 +587,7 @@ async function main(): Promise<void> {
   traceStartup("nest_created");
   nest.use((request: IncomingMessage, response: ServerResponse) => {
     setSecurityHeaders(response);
+    setPreviewFrameHeaders(request, response, config);
     let responseReason = "";
     response.once("finish", () => {
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -627,10 +647,9 @@ async function main(): Promise<void> {
       if (!response.headersSent) {
         if (err.code === "PREVIEW_TOKEN_REQUIRED") {
           response.removeHeader("X-Frame-Options");
-          const frameAncestors = ["'self'", ...config.allowedOrigins].join(" ");
           response.setHeader(
             "Content-Security-Policy",
-            `frame-ancestors ${frameAncestors}; default-src 'none'; script-src 'unsafe-inline'`,
+            `frame-ancestors ${frameAncestors(config)}; default-src 'none'; script-src 'unsafe-inline'`,
           );
           response.setHeader("Cache-Control", "no-store");
           const host = (request.headers.host ?? "").split(":")[0].toLowerCase();
@@ -780,14 +799,13 @@ async function main(): Promise<void> {
     // SAMEORIGIN would prevent their iframe from rendering.
     delete proxyResponse.headers["x-frame-options"];
     response.removeHeader("X-Frame-Options");
-    const frameAncestors = ["'self'", ...config.allowedOrigins].join(" ");
     const cspHeader = proxyResponse.headers["content-security-policy"];
     const rewriteCsp = (value: string): string => {
       const directives = value
         .split(";")
         .map((directive) => directive.trim())
         .filter((directive) => directive && !/^frame-ancestors(?:\s|$)/i.test(directive));
-      directives.push(`frame-ancestors ${frameAncestors}`);
+      directives.push(`frame-ancestors ${frameAncestors(config)}`);
       return directives.join("; ");
     };
     if (Array.isArray(cspHeader)) {
@@ -796,7 +814,7 @@ async function main(): Promise<void> {
       proxyResponse.headers["content-security-policy"] = rewriteCsp(cspHeader);
     } else {
       proxyResponse.headers["content-security-policy"] =
-        `frame-ancestors ${frameAncestors}`;
+        `frame-ancestors ${frameAncestors(config)}`;
     }
   });
   previewProxy.on("error", (_error, _request, response) => {
