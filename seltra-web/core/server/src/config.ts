@@ -141,13 +141,24 @@ export function loadConfig(
     );
   }
   const value = parsed.data;
-  const modelBaseUrl =
-    value.MODEL_BASE_URL ??
+  const expandBaseUrlTemplate = (rawUrl: string | undefined): string => {
+    if (!rawUrl) return "";
+    return rawUrl.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => {
+      const replacement = env[name]?.trim();
+      return replacement ?? "";
+    });
+  };
+  const modelBaseUrl = (
+    expandBaseUrlTemplate(value.MODEL_BASE_URL) ||
     (value.MODEL_ACCOUNT_ID
-      ? "https://api.cloudflare.com/client/v4/accounts/" +
-        value.MODEL_ACCOUNT_ID +
-        "/ai/v1"
-      : "");
+      ? `https://api.cloudflare.com/client/v4/accounts/${value.MODEL_ACCOUNT_ID}/ai/v1`
+      : "")
+  ).replace(/\/+$/, "");
+  if (modelBaseUrl.includes("${") || modelBaseUrl.includes("}")) {
+    throw new Error(
+      "MODEL_BASE_URL contains an unresolved environment template. Set MODEL_BASE_URL to an explicit URL or provide every referenced variable, such as MODEL_ACCOUNT_ID.",
+    );
+  }
   return {
     ...value,
     allowedOrigins: new Set(

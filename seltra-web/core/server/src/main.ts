@@ -620,6 +620,81 @@ async function main(): Promise<void> {
   });
   await nest.listen(config.GATEWAY_PORT, config.GATEWAY_HOST);
   traceStartup("http_listening");
+  void (async () => {
+    const accountId = config.MODEL_ACCOUNT_ID?.trim() ?? "";
+    const accountLast4 = accountId.slice(-4);
+    const roles = {
+      default: config.AI_MODEL_DEFAULT,
+      reasoning: config.AI_MODEL_REASONING ?? config.AI_MODEL_DEFAULT,
+      fast: config.AI_MODEL_FAST ?? config.AI_MODEL_DEFAULT,
+      vision: config.AI_MODEL_VISION ?? config.AI_MODEL_DEFAULT,
+      image: config.AI_MODEL_IMAGE ?? "",
+    };
+    const unresolvedTemplate = config.modelBaseUrl.includes("${") ||
+      Boolean(config.MODEL_BASE_URL?.includes("${"));
+    console.log(JSON.stringify({
+      level: "info",
+      event: "ai_config_startup",
+      provider: config.AI_PROVIDER,
+      baseUrl: config.modelBaseUrl,
+      accountIdLast4: accountLast4 || null,
+      roles,
+      unresolvedTemplate,
+      empty: {
+        provider: !config.AI_PROVIDER,
+        baseUrl: !config.modelBaseUrl,
+        accountId: !accountId,
+        apiKey: !config.MODEL_API_KEY,
+      },
+    }));
+    if (config.AI_PROVIDER === "cloudflare" && config.modelBaseUrl && config.MODEL_API_KEY) {
+      const textRoles = [
+        ["default", roles.default],
+        ["reasoning", roles.reasoning],
+        ["fast", roles.fast],
+        ["vision", roles.vision],
+      ];
+      for (const [role, modelId] of textRoles) {
+        if (!modelId?.trim()) continue;
+        try {
+          const response = await fetch(
+            config.modelBaseUrl.replace(/\/+$/, "") + "/chat/completions",
+            {
+              method: "POST",
+              headers: {
+                authorization: "Bearer " + config.MODEL_API_KEY,
+                "content-type": "application/json",
+              },
+              body: JSON.stringify({
+                model: modelId,
+                messages: [{ role: "user", content: "ping" }],
+                max_tokens: 1,
+              }),
+              signal: AbortSignal.timeout(10_000),
+            },
+          );
+          console.log(JSON.stringify({
+            level: "info",
+            event: "ai_startup_selfcheck",
+            role,
+            modelId,
+            url: config.modelBaseUrl.replace(/\/+$/, "") + "/chat/completions",
+            statusCode: response.status,
+          }));
+          await response.text().catch(() => "");
+        } catch (error) {
+          console.error(JSON.stringify({
+            level: "error",
+            event: "ai_startup_selfcheck",
+            role,
+            modelId,
+            url: config.modelBaseUrl.replace(/\/+$/, "") + "/chat/completions",
+            cause: error instanceof Error ? error.message : String(error),
+          }));
+        }
+      }
+    }
+  })();
   const server = nest.getHttpServer() as Server;
   const wss = new WebSocketServer({
     noServer: true,

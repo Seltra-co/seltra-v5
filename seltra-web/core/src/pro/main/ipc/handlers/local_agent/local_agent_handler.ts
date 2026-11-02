@@ -2560,6 +2560,43 @@ export async function handleLocalAgentStream(
     }
 
     logger.error("Local agent error:", error);
+    const errorRecord =
+      error && typeof error === "object"
+        ? error as Record<string, unknown>
+        : {};
+    const resolvedBaseUrl = String(process.env.MODEL_GATEWAY_URL ?? "").trim();
+    const modelId = String(process.env.AI_MODEL_DEFAULT ?? "").trim();
+    const url = typeof errorRecord.url === "string"
+      ? errorRecord.url
+      : undefined;
+    const statusCode =
+      typeof errorRecord.statusCode === "number"
+        ? errorRecord.statusCode
+        : typeof errorRecord.status === "number"
+          ? errorRecord.status
+          : undefined;
+    const responseBody =
+      typeof errorRecord.responseBody === "string"
+        ? errorRecord.responseBody.slice(0, 500)
+        : undefined;
+    const cause =
+      errorRecord.cause instanceof Error
+        ? errorRecord.cause.message
+        : undefined;
+    console.error(JSON.stringify({
+      level: "error",
+      event: "ai_call_failed",
+      timestamp: new Date().toISOString(),
+      url,
+      statusCode,
+      responseBody,
+      cause,
+      modelId: modelId || undefined,
+      role: "default",
+      provider: process.env.AI_PROVIDER ?? "cloudflare",
+      baseUrl: resolvedBaseUrl || undefined,
+      error: JSON.stringify(error, Object.getOwnPropertyNames(error)),
+    }));
     safeSend(event.sender, "chat:response:error", {
       chatId: req.chatId,
       invocationRef: req.invocationRef,
@@ -2702,16 +2739,36 @@ const FREE_MODEL_QUOTA_MARKERS = [
 function getErrorMessageWithDetails(error: unknown): string {
   const message = getErrorMessage(error);
   const responseBody = getErrorResponseBody(error);
+  const errorRecord =
+    error && typeof error === "object"
+      ? error as Record<string, unknown>
+      : {};
+  const url = typeof errorRecord.url === "string" ? errorRecord.url : undefined;
+  const statusCode =
+    typeof errorRecord.statusCode === "number"
+      ? errorRecord.statusCode
+      : typeof errorRecord.status === "number"
+        ? errorRecord.status
+        : undefined;
+  const modelId = process.env.AI_MODEL_DEFAULT?.trim() || undefined;
+  const baseUrl = process.env.MODEL_GATEWAY_URL?.trim() || undefined;
+  const diagnostic = [
+    url ? `URL: ${url}` : undefined,
+    statusCode !== undefined ? `HTTP: ${statusCode}` : undefined,
+    modelId ? `Model: ${modelId}` : undefined,
+    baseUrl ? `Base URL: ${baseUrl}` : undefined,
+  ].filter(Boolean).join("; ");
+  const baseMessage = diagnostic ? `${message}\n\nDiagnostics: ${diagnostic}` : message;
   if (!responseBody || message.includes(responseBody)) {
-    return message;
+    return baseMessage;
   }
   const isFreeModelQuotaBody = FREE_MODEL_QUOTA_MARKERS.some((marker) =>
     responseBody.includes(marker),
   );
   if (!isFreeModelQuotaBody) {
-    return message;
+    return baseMessage;
   }
-  return `${message}\n\nDetails: ${responseBody}`;
+  return `${baseMessage}\n\nDetails: ${responseBody.slice(0, 500)}`;
 }
 
 function isTerminatedStreamError(error: unknown): boolean {
