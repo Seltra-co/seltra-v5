@@ -320,13 +320,20 @@ export async function cfChat(
 ): Promise<CFResponse> {
   const chainStartedAt = Date.now()
   const chainBudgetMs = 60_000
-  const candidates = [
+  const configuredCandidates = [
+    process.env.AI_MODEL_DEFAULT,
+    process.env.AI_MODEL_FAST,
+    process.env.AI_MODEL_REASONING,
+    process.env.AI_MODEL_TOOL,
+  ].filter((model): model is string => Boolean(model?.trim())).map((model) => model.trim())
+  const candidates = [...new Set([
+    ...configuredCandidates,
     CF_MODELS.CHAT_LIGHT,
     CF_MODELS.CHAT_FAST,
     CF_MODELS.CODEGEN_SECONDARY,
     CF_MODELS.PLANNER_FALLBACK,
     CF_MODELS.CHAT_REASONING,
-  ]
+  ])]
 
   for (const model of candidates) {
     const remainingMs = chainBudgetMs - (Date.now() - chainStartedAt)

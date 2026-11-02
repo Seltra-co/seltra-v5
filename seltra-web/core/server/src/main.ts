@@ -1381,6 +1381,7 @@ async function main(): Promise<void> {
               status,
               attempt: attempt + 1,
               streaming,
+              providerUrl: config.modelBaseUrl,
             }, error);
             const retryable = status === 429 || status >= 500 || status === 0;
             if (

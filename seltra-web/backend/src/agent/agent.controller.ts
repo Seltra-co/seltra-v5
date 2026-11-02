@@ -1,6 +1,6 @@
 //apps/api/src/agent/agent.controller.ts
-import { Body, Controller, Get, HttpCode, Param, Post, Res } from '@nestjs/common'
-import type { Response } from 'express'
+import { Body, Controller, Get, HttpCode, Param, Post, Req, Res } from '@nestjs/common'
+import type { Request, Response } from 'express'
 import { AgentService } from './agent.service'
 import { StoreService } from '../store/store.service'
 
@@ -39,10 +39,12 @@ export class AgentController {
 
   @Post('stream')
   @HttpCode(200)
-  async streamMessage(@Body() body: AgentMessageDto, @Res() res: Response) {
+  async streamMessage(@Body() body: AgentMessageDto, @Req() req: Request, @Res() res: Response) {
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache, no-transform')
     res.setHeader('Connection', 'keep-alive')
+    const requestId = req.headers['x-request-id'] ?? req.headers['x-dyad-request-id']
+    if (typeof requestId === 'string') res.setHeader('X-Request-ID', requestId)
 
     const result = await this.agentService.sendMessage(
       body.storeId,

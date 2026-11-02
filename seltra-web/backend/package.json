@@ -16,6 +16,7 @@
     "engine:dev": "nest start --watch",
     "engine:test": "jest --runInBand --runTestsByPath src/__tests__/engine.test.ts src/__tests__/engine-http.test.ts",
     "engine:test:live": "node scripts/run-live-engine-tests.mjs",
+    "logs:prod-test": "node scripts/test-production-logging.mjs",
     "engine:key:create": "node scripts/engine-key.mjs create",
     "engine:key:revoke": "node scripts/engine-key.mjs revoke",
     "engine:test:all": "npm run engine:test && npm --prefix ../core run engine:check && npm --prefix ../core run engine:test:contracts"

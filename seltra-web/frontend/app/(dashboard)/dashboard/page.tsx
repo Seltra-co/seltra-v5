@@ -2061,13 +2061,25 @@ export default function DashboardPage() {
     setMsgs((prev) => [...prev, { role: 'assistant', content: '' }])
     let streamedReply = ''
     try {
+      const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`
       const res = await fetch(`${API_BASE}/api/v5/seltra/agent/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: { 'Content-Type': 'application/json', 'X-Request-ID': requestId, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ storeId, message, conversationId: convId, hasAttachments: options?.hasAttachments }),
         signal,
       })
       if (signal?.aborted || stoppedRef.current) return ''
+      if (!res.ok) {
+        const responseBody = await res.text().catch(() => '')
+        console.error(JSON.stringify({
+          event: 'frontend_agent_stream_failed',
+          requestId: res.headers.get('X-Request-ID') ?? requestId,
+          status: res.status,
+          responseBody: responseBody.slice(0, 500),
+        }))
+      }
       if (res.ok && res.body) {
         const reader = res.body.getReader(); const dec = new TextDecoder()
         while (true) {
