@@ -18,11 +18,17 @@ export function isPreviewAuthExpiredMessage(
 ): boolean {
   if (!contentWindow || !appUrl || appId === null) return false;
   try {
+    const label = event.data?.label;
+    const matchingLabel =
+      label === `app-${appId}` ||
+      (typeof label === "string" &&
+        /^ws-[a-f0-9]{12}-app-[1-9]\d{0,14}$/.test(label) &&
+        label.endsWith(`-app-${appId}`));
     return (
       event.source === contentWindow &&
       event.origin === new URL(appUrl).origin &&
       event.data?.type === "seltra:preview-auth-expired" &&
-      event.data?.label === `app-${appId}`
+      matchingLabel
     );
   } catch {
     return false;

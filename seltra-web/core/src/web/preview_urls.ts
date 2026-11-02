@@ -25,8 +25,24 @@ export function rewritePreviewUrls<T>(
       try {
         const url = new URL(item);
         const match = url.hostname.match(/^app-(\d+)\.localhost$/i);
-        if (url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1" || match)) {
-          const id = match?.[1] ?? (Number.isSafeInteger(appId) ? appId : undefined);
+        const existingPreviewMatch = tenantScoped
+          ? url.hostname.match(/^app-(\d+)\.(.+)$/i)
+          : null;
+        const publicBaseHost = url.hostname.toLowerCase().endsWith(`.${baseDomain.toLowerCase()}`);
+        const normalizedExistingPreview = tenantScoped && publicBaseHost
+          ? existingPreviewMatch?.[1]
+          : undefined;
+        if (
+          normalizedExistingPreview !== undefined ||
+          (url.protocol === "http:" &&
+            (url.hostname === "localhost" ||
+              url.hostname === "127.0.0.1" ||
+              match))
+        ) {
+          const id =
+            normalizedExistingPreview ??
+            match?.[1] ??
+            (Number.isSafeInteger(appId) ? appId : undefined);
           const label = id === undefined
             ? (tenantScoped ? `ws-${workspaceId}` : workspaceId)
             : tenantScoped ? `ws-${workspaceId}-app-${id}` : `app-${id}`;

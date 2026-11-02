@@ -204,6 +204,16 @@ function setSecurityHeaders(response: ServerResponse): void {
   response.setHeader("X-Frame-Options", "SAMEORIGIN");
 }
 
+function refererOrigin(request: IncomingMessage): string | null {
+  const referer = request.headers.referer;
+  if (!referer) return null;
+  try {
+    return new URL(referer).origin;
+  } catch {
+    return null;
+  }
+}
+
 function sendJson(
   response: ServerResponse,
   status: number,
@@ -517,6 +527,14 @@ async function main(): Promise<void> {
       "GATEWAY_ALLOWED_ORIGINS must include the primary renderer origin.",
     );
   }
+  console.log(JSON.stringify({
+    level: "info",
+    event: "preview_config_startup",
+    domain: config.PREVIEW_BASE_DOMAIN,
+    scheme: config.previewScheme,
+    port: config.previewPort ?? null,
+    allowedOrigins: [...config.allowedOrigins],
+  }));
   const runtimeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const supervisor = new WorkspaceSupervisor({
     root: runtimeRoot,
@@ -579,6 +597,23 @@ async function main(): Promise<void> {
               "The gateway could not complete the request.",
             );
       responseReason = `${err.code}: ${err.message}`;
+      if (err.code === "PREVIEW_TOKEN_REQUIRED" || err.code === "PREVIEW_NOT_FOUND") {
+        const host = (request.headers.host ?? "").split(":")[0].toLowerCase();
+        const previewSuffix = "." + config.PREVIEW_BASE_DOMAIN.toLowerCase();
+        const label = host.endsWith(previewSuffix)
+          ? host.slice(0, -previewSuffix.length)
+          : "";
+        console.warn(JSON.stringify({
+          event: "preview_rejected",
+          host,
+          label,
+          hasToken: Boolean(
+            new URL(request.url ?? "/", "http://gateway.invalid").searchParams.get("preview_token"),
+          ),
+          code: err.code,
+          refererOrigin: refererOrigin(request),
+        }));
+      }
       if (err.status === 404)
         console.warn(
           JSON.stringify({
@@ -592,9 +627,10 @@ async function main(): Promise<void> {
       if (!response.headersSent) {
         if (err.code === "PREVIEW_TOKEN_REQUIRED") {
           response.removeHeader("X-Frame-Options");
+          const frameAncestors = ["'self'", ...config.allowedOrigins].join(" ");
           response.setHeader(
             "Content-Security-Policy",
-            `frame-ancestors 'self' ${primaryOrigin}; default-src 'none'; script-src 'unsafe-inline'`,
+            `frame-ancestors ${frameAncestors}; default-src 'none'; script-src 'unsafe-inline'`,
           );
           response.setHeader("Cache-Control", "no-store");
           const host = (request.headers.host ?? "").split(":")[0].toLowerCase();
@@ -606,20 +642,21 @@ async function main(): Promise<void> {
             request.headers.accept?.includes("text/html") ||
             request.headers["sec-fetch-dest"] === "iframe" ||
             request.headers["sec-fetch-dest"] === "document";
-          if (isNavigation && /^ws-[a-f0-9]{12}-app-[1-9]\d{0,14}$/.test(label)) {
+          if (isNavigation && (
+            /^ws-[a-f0-9]{12}-app-[1-9]\d{0,14}$/.test(label) ||
+            /^app-[1-9]\d{0,14}$/.test(label)
+          )) {
             const message = JSON.stringify({
               type: "seltra:preview-auth-expired",
               label,
             }).replaceAll("<", "\\u003c");
-            const targetOrigin = JSON.stringify(primaryOrigin).replaceAll(
-              "<",
-              "\\u003c",
-            );
+            const targetOrigins = [...config.allowedOrigins]
+              .map((origin) => JSON.stringify(origin).replaceAll("<", "\\u003c"));
             response.writeHead(401, {
               "content-type": "text/html; charset=utf-8",
             });
             response.end(
-              `<!doctype html><meta charset="utf-8"><title>Preview access expired</title><p>Refreshing preview...</p><script>parent.postMessage(${message},${targetOrigin});</script>`,
+              `<!doctype html><meta charset="utf-8"><title>Preview access expired</title><p>Refreshing preview...</p><script>${targetOrigins.map((targetOrigin) => `parent.postMessage(${message},${targetOrigin});`).join("")}</script>`,
             );
             return;
           }
@@ -743,6 +780,24 @@ async function main(): Promise<void> {
     // SAMEORIGIN would prevent their iframe from rendering.
     delete proxyResponse.headers["x-frame-options"];
     response.removeHeader("X-Frame-Options");
+    const frameAncestors = ["'self'", ...config.allowedOrigins].join(" ");
+    const cspHeader = proxyResponse.headers["content-security-policy"];
+    const rewriteCsp = (value: string): string => {
+      const directives = value
+        .split(";")
+        .map((directive) => directive.trim())
+        .filter((directive) => directive && !/^frame-ancestors(?:\s|$)/i.test(directive));
+      directives.push(`frame-ancestors ${frameAncestors}`);
+      return directives.join("; ");
+    };
+    if (Array.isArray(cspHeader)) {
+      proxyResponse.headers["content-security-policy"] = cspHeader.map(rewriteCsp);
+    } else if (typeof cspHeader === "string") {
+      proxyResponse.headers["content-security-policy"] = rewriteCsp(cspHeader);
+    } else {
+      proxyResponse.headers["content-security-policy"] =
+        `frame-ancestors ${frameAncestors}`;
+    }
   });
   previewProxy.on("error", (_error, _request, response) => {
     if (response && "writeHead" in response && !response.headersSent) {
@@ -912,8 +967,15 @@ async function main(): Promise<void> {
               0,
               -("." + config.PREVIEW_BASE_DOMAIN).length,
             );
-            if (label.startsWith(`ws-${claims.coreWorkspaceKey}-app-`)) {
-              url.searchParams.set("preview_token", await issuePreviewToken(label, claims));
+            const bareAppMatch = label.match(/^app-([1-9]\d{0,14})$/);
+            const normalizedLabel = bareAppMatch
+              ? `ws-${claims.coreWorkspaceKey}-app-${bareAppMatch[1]}`
+              : label;
+            if (/^ws-[a-f0-9]{12}-app-[1-9]\d{0,14}$/.test(normalizedLabel)) {
+              url.hostname = `${normalizedLabel}.${config.PREVIEW_BASE_DOMAIN}`;
+              url.protocol = `${config.previewScheme}:`;
+              url.port = config.previewScheme === "https" ? "" : (config.previewPort === undefined ? "" : String(config.previewPort));
+              url.searchParams.set("preview_token", await issuePreviewToken(normalizedLabel, claims));
               return url.toString();
             }
           }

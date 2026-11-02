@@ -33,4 +33,19 @@ describe("web preview URL rewriting", () => {
       "http://app-42.localhost:8080",
     ]);
   });
+
+  it("tenant-scopes an already public app host and preserves its query", () => {
+    const rewritten = rewritePreviewUrls(
+      { appUrl: "https://app-1.preview.seltra.co/?__seltra_plan=free" },
+      "012345abcdef",
+      "preview.seltra.co",
+      "https",
+      undefined,
+      true,
+    );
+
+    expect(rewritten.appUrl).toBe(
+      "https://ws-012345abcdef-app-1.preview.seltra.co/?__seltra_plan=free",
+    );
+  });
 });

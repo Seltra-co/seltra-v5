@@ -17,6 +17,8 @@ const schema = z.object({
   PREVIEW_BASE_DOMAIN: z.string().default("localhost"),
   PREVIEW_PUBLIC_SCHEME: z.enum(["http", "https"]).optional(),
   PREVIEW_PUBLIC_PORT: optionalPort,
+  PREVIEW_SCHEME: z.enum(["http", "https"]).optional(),
+  PREVIEW_PORT: optionalPort,
   PREVIEW_TOKEN_TTL: z.string().default("5m"),
   PREVIEW_SESSION_TTL_SECONDS: z.coerce
     .number()
@@ -168,9 +170,11 @@ export function loadConfig(
     ),
     previewScheme:
       value.PREVIEW_PUBLIC_SCHEME ??
+      value.PREVIEW_SCHEME ??
       (value.NODE_ENV === "production" ? "https" : "http"),
     previewPort:
       value.PREVIEW_PUBLIC_PORT ??
+      value.PREVIEW_PORT ??
       (value.NODE_ENV === "production" ? undefined : value.GATEWAY_PORT),
     modelBaseUrl,
   };
