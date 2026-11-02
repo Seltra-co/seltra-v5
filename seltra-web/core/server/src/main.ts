@@ -250,6 +250,11 @@ function openAiError(
 function primaryHost(request: IncomingMessage, config: GatewayConfig): boolean {
   const requestHost = (request.headers.host ?? "").split(":")[0].toLowerCase();
   if (requestHost === config.GATEWAY_HOST.toLowerCase()) return true;
+  if (
+    requestHost === "127.0.0.1" ||
+    requestHost === "localhost" ||
+    requestHost === "[::1]"
+  ) return true;
   // Deployed behind a public domain: the bare base domain and any listed hosts
   // are the builder UI; only *.PREVIEW_BASE_DOMAIN hosts are previews.
   if (requestHost === config.PREVIEW_BASE_DOMAIN.toLowerCase()) return true;
@@ -545,6 +550,18 @@ async function main(): Promise<void> {
   traceStartup("nest_created");
   nest.use((request: IncomingMessage, response: ServerResponse) => {
     setSecurityHeaders(response);
+    let responseReason = "";
+    response.once("finish", () => {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        console.warn(JSON.stringify({
+          event: "gateway_http_error",
+          method: request.method,
+          path: new URL(request.url ?? "/", "http://gateway.invalid").pathname,
+          status: response.statusCode,
+          reason: responseReason || response.statusMessage || "HTTP_ERROR",
+        }));
+      }
+    });
     const origin = request.headers.origin;
     if (origin && config.allowedOrigins.has(origin)) {
       response.setHeader("Access-Control-Allow-Origin", origin);
@@ -561,6 +578,7 @@ async function main(): Promise<void> {
               "INTERNAL_ERROR",
               "The gateway could not complete the request.",
             );
+      responseReason = `${err.code}: ${err.message}`;
       if (err.status === 404)
         console.warn(
           JSON.stringify({
