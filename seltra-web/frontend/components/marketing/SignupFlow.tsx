@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, ArrowRight, Check, ChevronDown, Globe, Send, Sparkles } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, ChevronDown, Eye, EyeOff, Globe, Send, Sparkles } from 'lucide-react'
 import { z } from 'zod'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -56,6 +56,7 @@ const AI_FAMILIARITY = ['Yes, I use it often', 'I have heard of it', 'Not really
 const ALLOW_AI = ['Yes, let it run things', 'Maybe, show me first', 'I would rather do it myself']
 
 const hasTwoNames = (name: string) => name.trim().split(/\s+/).filter((part) => part.length >= 2).length >= 2
+const EMAIL_RE = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i
 
 const schema = z.object({
   full_name: z
@@ -64,7 +65,7 @@ const schema = z.object({
     .max(120)
     .refine(hasTwoNames, 'Enter your first and last name'),
   phone: z.string().trim().min(5, 'Phone is required').max(40),
-  email: z.string().trim().email('Enter a valid email').max(255),
+  email: z.string().trim().max(255).regex(EMAIL_RE, 'Enter a real email address, like you@gmail.com'),
   business_name: z.string().trim().min(1, 'Business name is required').max(160),
   business_type: z.string().min(1, 'Pick a business type'),
   store_name: z.string().trim().min(1, 'Store name is required').max(160),
@@ -92,7 +93,6 @@ const STEPS = [
   { title: 'Secure your account', hint: 'Create a password to protect your Seltra workspace' },
 ]
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const SUBMIT_RETRY_MESSAGE = "We couldn't send your details just now. Your answers are still here — please tap Submit again in a moment."
 
 export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null; donePhoto: string | null }) {
@@ -103,6 +103,8 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
   const [country, setCountry] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [awaitingEmailCode, setAwaitingEmailCode] = useState(false)
+  const [emailCode, setEmailCode] = useState('')
   const [welcomeEmailSent, setWelcomeEmailSent] = useState(true)
   const [data, setData] = useState<Omit<FormData, 'region' | 'country'>>({
     full_name: '',
@@ -121,8 +123,13 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
     allow_ai_help: '',
   })
 
-  const set = <K extends keyof typeof data>(key: K, value: (typeof data)[K]) =>
+  const set = <K extends keyof typeof data>(key: K, value: (typeof data)[K]) => {
+    if (key === 'email') {
+      setAwaitingEmailCode(false)
+      setEmailCode('')
+    }
     setData((current) => ({ ...current, [key]: value }))
+  }
 
   const [attempted, setAttempted] = useState(false)
 
@@ -140,7 +147,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
       if (!phone) e.phone = 'Required'
       else if (phone.length < 5) e.phone = 'Number too short'
       if (!email) e.email = 'Required'
-      else if (!EMAIL_RE.test(email)) e.email = 'Enter a valid email, e.g. you@mail.com'
+      else if (!EMAIL_RE.test(email)) e.email = 'Enter a real email address, like you@gmail.com'
     }
     if (step === 2) {
       if (!data.business_name.trim()) e.business_name = 'Required'
@@ -171,7 +178,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
     setStep((current) => Math.max(0, current - 1))
   }
 
-  const submit = async () => {
+  const submit = async (options?: { resend?: boolean }) => {
     const aiTools = data.ai_used_before ? {} : { ai_tools_used: '', ai_feelings: '' }
     const parsed = schema.safeParse({
       ...data,
@@ -191,10 +198,16 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
       toast.error('Your passwords do not match.')
       return
     }
+    const code = options?.resend ? '' : emailCode.trim()
+    if (awaitingEmailCode && !options?.resend && !/^\d{6}$/.test(code)) {
+      toast.error('Enter the 6-digit code from that inbox.')
+      return
+    }
     setLoading(true)
     try {
       let lastMessage = SUBMIT_RETRY_MESSAGE
       let submitted = false
+      let needsEmailCode = false
       let didSendWelcomeEmail = true
 
       for (const url of submitUrls()) {
@@ -204,7 +217,7 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
           const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...parsed.data, password }),
+            body: JSON.stringify({ ...parsed.data, password, ...(code ? { email_code: code } : {}) }),
             signal: controller.signal,
           })
           window.clearTimeout(timer)
@@ -217,6 +230,11 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
             }
             lastMessage = SUBMIT_RETRY_MESSAGE
             continue
+          }
+          if (json.verificationRequired) {
+            needsEmailCode = true
+            submitted = true
+            break
           }
           didSendWelcomeEmail = json.welcomeEmailSent !== false
           setWelcomeEmailSent(didSendWelcomeEmail)
@@ -231,6 +249,13 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
       }
 
       if (!submitted) throw new Error(lastMessage)
+
+      if (needsEmailCode) {
+        setAwaitingEmailCode(true)
+        if (options?.resend) setEmailCode('')
+        toast.success('We sent a 6-digit code to that inbox. Enter it to confirm the address.')
+        return
+      }
 
       if (didSendWelcomeEmail) toast.success('Your Seltra account is ready. Check your email for your merchant ID.')
       else toast('Your account is ready', { description: 'Email delivery is delayed. Please check your inbox shortly for your merchant ID.' })
@@ -427,6 +452,26 @@ export function SignupFlow({ formPhoto, donePhoto }: { formPhoto: string | null;
                           <TextField type="password" autoComplete="new-password" value={confirmPassword} onChange={setConfirmPassword} placeholder="Enter the same password again" />
                         </Field>
                         <p className="text-xs leading-relaxed text-white/55">Use uppercase and lowercase letters plus a number. We hash and protect your password.</p>
+                        {awaitingEmailCode && (
+                          <Field label="Email code *">
+                            <TextField
+                              value={emailCode}
+                              onChange={(value) => setEmailCode(value.replace(/\D/g, '').slice(0, 6))}
+                              placeholder="6-digit code"
+                              inputMode="text"
+                              autoComplete="one-time-code"
+                            />
+                            <p className="text-xs leading-relaxed text-white/55">We sent this to {data.email.trim()}. If that inbox is not real, no code will arrive and the account will not be created.</p>
+                            <button
+                              type="button"
+                              disabled={loading}
+                              onClick={() => void submit({ resend: true })}
+                              className="text-left text-[13px] font-medium text-[#4ade80] hover:underline disabled:opacity-60"
+                            >
+                              Resend code
+                            </button>
+                          </Field>
+                        )}
                       </div>
                     )}
                   </div>
@@ -543,17 +588,36 @@ function TextField({
   autoComplete?: string
   invalid?: boolean
 }) {
-  return (
+  const [visible, setVisible] = useState(false)
+  const revealed = type === 'password' && visible
+  const input = (
     <input
-      type={type}
+      type={revealed ? 'text' : type}
       value={value}
       onChange={(event) => onChange(event.target.value)}
       placeholder={placeholder}
       inputMode={inputMode}
       autoComplete={autoComplete}
       aria-invalid={invalid || undefined}
-      className="signup-field h-11 w-full rounded-md px-4 text-[14px] text-white [@media(max-height:760px)]:h-10"
+      className={cn(
+        'signup-field h-11 w-full rounded-md px-4 text-[14px] text-white [@media(max-height:760px)]:h-10',
+        type === 'password' && 'pr-11',
+      )}
     />
+  )
+  if (type !== 'password') return input
+  return (
+    <div className="relative">
+      {input}
+      <button
+        type="button"
+        aria-label={visible ? 'Hide password' : 'Show password'}
+        onClick={() => setVisible((current) => !current)}
+        className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-white/55 transition-colors hover:text-white"
+      >
+        {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+      </button>
+    </div>
   )
 }
 

@@ -10,8 +10,8 @@ import {
   ChevronLeft, ChevronRight,
   TrendingUp, Wallet, Menu, X, Trash2, Copy,
   Sparkles, ArrowRight, Megaphone, Paperclip, Image as ImageIcon, Figma, Wrench, ListTodo, Check,
-  Bell, CreditCard, ShieldCheck, CheckCheck,
-  FileText, UserCircle, HelpCircle, Globe, Globe2, Building2, LockKeyhole,
+  Bell, CreditCard, ShieldCheck, CheckCheck, Settings, Workflow, Shield, AlertTriangle, Sun, Moon, Laptop,
+  FileText, UserCircle, HelpCircle, Globe, Globe2, LockKeyhole, Download,
   Eye, Pencil, Mic, ChevronDown, PanelLeft, Search, UserRound, RefreshCw, Tablet,
   MoreHorizontal, Expand, MessageSquare, Monitor, Smartphone, Asterisk, Circle, Loader2, CheckCircle2, MousePointer2,
 } from 'lucide-react'
@@ -254,7 +254,7 @@ async function uploadImageToCloudinary(file: File, storeId: string): Promise<str
 
 const NAV_TABS = [
   { id: 'home',      label: 'Agent',     icon: UserRound  },
-  { id: 'mission',   label: 'Home',      icon: Home       },
+  { id: 'mission',   label: 'Dashboard', icon: Home       },
   { id: 'store',     label: 'Store',     icon: StoreIcon  },
   { id: 'orders',    label: 'Orders',    icon: ShoppingBag },
   { id: 'products',  label: 'Products',  icon: Package    },
@@ -1264,7 +1264,16 @@ export default function DashboardPage() {
         ? 'waiting'
         : 'streaming'
   const activityStage = activityPhase === 'idle' ? null : deriveActivityStage(activityPhase, activityTick, buildLaunchStarted)
-  const [tab, setTab] = useState('home')
+  const [tab, setTabState] = useState('home')
+  const settingsReturn = useRef('mission')
+  const setTab = (next: string) => {
+    setTabState((current) => {
+      const openingSettings = next === 'account' || next === 'billing' || next === 'domains' || next === 'help'
+      const alreadySettings = current === 'account' || current === 'billing' || current === 'domains' || current === 'help'
+      if (openingSettings && !alreadySettings) settingsReturn.current = current
+      return next
+    })
+  }
   const [rev, setRev] = useState(0)
   const [convId, setConvId] = useState<string | undefined>()
   coreDashboardConversationRef.current = convId
@@ -3182,6 +3191,9 @@ const handleAgentAttach = async (f: File) => {
             onStoreUpdated={(store) => { /* unchanged */ }}
             reloadStores={loadStores} user={user}
             credits={credits}
+            merchantProfile={merchantProfile}
+            onNavigate={setTab}
+            onCloseSettings={() => setTab(settingsReturn.current || 'mission')}
           />
         </main>
         <FigmaImportDialog open={figmaDialogOpen} value={figmaUrl} onChange={setFigmaUrl} busy={figmaImporting} onClose={() => setFigmaDialogOpen(false)} onSubmit={submitFigmaImport} />
@@ -4952,17 +4964,20 @@ function ChatInput({ input, setInput, send, sending, onAttach, compact = false, 
 
 // ── Tab content router ─────────────────────────────────────────────────────────
 function TabContent({
-  tab, activeStore, stores, onSelectStore, onStoreDeleted, deleteStoreAppsFromCore, onStoreUpdated, reloadStores, user, credits,
+  tab, activeStore, stores, onSelectStore, onStoreDeleted, deleteStoreAppsFromCore, onStoreUpdated, reloadStores, user, credits, merchantProfile, onNavigate, onCloseSettings,
 }: {
   tab: string; activeStore: StoreData | null; stores: StoreData[]
   onSelectStore: (s: StoreData) => void; onStoreDeleted: (id: string) => void
   deleteStoreAppsFromCore: (tenantId: string) => Promise<void>
   onStoreUpdated: (s: StoreData) => void; reloadStores: () => Promise<void>
-  user: { email: string; name: string; avatar: string; joinedAt?: string } | null
+  user: { id?: string; email: string; name: string; avatar: string; joinedAt?: string } | null
   credits: { used: number; limit: number; resetsAt: string } | null
+  merchantProfile?: { businessType?: string; businessName?: string; storeName?: string; whatYouSell?: string; basedIn?: string } | null
+  onNavigate?: (tab: string) => void
+  onCloseSettings?: () => void
 }) {
   if (tab === 'store') return <StoreTab stores={stores} activeStore={activeStore} onSelectStore={onSelectStore} onStoreDeleted={onStoreDeleted} deleteStoreAppsFromCore={deleteStoreAppsFromCore} reloadStores={reloadStores} />
-  if (tab === 'mission') return <MissionControlTab activeStore={activeStore} />
+  if (tab === 'mission') return <MissionControlTab activeStore={activeStore} onNavigate={onNavigate} />
   if (tab === 'orders') return <OrdersTab activeStore={activeStore} />
   if (tab === 'sales') return <SalesTab activeStore={activeStore} />
   if (tab === 'payments') return <PaymentsTab activeStore={activeStore} />
@@ -4978,7 +4993,9 @@ function TabContent({
         user={user}
         stores={stores}
         credits={credits}
+        merchantProfile={merchantProfile}
         onStoreUpdated={onStoreUpdated}
+        onClose={onCloseSettings}
       />
     )
   }
@@ -4986,21 +5003,30 @@ function TabContent({
 }
 
 // ── Shared primitives ──────────────────────────────────────────────────────────
-function PageHeader({ tab, title, subtitle }: { tab: string; title: string; subtitle: string }) {
+function PageHeader({ title, subtitle, action }: { tab?: string; title: string; subtitle: string; action?: React.ReactNode }) {
   return (
-    <div className="mb-8">
-      <div className="mb-2 font-mono text-[11px] text-primary">{`// ${tab}`}</div>
-      <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{title}</h1>
-      <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
+    <div className="flex min-w-0 flex-1 flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h1 className="text-[1.25rem] font-semibold leading-tight tracking-[-0.03em] text-[#3ddc84]">{title}</h1>
+        <p className="mt-0.5 max-w-2xl text-[13px] leading-snug text-white/55">{subtitle}</p>
+      </div>
+      {action}
     </div>
   )
 }
 
-function MetricCard({ label, value }: { label: string; value: string }) {
+function MetricCard({ label, value, delta }: { label: string; value: string; delta?: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-card/40 p-5">
-      <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className="mt-2.5 text-2xl font-semibold tracking-tight">{value}</div>
+    <div className="rounded-xl border border-[#3a3a38] bg-[#21211f] px-3 py-2.5">
+      <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-white/45">{label}</div>
+      <div className="mt-1.5 flex items-end gap-1.5">
+        <div className="text-[1.15rem] font-semibold leading-none tracking-tight text-white">{value}</div>
+        {delta != null && (
+          <span className="mb-0.5 inline-flex items-center gap-0.5 text-[11px] font-medium text-[#3ddc84]">
+            + {delta} <span aria-hidden>↑</span>
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -5011,8 +5037,114 @@ function StatusBadge({ status }: { status: string }) {
 
 function GridHeader({ cols, items }: { cols: string; items: string[] }) {
   return (
-    <div className={`grid ${cols} gap-3 border-b border-border px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-muted-foreground`}>
-      {items.map((item) => <div key={item}>{item}</div>)}
+    <div className={`grid ${cols} gap-3 border-b border-[#3a3a38] px-4 py-2 text-center text-[12px] font-medium capitalize text-white/70`}>
+      {items.map((item, index) => <div key={`${item}-${index}`}>{item}</div>)}
+    </div>
+  )
+}
+
+const DASH_ICONS = {
+  store: '/assets/icons/store-mark.png',
+  product: '/assets/icons/icons8-product%201.png',
+  tag: '/assets/icons/icons8-price-tag%201.png',
+  coins: '/assets/icons/icons8-billing%201.png',
+  booklet: '/assets/icons/icons8-folded-booklet%201.png',
+  database: '/assets/icons/icons8-database%201.png',
+}
+
+function EmptyArtwork({ icon, text, size = 'table' }: { icon: string; text: string; size?: 'home' | 'table' | 'page' }) {
+  const height = size === 'page' ? 'min-h-[440px]' : size === 'home' ? 'min-h-[220px]' : 'min-h-[300px]'
+  return (
+    <div className={cn('grid place-items-center px-4 py-8 text-center', height)}>
+      <div>
+        <img src={icon} alt="" className="mx-auto h-11 w-11 object-contain" />
+        <p className="mt-2.5 text-[13px] text-white/90">{text}</p>
+      </div>
+    </div>
+  )
+}
+
+function DashPanel({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <section className={cn('overflow-hidden rounded-2xl bg-[#21211f]', className)}>{children}</section>
+}
+
+function TableFrame({ children }: { children: React.ReactNode }) {
+  return <div className="mx-3 mb-3 mt-3 overflow-hidden rounded-xl border border-[#3a3a38] bg-[#21211f]">{children}</div>
+}
+
+function dashActionClass(extra = '') {
+  return cn('inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#1f8f4a] px-3 text-[13px] font-medium text-white hover:bg-[#187a3e]', extra)
+}
+
+function RevenueChart({ orders, range }: { orders: OrderRecord[]; range: '12m' | '6m' | '30d' | '7d' }) {
+  const [hover, setHover] = useState<number | null>(null)
+  const points = useMemo(() => {
+    const now = new Date()
+    const buckets: { label: string; value: number }[] = []
+    const paidValue = (created: Date) => orders
+      .filter((order) => hasConfirmedPayment(order) && new Date(order.createdAt).toDateString() === created.toDateString())
+      .reduce((sum, order) => sum + Number(order.merchantAmount ?? order.totalAmount ?? 0), 0)
+    if (range === '7d' || range === '30d') {
+      const days = range === '7d' ? 7 : 30
+      for (let i = days - 1; i >= 0; i -= 1) {
+        const day = new Date(now)
+        day.setDate(day.getDate() - i)
+        buckets.push({
+          label: day.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+          value: paidValue(day),
+        })
+      }
+    } else {
+      const months = range === '12m' ? 12 : 6
+      for (let i = months - 1; i >= 0; i -= 1) {
+        const month = new Date(now.getFullYear(), now.getMonth() - i, 1)
+        const value = orders.filter((order) => {
+          if (!hasConfirmedPayment(order)) return false
+          const created = new Date(order.createdAt)
+          return created.getFullYear() === month.getFullYear() && created.getMonth() === month.getMonth()
+        }).reduce((sum, order) => sum + Number(order.merchantAmount ?? order.totalAmount ?? 0), 0)
+        buckets.push({ label: month.toLocaleDateString(undefined, { month: 'short' }), value })
+      }
+    }
+    return buckets
+  }, [orders, range])
+
+  if (points.every((point) => point.value === 0)) return null
+  const width = 720
+  const height = 168
+  const max = Math.max(...points.map((point) => point.value), 1)
+  const coords = points.map((point, index) => ({
+    ...point,
+    x: points.length === 1 ? width / 2 : (index / (points.length - 1)) * width,
+    y: height - (point.value / max) * (height - 24) - 12,
+  }))
+  const line = (offset: number) => coords.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${Math.min(height - 4, point.y + offset)}`).join(' ')
+  const active = hover == null ? null : coords[hover]
+
+  return (
+    <div className="relative px-3 pb-1 pt-3">
+      {active && (
+        <div className="pointer-events-none absolute z-10 -translate-x-1/2 rounded-xl bg-white px-3 py-2 text-center text-neutral-950 shadow-lg" style={{ left: `calc(${(active.x / width) * 100}% )`, top: 8 }}>
+          <div className="text-xs">{active.label}</div>
+          <div className="text-sm font-semibold">{money(active.value)}</div>
+        </div>
+      )}
+      <svg viewBox={`0 0 ${width} ${height + 28}`} className="h-40 w-full" onMouseLeave={() => setHover(null)}>
+        <path d={line(22)} fill="none" stroke="#1b8a45" strokeWidth="2" opacity="0.7" />
+        <path d={line(0)} fill="none" stroke="#3ddc84" strokeWidth="2.5" />
+        {coords.map((point, index) => (
+          <g key={`${point.label}-${index}`} onMouseEnter={() => setHover(index)}>
+            <rect x={point.x - 18} y={0} width={36} height={height} fill="transparent" />
+            {hover === index && (
+              <>
+                <line x1={point.x} y1={8} x2={point.x} y2={height} stroke="rgba(255,255,255,0.28)" />
+                <circle cx={point.x} cy={point.y} r="5" fill="#3ddc84" stroke="#0f1a14" strokeWidth="2" />
+              </>
+            )}
+            <text x={point.x} y={height + 20} textAnchor="middle" fill="rgba(255,255,255,0.45)" fontSize="11">{point.label}</text>
+          </g>
+        ))}
+      </svg>
     </div>
   )
 }
@@ -5046,7 +5178,7 @@ function OrderList({ rows, amountField }: { rows: OrderRecord[]; amountField?: '
         {rows.map((order) => {
           const ref = order.paystackRef ?? order.id
           return (
-            <div key={order.id} className="grid grid-cols-[.8fr_1.4fr_.7fr_.8fr_.8fr] gap-3 px-5 py-4 text-sm">
+            <div key={order.id} className="grid grid-cols-[.8fr_1.4fr_.7fr_.8fr_.8fr] gap-3 px-4 py-2.5 text-[13px]">
               <div className="min-w-0 truncate font-mono text-xs" title={ref}>{shortOrderRef(ref)}</div>
               <div className="min-w-0 truncate">{order.customerName || order.customerEmail}</div>
               <div>{order.items?.length ?? 0} items</div>
@@ -5061,10 +5193,11 @@ function OrderList({ rows, amountField }: { rows: OrderRecord[]; amountField?: '
 }
 
 // ── Tab components ─────────────────────────────────────────────────────────────
-function MissionControlTab({ activeStore }: { activeStore: StoreData | null }) {
+function MissionControlTab({ activeStore, onNavigate }: { activeStore: StoreData | null; onNavigate?: (tab: string) => void }) {
   const [orders, setOrders] = useState<OrderRecord[]>([])
   const [customers, setCustomers] = useState<CustomerRecord[]>([])
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([])
+  const [range, setRange] = useState<'12m' | '6m' | '30d' | '7d'>('12m')
 
   useEffect(() => {
     let cancelled = false
@@ -5090,45 +5223,61 @@ function MissionControlTab({ activeStore }: { activeStore: StoreData | null }) {
   const pending = orders.filter((order) => order.status === 'pending')
   const revenue = paid.reduce((s, o) => s + Number(o.merchantAmount ?? o.totalAmount ?? 0), 0)
   const dueInvoices = invoices.filter((invoice) => !/paid/i.test(invoice.status))
-  const topProduct = useMemo(() => {
-    const counts = new Map<string, number>()
-    orders.forEach((order) => order.items?.forEach((item) => {
-      const name = item.productName || item.productId || 'Product'
-      counts.set(name, (counts.get(name) ?? 0) + Number(item.quantity || 1))
-    }))
-    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'No sales yet'
-  }, [orders])
   const optedIn = customers.filter((c) => c.marketingOptIn).length
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-6xl px-6 py-10">
-        <PageHeader tab="home" title="Mission Control" subtitle="Revenue, fulfillment, invoices, customer signals, and agent recommendations." />
-        <div className="grid gap-3 md:grid-cols-4">
-          <MetricCard label="today revenue" value={money(revenue)} />
-          <MetricCard label="pending orders" value={String(pending.length)} />
-          <MetricCard label="customers" value={String(customers.length)} />
-          <MetricCard label="invoices due" value={String(dueInvoices.length)} />
+      <div className="mx-auto max-w-6xl px-4 py-5 sm:px-5">
+        <PageHeader title="Home" subtitle="Revenue, fulfillment, invoices, customer signals, and agent recommendations." />
+        <div className="mt-4 grid gap-2.5 md:grid-cols-4">
+          <MetricCard label="today revenue" value={money(revenue)} delta="0%" />
+          <MetricCard label="pending orders" value={String(pending.length)} delta="0%" />
+          <MetricCard label="customers" value={String(customers.length)} delta="0%" />
+          <MetricCard label="invoices due" value={String(dueInvoices.length)} delta="0%" />
         </div>
-        <div className="mt-6 grid gap-5 lg:grid-cols-[1.2fr_.8fr]">
-          <section className="overflow-hidden rounded-2xl border border-border bg-card/30">
-            <div className="border-b border-border px-5 py-4"><h2 className="text-sm font-semibold">Latest orders</h2></div>
-            {orders.length === 0 ? <EmptyRows text={activeStore ? 'Orders will appear here after checkout.' : 'Select or create a store first.'} /> : <OrderList rows={orders.slice(0, 5)} />}
-          </section>
-          <section className="rounded-2xl border border-border bg-card/30 p-5">
-            <h2 className="text-sm font-semibold">Agent suggestions</h2>
-            <div className="mt-4 space-y-3">
+        <DashPanel className="mt-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3.5">
+            <h2 className="text-[15px] font-semibold text-white">Analytics</h2>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {([
+                ['12m', '12 Months'],
+                ['6m', '6 Months'],
+                ['30d', '30 Days'],
+                ['7d', '7 Days'],
+              ] as const).map(([id, label]) => (
+                <button key={id} type="button" onClick={() => setRange(id)} className={cn('rounded-md px-2.5 py-1 text-[13px]', range === id ? 'bg-[#1f8f4a] text-white' : 'text-white/55 hover:text-white')}>{label}</button>
+              ))}
+              <button type="button" onClick={() => window.print()} className={dashActionClass('ml-1')}>
+                <Download className="h-3.5 w-3.5" /> Export PDF
+              </button>
+            </div>
+          </div>
+          <RevenueChart orders={orders} range={range} />
+          {orders.filter(hasConfirmedPayment).length === 0 && <EmptyArtwork size="home" icon={DASH_ICONS.database} text="No data available" />}
+        </DashPanel>
+        <div className="mt-3 grid gap-3 lg:grid-cols-[1.35fr_.75fr]">
+          <DashPanel>
+            <div className="flex items-start justify-between gap-3 px-4 py-3">
+              <div>
+                <h2 className="text-[13px] font-semibold text-white">Latest orders</h2>
+                <p className="mt-0.5 text-[12px] text-white/45">Recent customers who made orders</p>
+              </div>
+              <button type="button" onClick={() => onNavigate?.('orders')} className="inline-flex items-center gap-0.5 text-[13px] text-[#3ddc84]">
+                See All Transactions <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {orders.length === 0 ? <EmptyArtwork size="home" icon={DASH_ICONS.store} text={activeStore ? 'Orders will appear here after checkout.' : 'Select or create a store first.'} /> : <OrderList rows={orders.slice(0, 5)} />}
+          </DashPanel>
+          <DashPanel className="p-3.5">
+            <h2 className="text-[13px] font-semibold text-white">Agent suggestions</h2>
+            <div className="mt-2.5 space-y-2">
               {[pending.length ? `${pending.length} pending orders need fulfillment.` : 'No pending orders right now.', dueInvoices.length ? `${dueInvoices.length} invoices are still open.` : 'Invoices are clear.', optedIn ? `${optedIn} customers can receive marketing updates.` : 'Collect opt-ins at checkout before bulk marketing.'].map((item) => (
-                <div key={item} className="flex items-start gap-3 rounded-xl border border-border bg-background/60 p-3 text-sm">
-                  <Sparkles className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" /><span className="leading-relaxed">{item}</span>
+                <div key={item} className="flex items-start gap-2 rounded-lg border border-[#3a3a38] bg-[#21211f] px-2.5 py-2 text-[13px] text-white/85">
+                  <Sparkles className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-[#3ddc84]" /><span className="leading-snug">{item}</span>
                 </div>
               ))}
             </div>
-            <div className="mt-5 rounded-xl border border-border bg-background/60 p-3 text-sm">
-              <div className="font-mono text-[10px] uppercase text-muted-foreground">top product signal</div>
-              <div className="mt-1 font-medium">{topProduct}</div>
-            </div>
-          </section>
+          </DashPanel>
         </div>
       </div>
     </div>
@@ -5215,16 +5364,21 @@ function InvoicesTab({ activeStore }: { activeStore: StoreData | null }) {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-6xl px-6 py-10">
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-          <PageHeader tab="invoices" title="Invoices" subtitle="Create, send, download, and mark invoices as paid." />
-          <Button onClick={() => setModalOpen(true)} disabled={!tenantId} className="rounded-full"><Plus className="h-4 w-4" /> Create invoice</Button>
+      <div className="mx-auto max-w-6xl px-4 py-5 sm:px-5">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+          <PageHeader title="Invoices" subtitle="Create, send, download, and mark invoices as paid." />
+          <Button onClick={() => setModalOpen(true)} disabled={!tenantId} className={dashActionClass()}><Plus className="h-4 w-4" /> Create invoice</Button>
         </div>
-        <section className="overflow-hidden rounded-2xl border border-border bg-card/30">
+        <DashPanel>
+          <div className="flex items-center justify-between px-4 pt-3.5">
+            <h2 className="text-[15px] font-semibold text-[#3ddc84]">Invoice list</h2>
+            <span className="text-sm text-white/55">Sort: Customer <ChevronDown className="ml-1 inline h-4 w-4" /></span>
+          </div>
+          <TableFrame>
           <div className="hidden md:block">
             <GridHeader cols="grid-cols-[.8fr_1.3fr_.8fr_.7fr_.8fr_1fr]" items={['number', 'customer', 'total', 'status', 'due', 'actions']} />
           </div>
-          {rows.length === 0 ? <EmptyRows text={activeStore ? 'No invoices yet.' : 'Select or create a store first.'} /> : (
+          {rows.length === 0 ? <EmptyArtwork icon={DASH_ICONS.store} text={activeStore ? 'No invoices yet.' : 'Select or create a store first.'} /> : (
             <div className="divide-y divide-border">
               {visibleRows.map((invoice) => (
                 <div key={invoice.id} className="grid gap-3 px-4 py-4 text-sm md:grid-cols-[.8fr_1.3fr_.8fr_.7fr_.8fr_1fr] md:px-5">
@@ -5257,8 +5411,9 @@ function InvoicesTab({ activeStore }: { activeStore: StoreData | null }) {
               ))}
             </div>
           )}
+          </TableFrame>
           <PaginationControls page={page} total={total} pageSize={pageSize} onPage={setPage} />
-        </section>
+        </DashPanel>
       </div>
 
       {modalOpen && (
@@ -5374,15 +5529,15 @@ function StoreTab({ stores, activeStore, onSelectStore, onStoreDeleted, deleteSt
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-6xl px-6 py-10">
-        <div className="mb-8 flex items-start justify-between gap-4">
-          <PageHeader tab="store" title="Store" subtitle="Your merchant storefronts and generated catalogs." />
-          <Button variant="outline" size="sm" className="rounded-full" onClick={() => void reloadStores()}>Refresh</Button>
+      <div className="mx-auto max-w-6xl px-4 py-5 sm:px-5">
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <PageHeader title="Store" subtitle="Your merchant storefronts and generated catalogs." />
+          <Button variant="outline" size="sm" className="rounded-xl border-white/10" onClick={() => void reloadStores()}>Refresh</Button>
         </div>
         {visibleStores.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border bg-card/30 p-12 text-center">
-            <p className="text-sm text-muted-foreground">Launch a store from Home to start customizing.</p>
-          </div>
+          <DashPanel>
+            <EmptyArtwork size="page" icon={DASH_ICONS.store} text="Launch a store from Home to start customizing." />
+          </DashPanel>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {paginatedStores.map((store) => {
@@ -5612,14 +5767,19 @@ function OrdersTab({ activeStore }: { activeStore: StoreData | null }) {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-6xl px-6 py-10">
-        <PageHeader tab="orders" title="Orders" subtitle="Every checkout your agent has processed." />
-        <section className="overflow-hidden rounded-2xl border border-border bg-card/30">
+      <div className="mx-auto max-w-6xl px-4 py-5 sm:px-5">
+        <PageHeader title="Orders" subtitle="Every checkout your agent has processed." />
+        <DashPanel className="mt-6">
+          <div className="flex items-center justify-between px-4 pt-3.5">
+            <h2 className="text-[15px] font-semibold text-[#3ddc84]">Sales</h2>
+            <span className="text-sm text-white/55">Sort: Customer <ChevronDown className="ml-1 inline h-4 w-4" /></span>
+          </div>
+          <TableFrame>
           <div className="hidden md:block">
             <GridHeader cols="grid-cols-[.9fr_1.3fr_.6fr_.8fr_1.1fr_.7fr]" items={['order ref', 'customer', 'items', 'amount', 'status', '']} />
           </div>
           {loading ? <EmptyRows text="Loading orders…" /> : rows.length === 0 ? (
-            <EmptyRows text={activeStore ? 'Orders appear after your first sale.' : 'Select or create a store first.'} />
+            <EmptyArtwork icon={DASH_ICONS.store} text={activeStore ? 'Orders appear after your first sale.' : 'Select or create a store first.'} />
           ) : (
             <div className="divide-y divide-border">
               {visibleRows.map((order) => {
@@ -5682,8 +5842,9 @@ function OrdersTab({ activeStore }: { activeStore: StoreData | null }) {
               })}
             </div>
           )}
+          </TableFrame>
           <PaginationControls page={page} total={total} pageSize={pageSize} onPage={setPage} />
-        </section>
+        </DashPanel>
       </div>
       {viewingOrder && (
         <OrderDetailModal
@@ -5738,39 +5899,35 @@ function SalesTab({ activeStore }: { activeStore: StoreData | null }) {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-6xl px-6 py-10">
-        <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
-          <PageHeader tab="sales" title="Sales" subtitle="Paid orders, revenue, and merchant proceeds." />
+      <div className="mx-auto max-w-6xl px-4 py-5 sm:px-5">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <PageHeader title="Sales" subtitle="Paid orders, revenue, and merchant proceeds." />
           <div className="flex flex-wrap gap-2">
             {['Last 7 days', '30 days', '90 days', 'All time'].map((item) => (
-              <Button key={item} size="sm" className="rounded-full" variant={range === item ? 'default' : 'outline'} onClick={() => setRange(item)}>{item}</Button>
+              <Button key={item} size="sm" className="rounded-lg" variant={range === item ? 'default' : 'outline'} onClick={() => setRange(item)}>{item}</Button>
             ))}
           </div>
         </div>
         <div className="grid gap-3 md:grid-cols-4">
-          <MetricCard label="Total Revenue" value={money(revenue)} />
-          <MetricCard label="Orders Count" value={String(filteredRows.length)} />
-          <MetricCard label="Avg Order Value" value={money(average)} />
-          <MetricCard label="Pending Disbursement" value={money(ledgerBalance)} />
+          <MetricCard label="today revenue" value={money(revenue)} delta="0%" />
+          <MetricCard label="orders count" value={String(filteredRows.length)} delta="0%" />
+          <MetricCard label="avg order value" value={money(average)} delta="0%" />
+          <MetricCard label="pending disbursement" value={money(ledgerBalance)} />
         </div>
-        <section className="mt-6 overflow-hidden rounded-2xl border border-border bg-card/30">
+        <DashPanel className="mt-5">
           {filteredRows.length === 0 ? (
-            <div className="grid min-h-72 place-items-center px-6 py-10 text-center">
-              <div>
-                <p className="font-medium">Your first sale is coming. Share your store link to get started.</p>
-                {storeUrl && (
-                  <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-                    <code className="rounded-xl border border-border bg-background px-2 py-1 text-xs">{storeUrl}</code>
-                    <Button size="sm" variant="outline" className="rounded-full" onClick={() => void navigator.clipboard.writeText(storeUrl).then(() => toast.success('Store URL copied'))}>
-                      <Copy className="h-3.5 w-3.5" /> Copy
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
+            <EmptyArtwork size="page" icon={DASH_ICONS.tag} text="Your first sale is coming. Share your store link to get started." />
           ) : <OrderList rows={filteredRows} amountField="merchant" />}
+          {filteredRows.length === 0 && storeUrl && (
+            <div className="flex flex-wrap items-center justify-center gap-2 px-4 pb-3">
+              <code className="rounded-xl border border-white/10 bg-black/20 px-2 py-1 text-xs">{storeUrl}</code>
+              <Button size="sm" variant="outline" className="rounded-full" onClick={() => void navigator.clipboard.writeText(storeUrl).then(() => toast.success('Store URL copied'))}>
+                <Copy className="h-3.5 w-3.5" /> Copy
+              </Button>
+            </div>
+          )}
           <PaginationControls page={page} total={total} pageSize={pageSize} onPage={setPage} />
-        </section>
+        </DashPanel>
       </div>
     </div>
   )
@@ -5856,23 +6013,24 @@ function PaymentsTab({ activeStore }: { activeStore: StoreData | null }) {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-6xl px-6 py-10">
-        <PageHeader tab="payments" title="Payments" subtitle="Subsidiary ledger balance and transaction history." />
-        <section className="rounded-2xl border border-emerald-500/20 bg-zinc-950 p-6 text-white">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <div className="text-sm text-zinc-400">Merchant Balance</div>
-              <div className="mt-2 font-mono text-3xl font-semibold text-emerald-400">{money(balance, currency)}</div>
-              <div className="mt-1 text-xs text-zinc-500">subsidiary account</div>
+      <div className="mx-auto max-w-6xl px-4 py-5 sm:px-5">
+        <PageHeader title="Payments" subtitle="Subsidiary ledger balance and transaction history." />
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-4">
+          <div className="rounded-2xl border border-[#30A66F] bg-[#21211f] px-5 py-4">
+            <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-white/45">Merchant balance</div>
+            <div className="mt-2 flex items-baseline gap-3">
+              <div className="text-[1.15rem] font-semibold leading-none text-white">{money(balance, currency)}</div>
+              <div className="text-sm text-[#3ddc84]">Subsidiary account</div>
             </div>
-            <Button disabled={!activeStore || balance <= 50 || processing} onClick={openDisbursementModal} className="rounded-full">
-              {processing ? 'Working...' : 'Request Disbursement'} <ArrowRight className="h-4 w-4" />
-            </Button>
           </div>
-        </section>
-        <section className="mt-6 overflow-hidden rounded-2xl border border-border bg-card/30">
+          <Button disabled={!activeStore || balance <= 50 || processing} onClick={openDisbursementModal} className={dashActionClass()}>
+            {processing ? 'Working...' : 'Request Disbursement'} <Plus className="h-4 w-4" />
+          </Button>
+        </div>
+        <DashPanel className="mt-5">
+          <TableFrame>
           <GridHeader cols="grid-cols-[.75fr_.65fr_1.2fr_1.35fr_.85fr_.8fr]" items={['date', 'type', 'description', 'payout to', 'amount', 'balance']} />
-          {transactions.length === 0 ? <EmptyRows text="No ledger transactions yet." /> : (
+          {transactions.length === 0 ? <EmptyArtwork icon={DASH_ICONS.coins} text="No ledger transactions yet." /> : (
             <div className="divide-y divide-border">
               {visibleTransactions.map((tx) => {
                 const meta = (tx as { meta?: { accountName?: string; provider?: string; account?: string; reference?: string; disbursementId?: string } | null }).meta
@@ -5899,8 +6057,9 @@ function PaymentsTab({ activeStore }: { activeStore: StoreData | null }) {
               })}
             </div>
           )}
+          </TableFrame>
           <PaginationControls page={txPage} total={txTotal} pageSize={txPageSize} onPage={setTxPage} />
-        </section>
+        </DashPanel>
       </div>
       {modalOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 px-4 backdrop-blur-sm">
@@ -6064,11 +6223,11 @@ const uploadImage = async (productId: string, file: File) => {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-6xl px-6 py-10">
-        <div className="mb-8 flex items-start justify-between gap-4">
-          <PageHeader tab="products" title="Products" subtitle="Your agent-generated product catalog. Edit inline or ask the agent." />
-          <Button size="sm" className="rounded-full gap-1.5" onClick={() => setAdding(true)} disabled={!storeId}>
-            <Plus className="h-3.5 w-3.5" /> Add product
+      <div className="mx-auto max-w-6xl px-4 py-5 sm:px-5">
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <PageHeader title="Products" subtitle="Your agent-generated product catalog. Edit inline or ask the agent." />
+          <Button size="sm" className={dashActionClass()} onClick={() => setAdding(true)} disabled={!storeId}>
+            Add product <Plus className="h-4 w-4" />
           </Button>
         </div>
 
@@ -6100,9 +6259,9 @@ const uploadImage = async (productId: string, file: File) => {
         {loading ? (
           <div className="p-10 text-center text-sm text-muted-foreground">Loading products…</div>
         ) : products.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border bg-card/30 p-12 text-center text-sm text-muted-foreground">
-            No products yet. Ask your agent to generate them or add one above.
-          </div>
+          <DashPanel>
+            <EmptyArtwork size="page" icon={DASH_ICONS.product} text="No products yet. Ask your agent to generate them" />
+          </DashPanel>
         ) : (
           <>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -6405,37 +6564,48 @@ function CustomersTab({ activeStore, mode }: { activeStore: StoreData | null; mo
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-6xl px-6 py-10">
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+      <div className="mx-auto max-w-6xl px-4 py-5 sm:px-5">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
           <PageHeader
-            tab={mode === 'marketing' ? 'marketing' : 'customers'}
-            title={mode === 'marketing' ? 'Messaging' : 'Customers'}
+            title={mode === 'marketing' ? 'Marketing' : 'Customers'}
             subtitle={mode === 'marketing' ? 'Email and SMS-ready customer contacts for transactional and marketing work.' : 'Know who bought, what they paid, and when they last ordered.'}
           />
           {mode === 'marketing' && (
             <div className="flex flex-wrap gap-2">
-              {selectedCount > 0 && <Button variant="outline" className="rounded-full" onClick={() => openCompose({ audience: selectedCount > 1 ? 'bulk' : 'single' })}><Mail className="h-4 w-4" /> Message selected</Button>}
-              <Button className="rounded-full" disabled={!activeStore} onClick={() => openCompose({ audience: 'bulk' })}><Plus className="h-4 w-4" /> New message</Button>
+              {selectedCount > 0 && <Button variant="outline" className="rounded-xl" onClick={() => openCompose({ audience: selectedCount > 1 ? 'bulk' : 'single' })}><Mail className="h-4 w-4" /> Message selected</Button>}
+              <Button className={dashActionClass()} disabled={!activeStore} onClick={() => openCompose({ audience: 'bulk' })}>New message <Plus className="h-4 w-4" /></Button>
             </div>
           )}
         </div>
         <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard label="customers" value={String(total || customers.length)} />
-          <MetricCard label="revenue" value={money(totalRevenue, currency)} />
-          <MetricCard label="email contacts" value={String(customers.filter((c) => c.email).length)} />
-          <MetricCard label="phone contacts" value={String(customers.filter((c) => c.phone).length)} />
+          {mode === 'marketing' ? (
+            <>
+              <MetricCard label="paid revenue" value={money(totalRevenue, currency)} />
+              <MetricCard label="customers" value={String(total || customers.length)} />
+              <MetricCard label="email contacts" value={String(customers.filter((c) => c.email).length)} />
+              <MetricCard label="phone contacts" value={String(customers.filter((c) => c.phone).length)} />
+            </>
+          ) : (
+            <>
+              <MetricCard label="revenue" value={money(totalRevenue, currency)} delta="0%" />
+              <MetricCard label="customers" value={String(total || customers.length)} delta="0%" />
+              <MetricCard label="email contacts" value={String(customers.filter((c) => c.email).length)} />
+              <MetricCard label="phone contacts" value={String(customers.filter((c) => c.phone).length)} />
+            </>
+          )}
         </div>
         {mode === 'marketing' && (
-          <div className="mb-4 flex flex-wrap gap-2">
+          <div className="mb-4 inline-flex rounded-full border border-[#3a3a38] bg-[#21211f] p-1">
             {(['customers', 'history', 'templates'] as const).map((view) => (
-              <Button key={view} size="sm" variant={marketingView === view ? 'default' : 'outline'} className="rounded-full capitalize" onClick={() => setMarketingView(view)}>{view}</Button>
+              <button key={view} type="button" onClick={() => setMarketingView(view)} className={cn('rounded-full px-4 py-1.5 text-sm capitalize', marketingView === view ? 'bg-[#2c2e2c] text-white' : 'text-white/55')}>{view}</button>
             ))}
           </div>
         )}
         {mode === 'marketing' && marketingView === 'history' ? (
-          <section className="overflow-hidden rounded-2xl border border-border bg-card/40">
+          <DashPanel>
+            <TableFrame>
             <GridHeader cols="grid-cols-[.65fr_.9fr_1.35fr_1fr_.65fr_1fr]" items={['channel', 'audience', 'message', 'sent', 'status', 'action']} />
-            {history.length === 0 ? <EmptyRows text="Sent campaigns and transactional messages will appear here." /> : (
+            {history.length === 0 ? <EmptyArtwork icon={DASH_ICONS.store} text={activeStore ? 'Sent campaigns and transactional messages will appear here.' : 'Select or create a store first.'} /> : (
               <div className="divide-y divide-border">
                 {history.map((item) => (
                   <div key={item.id} className="grid grid-cols-[.65fr_.9fr_1.35fr_1fr_.65fr_1fr] gap-3 px-5 py-4 text-sm">
@@ -6452,14 +6622,16 @@ function CustomersTab({ activeStore, mode }: { activeStore: StoreData | null; mo
                 ))}
               </div>
             )}
+            </TableFrame>
             <PaginationControls page={historyPage} total={historyTotal} pageSize={historyPageSize} onPage={setHistoryPage} />
-          </section>
+          </DashPanel>
         ) : mode === 'marketing' && marketingView === 'templates' ? (
-          <section>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <DashPanel>
             {templates.length === 0 ? (
-              <div className="rounded-2xl border border-border bg-card/40 p-8 text-sm text-muted-foreground">Saved templates will appear here.</div>
-            ) : templates.map((template) => (
+              <EmptyArtwork size="page" icon={DASH_ICONS.booklet} text="Saved templates will appear here" />
+            ) : (
+            <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
+            {templates.map((template) => (
               <button key={template.id} type="button" onClick={() => useTemplate(template)} className="rounded-2xl border border-border bg-card/40 p-4 text-left transition hover:border-primary/50">
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="truncate text-sm font-semibold">{template.name}</h2>
@@ -6470,13 +6642,15 @@ function CustomersTab({ activeStore, mode }: { activeStore: StoreData | null; mo
               </button>
             ))}
             </div>
+            )}
             <PaginationControls page={templatesPage} total={templatesTotal} pageSize={templatesPageSize} onPage={setTemplatesPage} />
-          </section>
+          </DashPanel>
         ) : (
-        <section className="overflow-hidden rounded-2xl border border-border bg-card/40">
+        <DashPanel>
+          <TableFrame>
           <GridHeader cols={mode === 'marketing' ? "grid-cols-[.25fr_1.35fr_.7fr_.7fr_.8fr_1fr]" : "grid-cols-[1.4fr_.7fr_.7fr_.8fr_1fr]"} items={mode === 'marketing' ? ['', 'customer', 'spent', 'orders', 'last bought', 'contact'] : ['customer', 'spent', 'orders', 'last bought', 'contact']} />
           {loading ? <EmptyRows text="Loading customers…" /> : customers.length === 0 ? (
-            <EmptyRows text={activeStore ? 'Checkout customers will appear here after their first order.' : 'Select or create a store first.'} />
+            <EmptyArtwork icon={DASH_ICONS.store} text={activeStore ? 'Checkout customers will appear here after their first order.' : 'Select or create a store first.'} />
           ) : (
             <div className="divide-y divide-border">
               {customers.map((customer) => (
@@ -6505,8 +6679,9 @@ function CustomersTab({ activeStore, mode }: { activeStore: StoreData | null; mo
               ))}
             </div>
           )}
+          </TableFrame>
           <PaginationControls page={page} total={total} pageSize={pageSize} onPage={setPage} />
-        </section>
+        </DashPanel>
         )}
         {composeOpen && (
           <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm">
@@ -6597,40 +6772,148 @@ function AnalyticsTab({ activeStore }: { activeStore: StoreData | null }) {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-6xl px-6 py-10">
-        <PageHeader tab="analytics" title="Analytics" subtitle="Revenue, customer, catalog, and conversion signals." />
-        <div className="grid gap-3 md:grid-cols-4">
+      <div className="mx-auto max-w-6xl px-4 py-5 sm:px-5">
+        <PageHeader title="Analytics" subtitle="Revenue, customer, catalog, and conversion signals." />
+        <div className="mt-4 grid gap-2.5 md:grid-cols-4">
           <MetricCard label="paid revenue" value={money(revenue)} />
           <MetricCard label="paid orders" value={String(paid.length)} />
-          <MetricCard label="customers" value={String(customers.length)} />
+          <MetricCard label="store visits" value="0" />
           <MetricCard label="catalog items" value={String(activeStore?.products?.length ?? 0)} />
         </div>
-        <div className="mt-6 rounded-2xl border border-border bg-card/40 p-5">
-          <div className="mb-2 flex items-center justify-between text-sm">
-            <span className="font-medium">Estimated checkout conversion</span>
-            <span className="font-mono text-primary">{conversionHint}%</span>
+        <DashPanel className="mt-5 px-5 py-4">
+          <div className="flex items-center gap-4 text-[11px] font-medium uppercase tracking-[0.08em] text-white/70">
+            <span className="shrink-0">Estimated checkout conversion</span>
+            <div className="h-[3px] min-w-0 flex-1 rounded-full bg-white/15">
+              <div className="h-full rounded-full bg-white/70" style={{ width: `${Math.max(conversionHint, 0)}%` }} />
+            </div>
+            <span className="shrink-0 text-sm normal-case tracking-normal text-white/80">{conversionHint}%</span>
           </div>
-          <div className="h-2 overflow-hidden rounded-full bg-muted">
-            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${conversionHint}%` }} />
-          </div>
-          <p className="mt-3 text-xs text-muted-foreground">This becomes more accurate as storefront visits and checkout events accumulate.</p>
-        </div>
+          <p className="mt-3 text-xs text-white/40">This becomes more accurate as storefront visits and checkout events accumulate.</p>
+        </DashPanel>
       </div>
     </div>
   )
 }
 
-function ProfileCenterTab({ mode, activeStore, user, stores, credits, onStoreUpdated }: {
+type SettingsSection = 'general' | 'account' | 'billing' | 'workflow' | 'domain' | 'privacy' | 'danger' | 'help'
+type AppearancePrefs = {
+  theme: 'system' | 'light' | 'dark'
+  font: string
+  textSize: 'Small' | 'Medium' | 'Large'
+  width: 'Narrow' | 'Medium' | 'Wide'
+  motion: 'System' | 'Reduced'
+  language: string
+  zoom: string
+  responseAlerts: boolean
+  mentionAlerts: boolean
+  commentAlerts: boolean
+  shareAlerts: boolean
+}
+
+const APPEARANCE_KEY = 'seltra:appearance'
+const DEFAULT_APPEARANCE: AppearancePrefs = {
+  theme: 'dark',
+  font: 'Poppins',
+  textSize: 'Medium',
+  width: 'Narrow',
+  motion: 'System',
+  language: 'English',
+  zoom: '100',
+  responseAlerts: false,
+  mentionAlerts: true,
+  commentAlerts: true,
+  shareAlerts: true,
+}
+
+const SETTINGS_NAV: { id: SettingsSection; label: string; icon: typeof Settings }[] = [
+  { id: 'general', label: 'General', icon: Settings },
+  { id: 'account', label: 'Account', icon: UserRound },
+  { id: 'billing', label: 'Billing', icon: CreditCard },
+  { id: 'workflow', label: 'Workflow', icon: Workflow },
+  { id: 'domain', label: 'Domain', icon: Globe2 },
+  { id: 'privacy', label: 'Privacy', icon: Shield },
+  { id: 'danger', label: 'Danger zone', icon: AlertTriangle },
+  { id: 'help', label: 'Help', icon: HelpCircle },
+]
+
+function sectionForMode(mode: 'account' | 'billing' | 'domains' | 'help'): SettingsSection {
+  if (mode === 'billing') return 'billing'
+  if (mode === 'domains') return 'domain'
+  if (mode === 'help') return 'help'
+  return 'account'
+}
+
+function currentDevice() {
+  if (typeof navigator === 'undefined') return { os: 'This device', browser: 'Browser' }
+  const ua = navigator.userAgent
+  const os = /Windows/i.test(ua) ? 'Windows PC' : /Mac OS/i.test(ua) ? 'Mac' : /Android/i.test(ua) ? 'Android' : /iPhone|iPad/i.test(ua) ? 'iPhone' : 'This device'
+  const browser = /Edg\//i.test(ua) ? 'Edge' : /Chrome\//i.test(ua) ? 'Chrome' : /Safari\//i.test(ua) ? 'Safari' : /Firefox\//i.test(ua) ? 'Firefox' : 'Browser'
+  return { os, browser }
+}
+
+function SettingsSwitch({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} aria-label={label} onClick={onClick} className={cn('relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors', on ? 'bg-[#148754]' : 'bg-[#3a3a38]')}>
+      <span className={cn('absolute top-[2px] h-[18px] w-[18px] rounded-full bg-white shadow-sm transition-all', on ? 'left-[18px]' : 'left-[2px]')} />
+    </button>
+  )
+}
+
+function SettingsChoice({ options, value, onChange }: { options: string[]; value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="inline-flex shrink-0 rounded-lg bg-[#2c2c2a] p-0.5">
+      {options.map((option) => (
+        <button key={option} type="button" onClick={() => onChange(option)} className={cn('h-7 rounded-md px-3 text-[12.5px] leading-none', value === option ? 'bg-[#3f3f3d] text-white' : 'text-white/55 hover:text-white')}>{option}</button>
+      ))}
+    </div>
+  )
+}
+
+function SettingsRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-8 border-b border-white/[0.08] py-3.5">
+      <div className="min-w-0">
+        <div className="text-[13.5px] leading-tight text-white">{label}</div>
+        {hint && <p className="mt-1 max-w-md text-[12px] leading-snug text-white/40">{hint}</p>}
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  )
+}
+
+function SettingsPick({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: string[] }) {
+  return (
+    <label className="relative inline-flex h-8 items-center">
+      <select value={value} onChange={(event) => onChange(event.target.value)} className="h-8 appearance-none bg-transparent pr-5 text-right text-[13px] text-white/75 outline-none">
+        {options.map((item) => <option key={item} value={item}>{item}</option>)}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-0 h-3.5 w-3.5 text-white/45" />
+    </label>
+  )
+}
+
+function filledText(...values: Array<string | null | undefined>) {
+  for (const value of values) {
+    const text = value?.trim()
+    if (text) return text
+  }
+  return ''
+}
+
+function ProfileCenterTab({ mode, activeStore, user, stores, credits, merchantProfile, onStoreUpdated, onClose }: {
   mode: 'account' | 'billing' | 'domains' | 'help'
   activeStore: StoreData | null
-  user: { email: string; name: string; avatar: string; joinedAt?: string; plan?: 'free' | 'premium' } | null
+  user: { id?: string; email: string; name: string; avatar: string; joinedAt?: string; plan?: 'free' | 'premium' } | null
   stores: StoreData[]
   credits: { used: number; limit: number; resetsAt: string } | null
+  merchantProfile?: { businessType?: string; businessName?: string; storeName?: string; whatYouSell?: string; basedIn?: string } | null
   onStoreUpdated: (s: StoreData) => void
+  onClose?: () => void
 }) {
-  const [name, setName] = useState(activeStore?.name ?? '')
-  const [businessType, setBusinessType] = useState(activeStore?.businessType ?? '')
-  const [targetAudience, setTargetAudience] = useState(activeStore?.targetAudience ?? '')
+  const storeContext = (activeStore as (StoreData & { merchantContext?: { storeName?: string; industry?: string } | null }) | null)?.merchantContext
+  const [name, setName] = useState(filledText(activeStore?.name, activeStore?.canonical?.businessName, activeStore?.canonical?.brandName, storeContext?.storeName, merchantProfile?.storeName, merchantProfile?.businessName))
+  const [businessType, setBusinessType] = useState(filledText(activeStore?.businessType, activeStore?.storeDNA?.industry, storeContext?.industry, merchantProfile?.businessType))
+  const [targetAudience, setTargetAudience] = useState(filledText(activeStore?.targetAudience, merchantProfile?.whatYouSell))
   const [region, setRegion] = useState('Africa')
   const [country, setCountry] = useState('Ghana')
   const [language, setLanguage] = useState('English')
@@ -6638,21 +6921,27 @@ function ProfileCenterTab({ mode, activeStore, user, stores, credits, onStoreUpd
   const [saving, setSaving] = useState(false)
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [payoutError, setPayoutError] = useState('')
-  const [accountStoresPage, setAccountStoresPage] = useState(1)
-  const accountStoresPageSize = 4
-
   // ── Editable subdomain state (now edited via modal) ──
   const [domainSlug, setDomainSlug] = useState(activeStore?.slug ?? '')
   const [savingDomain, setSavingDomain] = useState(false)
   const [domainError, setDomainError] = useState('')
   const [editDomainOpen, setEditDomainOpen] = useState(false)
+  const [settingsQuery, setSettingsQuery] = useState('')
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>(sectionForMode(mode))
+  const [fullName, setFullName] = useState(user?.name ?? '')
+  const [workLabel, setWorkLabel] = useState('Other')
+  const [privacyOpen, setPrivacyOpen] = useState<'protect' | 'use' | null>(null)
+  const [notifyChat, setNotifyChat] = useState(true)
+  const [appearance, setAppearance] = useState<AppearancePrefs>(DEFAULT_APPEARANCE)
+  const router = useRouter()
 
   useEffect(() => {
-    setName(activeStore?.name ?? '')
-    setBusinessType(activeStore?.businessType ?? '')
-    setTargetAudience(activeStore?.targetAudience ?? '')
+    const context = (activeStore as (StoreData & { merchantContext?: { storeName?: string; industry?: string } | null }) | null)?.merchantContext
+    setName(filledText(activeStore?.name, activeStore?.canonical?.businessName, activeStore?.canonical?.brandName, context?.storeName, merchantProfile?.storeName, merchantProfile?.businessName))
+    setBusinessType(filledText(activeStore?.businessType, activeStore?.storeDNA?.industry, context?.industry, merchantProfile?.businessType))
+    setTargetAudience(filledText(activeStore?.targetAudience, merchantProfile?.whatYouSell))
     setRegion(activeStore?.preferences?.region ?? 'Africa')
-    setCountry(activeStore?.country ?? 'Ghana')
+    setCountry(filledText(activeStore?.country, merchantProfile?.basedIn) || 'Ghana')
     setLanguage(activeStore?.preferences?.language ?? 'English')
     setPayout({
       method: activeStore?.payoutMethod ?? 'mobile_money',
@@ -6664,17 +6953,25 @@ function ProfileCenterTab({ mode, activeStore, user, stores, credits, onStoreUpd
     setDomainSlug(activeStore?.slug ?? '')
     setDomainError('')
     setEditDomainOpen(false)
-  }, [activeStore])
+  }, [activeStore, merchantProfile])
 
   // ── Plan / tier (dynamic) ──────────────────────────────────────────────
   const plan: 'free' | 'premium' = user?.plan === 'premium' ? 'premium' : 'free'
   const storeLimit = plan === 'premium' ? 3 : 1
   const productLimit = plan === 'premium' ? 100 : 50
   const payoutOptions = payout.method === 'bank' ? GHANA_BANKS : GHANA_TELCOS
-  const accountStores = stores.slice((accountStoresPage - 1) * accountStoresPageSize, accountStoresPage * accountStoresPageSize)
-  useEffect(() => { setAccountStoresPage(1) }, [stores.length])
-
-  const creditsExhausted = Boolean(credits && credits.used >= credits.limit)
+  useEffect(() => { setSettingsSection(sectionForMode(mode)) }, [mode])
+  useEffect(() => { setFullName(user?.name ?? '') }, [user?.name])
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(APPEARANCE_KEY) ?? 'null') as Partial<AppearancePrefs> | null
+      if (saved) setAppearance({ ...DEFAULT_APPEARANCE, ...saved })
+      const work = localStorage.getItem('seltra:work-label')
+      if (work) setWorkLabel(work)
+      const chat = localStorage.getItem('seltra:notify-chat')
+      if (chat === '0' || chat === '1') setNotifyChat(chat === '1')
+    } catch { /* keep defaults */ }
+  }, [])
 
   const saveAccount = async () => {
     const id = storeIdOf(activeStore)
@@ -6753,171 +7050,307 @@ function ProfileCenterTab({ mode, activeStore, user, stores, credits, onStoreUpd
     toast.success('Subdomain updated')
   }
 
-  const title = mode === 'billing' ? 'Billing' : mode === 'domains' ? 'Domains' : mode === 'help' ? 'Get Help' : 'Account'
-  const subtitle = mode === 'billing'
-    ? 'Plan, credits, and billing controls for your Seltra workspace.'
-    : mode === 'domains'
-      ? 'View and manage domains connected to your Seltra stores.'
-      : mode === 'help'
-        ? 'Support options for launch, payments, domains, and store operations.'
-        : 'Merchant profile, workspace details, stores, region, and payout preferences.'
+  const fieldClass = 'h-9 w-full rounded-lg border border-white/10 bg-[#1a1a1a] px-3 text-[13px] text-white caret-white outline-none placeholder:text-white/35 focus:ring-1 focus:ring-[#1f8f4a] disabled:text-white disabled:opacity-100'
+  const device = currentDevice()
+  const orgId = user?.id || ''
+  const visibleNav = SETTINGS_NAV.filter((item) => item.label.toLowerCase().includes(settingsQuery.trim().toLowerCase()))
+  const patchAppearance = (patch: Partial<AppearancePrefs>) => {
+    setAppearance((current) => {
+      const next = { ...current, ...patch }
+      localStorage.setItem(APPEARANCE_KEY, JSON.stringify(next))
+      return next
+    })
+  }
+  const saveDisplayName = () => {
+    const nextName = fullName.trim()
+    if (!nextName) { toast.error('Enter your full name.'); return }
+    try {
+      const stored = JSON.parse(localStorage.getItem('seltra:user') ?? '{}') as Record<string, unknown>
+      const metadata = (stored.user_metadata && typeof stored.user_metadata === 'object' ? stored.user_metadata : {}) as Record<string, unknown>
+      localStorage.setItem('seltra:user', JSON.stringify({ ...stored, name: nextName, user_metadata: { ...metadata, full_name: nextName, name: nextName } }))
+    } catch { /* the field still shows the typed name */ }
+    localStorage.setItem('seltra:work-label', workLabel)
+    toast.success('Profile saved on this device.')
+  }
 
   return (
-    <div className={mode === 'account' ? 'flex-1 overflow-hidden' : 'flex-1 overflow-y-auto'}>
-      <div className={`mx-auto max-w-6xl px-6 ${mode === 'account' ? 'h-full py-6' : 'py-10'}`}>
-        <PageHeader tab={mode} title={title} subtitle={subtitle} />
-
-        {mode === 'account' && (
-          <div className="grid min-h-0 gap-5 lg:h-[calc(100%-5.5rem)] lg:grid-cols-[.85fr_1.15fr]">
-            <section className="min-h-0 overflow-hidden rounded-2xl border border-border bg-card/40 p-4">
-              <div className="flex items-center gap-4">
-                {user?.avatar && <img src={user.avatar} alt={user.name || 'Merchant'} className="h-14 w-14 rounded-full border border-border bg-muted object-cover" />}
-                <div className="min-w-0">
-                  <h2 className="truncate text-lg font-semibold">{user?.name || 'Merchant'}</h2>
-                  <p className="truncate font-mono text-xs text-muted-foreground">{user?.email || 'No email'}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Joined {user?.joinedAt ? new Date(user.joinedAt).toLocaleDateString() : 'recently'}</p>
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 p-3 sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.() }} onKeyDown={(event) => { if (event.key === 'Escape') onClose?.() }} role="presentation">
+      <div role="dialog" aria-modal="true" aria-label="Settings" className="flex h-[min(720px,calc(100dvh-2rem))] w-full max-w-[980px] overflow-hidden rounded-2xl shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+      <aside className="flex w-[228px] shrink-0 flex-col bg-black px-3 pb-3 pt-3 text-white">
+        <label className="relative mb-3 block">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/35" />
+          <input value={settingsQuery} onChange={(event) => setSettingsQuery(event.target.value)} placeholder="Search" className="h-8 w-full rounded-lg border border-white/10 bg-white/[0.06] pl-8 pr-2 text-[13px] outline-none placeholder:text-white/35 focus:ring-1 focus:ring-white/20" />
+        </label>
+        <p className="px-2.5 pb-1.5 text-[12px] text-white/40">Settings</p>
+        <div className="space-y-0.5">
+          {visibleNav.map((item) => (
+            <button key={item.id} type="button" onClick={() => setSettingsSection(item.id)} className={cn('flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] text-white/70 hover:bg-white/[0.05] hover:text-white', settingsSection === item.id && 'bg-[#3a3a38] text-white')}>
+              <item.icon className="h-3.5 w-3.5 shrink-0" />
+              {item.label}
+            </button>
+          ))}
+          {visibleNav.length === 0 && <p className="px-2.5 py-2 text-[12px] text-white/35">No matching setting.</p>}
+        </div>
+      </aside>
+      <div className="relative min-w-0 flex-1 overflow-y-auto bg-[#2a2a2a] px-6 pb-8 pr-12 pt-4 text-white sm:px-8 sm:pr-14">
+        <button type="button" onClick={() => onClose?.()} aria-label="Close settings" className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-lg text-white/55 hover:bg-white/10 hover:text-white">
+          <X className="h-4 w-4" />
+        </button>
+        {settingsSection === 'general' && (
+          <div className="max-w-[680px]">
+            <h2 className="text-[17px] font-semibold tracking-[-0.02em]">Appearance</h2>
+            <div className="mt-3">
+              <SettingsRow label="Theme">
+                <div className="inline-flex rounded-lg bg-[#2c2c2a] p-0.5">
+                  {([['system', Monitor], ['light', Sun], ['dark', Moon]] as const).map(([id, Icon]) => (
+                    <button key={id} type="button" aria-label={`${id} theme`} onClick={() => patchAppearance({ theme: id })} className={cn('grid h-7 w-8 place-items-center rounded-md text-white/50', appearance.theme === id && 'bg-[#3f3f3d] text-white')}>
+                      <Icon className="h-3.5 w-3.5" />
+                    </button>
+                  ))}
                 </div>
+              </SettingsRow>
+              <SettingsRow label="Chat font">
+                <SettingsPick value={appearance.font} onChange={(font) => patchAppearance({ font })} options={['Poppins', 'Inter', 'System']} />
+              </SettingsRow>
+              <SettingsRow label="Transcript text size" hint="Size of the conversation transcript text.">
+                <SettingsChoice options={['Small', 'Medium', 'Large']} value={appearance.textSize} onChange={(textSize) => patchAppearance({ textSize: textSize as AppearancePrefs['textSize'] })} />
+              </SettingsRow>
+              <SettingsRow label="Transcript width" hint="Maximum width of the transcript and composer columns.">
+                <SettingsChoice options={['Narrow', 'Medium', 'Wide']} value={appearance.width} onChange={(width) => patchAppearance({ width: width as AppearancePrefs['width'] })} />
+              </SettingsRow>
+              <SettingsRow label="Motion" hint="Reduce animation in streaming responses and other interface elements.">
+                <SettingsChoice options={['System', 'Reduced']} value={appearance.motion} onChange={(motion) => patchAppearance({ motion: motion as AppearancePrefs['motion'] })} />
+              </SettingsRow>
+            </div>
+            <h3 className="mb-1 mt-8 text-[15px] font-semibold">Style</h3>
+            <SettingsRow label="Language">
+              <SettingsPick value={appearance.language} onChange={(language) => patchAppearance({ language })} options={['English', 'French', 'Arabic']} />
+            </SettingsRow>
+            <SettingsRow label="Zoom level">
+              <SettingsPick value={appearance.zoom} onChange={(zoom) => patchAppearance({ zoom })} options={['90', '100', '110', '125']} />
+            </SettingsRow>
+            <h3 className="mb-1 mt-8 text-[15px] font-semibold">Notifications</h3>
+            {([
+              ['responseAlerts', 'Response completions', 'Get notified when Seltra has finished a response. Useful for long-running tasks.'],
+              ['mentionAlerts', 'Mentions and replies', 'Get an email when someone mentions you or replies in a thread you are part of.'],
+              ['commentAlerts', 'Comments on your artifacts', 'Get an email when someone comments on a store or product you own.'],
+              ['shareAlerts', 'Artifacts shared with you', 'Get an email when someone shares a store or file with you.'],
+            ] as const).map(([key, label, hint]) => (
+              <SettingsRow key={key} label={label} hint={hint}>
+                <SettingsSwitch label={label} on={appearance[key]} onClick={() => patchAppearance({ [key]: !appearance[key] })} />
+              </SettingsRow>
+            ))}
+          </div>
+        )}
+
+        {settingsSection === 'account' && (
+          <div className="max-w-3xl">
+            <h2 className="text-[17px] font-semibold tracking-[-0.02em]">Profile</h2>
+            <div className="mt-3 flex items-center justify-between gap-6 border-b border-white/10 py-3 text-[13px]">
+              <span className="shrink-0">Full name</span>
+              <input value={fullName} onChange={(event) => setFullName(event.target.value)} onBlur={saveDisplayName} className="h-8 w-[220px] rounded-lg border border-white/10 bg-[#1c1c1c] px-3 text-left text-[13px] text-white outline-none focus:ring-1 focus:ring-[#1f8f4a]" />
+            </div>
+            <div className="flex items-center justify-between gap-6 border-b border-white/10 py-3 text-[13px]">
+              <span>What best describes your work?</span>
+              <SettingsPick value={workLabel} onChange={(value) => { setWorkLabel(value); localStorage.setItem('seltra:work-label', value) }} options={['Founder', 'Store operator', 'Marketer', 'Developer', 'Other']} />
+            </div>
+            <h3 className="pb-1 pt-5 text-[14px] font-semibold">Account</h3>
+            <div className="flex items-center justify-between gap-4 border-b border-white/10 py-3 text-[13px]">
+              <span>Log out of all devices</span>
+              <button type="button" onClick={() => { clearAuth(); router.push('/auth') }} className="h-8 rounded-lg bg-[#1f8f4a] px-3 text-[13px] text-white hover:bg-[#187a3e]">Log out</button>
+            </div>
+            <div className="flex items-center justify-between gap-4 border-b border-white/10 py-3 text-[13px]">
+              <span>Delete your account</span>
+              <button type="button" onClick={() => { if (window.confirm('Delete your Seltra account? This cannot be done from the app yet. Contact support if you need the account removed.')) toast('Account deletion is not available from this screen yet.') }} className="h-8 rounded-lg bg-[#dc2626] px-3 text-[13px] text-white hover:bg-[#b91c1c]">Delete</button>
+            </div>
+            <div className="flex items-center justify-between gap-4 border-b border-white/10 py-3 text-[13px]">
+              <span>Organization ID</span>
+              <button type="button" onClick={() => { if (!orgId) return; void navigator.clipboard.writeText(orgId); toast.success('Organization ID copied') }} className="inline-flex items-center gap-2 font-mono text-[12px] text-white/70">
+                {orgId || 'Not available'}
+                <Copy className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <section className="mt-5 overflow-hidden rounded-xl border border-white/10">
+              <div className="flex items-start justify-between gap-3 px-4 py-3">
+                <div>
+                  <h3 className="text-[14px] font-semibold">Active sessions</h3>
+                  <p className="text-[12px] text-white/45">Devices currently signed in to your account.</p>
+                </div>
+                <span className="text-[12px] text-white/45">1 session</span>
               </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <MetricCard label="stores used" value={`${stores.length}/${storeLimit}`} />
-                <MetricCard label="plan" value={plan === 'premium' ? 'premium' : 'free trial'} />
+              <div className="grid grid-cols-[1.3fr_.8fr_.7fr_.7fr] gap-3 border-y border-white/10 bg-black/20 px-4 py-2 text-[12px] text-white/45">
+                <span>Device</span><span>Location</span><span>Created</span><span>Updated</span>
               </div>
-              <div className="mt-4 space-y-2">
-                {stores.length === 0 ? <p className="text-sm text-muted-foreground">No stores yet.</p> : accountStores.map((store) => (
-                  <button key={store.id ?? store.slug} type="button" className="flex w-full items-center justify-between gap-3 rounded-xl border border-border bg-background/60 p-3 text-left">
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium">{store.name}</span>
-                      <span className="block truncate font-mono text-[11px] text-primary">{store.slug}.seltra.co</span>
-                    </span>
-                    <Building2 className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                  </button>
-                ))}
-                <PaginationControls page={accountStoresPage} total={stores.length} pageSize={accountStoresPageSize} onPage={setAccountStoresPage} />
+              <div className="grid grid-cols-[1.3fr_.8fr_.7fr_.7fr] items-center gap-3 px-4 py-3 text-[13px]">
+                <div className="flex items-center gap-2.5">
+                  <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#14532d] text-[#86efac]"><Laptop className="h-4 w-4" /></span>
+                  <span>
+                    <span className="block font-medium">{device.os} <span className="ml-1 rounded bg-[#14532d] px-1.5 py-0.5 text-[10px] font-medium text-[#86efac]">This device</span></span>
+                    <span className="block text-[12px] text-white/40">{device.browser}</span>
+                  </span>
+                </div>
+                <span className="text-white/70">This browser</span>
+                <span className="text-white/70">{user?.joinedAt ? new Date(user.joinedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'This session'}</span>
+                <span className="text-white/70">Active now</span>
+              </div>
+              <div className="flex items-center justify-between border-t border-white/10 px-4 py-2 text-[11px] text-white/35">
+                <span>Only this browser session is shown.</span>
+                <span>Times follow your device.</span>
               </div>
             </section>
+          </div>
+        )}
 
-            <section className="min-h-0 overflow-y-auto rounded-2xl border border-border bg-card/40 p-4">
-              <h2 className="text-sm font-semibold">Workspace Details</h2>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <label className="grid gap-1.5 text-sm">Store name
-                  <input value={name} onChange={(e) => setName(e.target.value)} disabled={!activeStore}
-                    className="h-10 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring disabled:opacity-50" />
+        {settingsSection === 'workflow' && (
+          <div className="max-w-3xl">
+            <h2 className="text-[17px] font-semibold tracking-[-0.02em]">Notification</h2>
+            <div className="mt-3 flex items-center justify-between gap-4 border-b border-white/10 py-3">
+              <div>
+                <div className="text-[13px]">Enable Notification</div>
+                <p className="max-w-xl text-[12px] leading-snug text-white/40">Show a notice when a build finishes or a question needs your input while this tab is in the background.</p>
+              </div>
+              <SettingsSwitch label="Enable notification" on={notifyChat} onClick={() => { const next = !notifyChat; setNotifyChat(next); localStorage.setItem('seltra:notify-chat', next ? '1' : '0') }} />
+            </div>
+            <h3 className="pb-2 pt-5 text-[14px] font-semibold">Workspace</h3>
+            <section className="rounded-xl border border-white/10 p-4">
+              <h4 className="text-[14px] font-semibold">Workspace Details</h4>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1 text-[13px] text-white">Store name
+                  <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Store name" className={fieldClass} style={{ color: '#fff', WebkitTextFillColor: '#fff' }} />
                 </label>
-                <label className="grid gap-1.5 text-sm">Business type
-                  <input value={businessType} onChange={(e) => setBusinessType(e.target.value)} disabled={!activeStore}
-                    className="h-10 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring disabled:opacity-50" />
+                <label className="grid gap-1 text-[13px] text-white">Business type
+                  <input value={businessType} onChange={(event) => setBusinessType(event.target.value)} placeholder="Business type" className={fieldClass} style={{ color: '#fff', WebkitTextFillColor: '#fff' }} />
                 </label>
-                <label className="grid gap-1.5 text-sm">Language
-                  <select value={language} onChange={(e) => setLanguage(e.target.value)} className="h-10 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring">
+                <label className="grid gap-1 text-[13px]">Language
+                  <select value={language} onChange={(event) => setLanguage(event.target.value)} className={fieldClass}>
                     {['English', 'French', 'Arabic'].map((item) => <option key={item}>{item}</option>)}
                   </select>
                 </label>
-                <label className="grid gap-1.5 text-sm">Region
-                  <select value={region} onChange={(e) => setRegion(e.target.value)} className="h-10 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring">
+                <label className="grid gap-1 text-[13px]">Region
+                  <select value={region} onChange={(event) => setRegion(event.target.value)} className={fieldClass}>
                     {['Africa', 'EU', 'USA'].map((item) => <option key={item}>{item}</option>)}
                   </select>
                 </label>
-                <label className="grid gap-1.5 text-sm">Country
-                  <input value={country} onChange={(e) => setCountry(e.target.value)}
-                    className="h-10 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
+                <label className="grid gap-1 text-[13px] text-white">Country
+                  <input value={country} onChange={(event) => setCountry(event.target.value)} placeholder="Country" className={fieldClass} style={{ color: '#fff', WebkitTextFillColor: '#fff' }} />
                 </label>
-                <label className="grid gap-1.5 text-sm">Payout method
-                  <select value={payout.method} onChange={(e) => setPayout((current) => ({ ...current, method: e.target.value, providerCode: e.target.value === 'bank' ? GHANA_BANKS[0].code : GHANA_TELCOS[0].code, accountName: '' }))} className="h-10 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring">
+                <label className="grid gap-1 text-[13px]">Payout method
+                  <select value={payout.method} onChange={(event) => setPayout((current) => ({ ...current, method: event.target.value, providerCode: event.target.value === 'bank' ? GHANA_BANKS[0].code : GHANA_TELCOS[0].code, accountName: '' }))} className={fieldClass}>
                     <option value="mobile_money">Mobile money</option>
                     <option value="bank">Bank transfer</option>
                   </select>
                 </label>
-                <label className="grid gap-1.5 text-sm">Provider / bank
-                  <select value={payout.providerCode} onChange={(e) => setPayout((current) => ({ ...current, providerCode: e.target.value, accountName: '' }))} className="h-10 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring">
+                <label className="grid gap-1 text-[13px]">Provider / bank
+                  <select value={payout.providerCode} onChange={(event) => setPayout((current) => ({ ...current, providerCode: event.target.value, accountName: '' }))} className={fieldClass}>
                     {payoutOptions.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}
                   </select>
-                  <span className="min-h-4 font-mono text-[11px] text-transparent">verified</span>
                 </label>
-                <label className="grid gap-1.5 text-sm">{payout.method === 'bank' ? 'Bank account number' : 'MoMo number'}
-                  <input value={payout.account} onChange={(e) => setPayout((current) => ({ ...current, account: e.target.value }))}
-                    inputMode="numeric" className="h-10 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
-                  <span className={`min-h-4 font-mono text-[11px] ${payoutError ? 'text-red-500' : 'text-primary'}`}>
-                    {payoutError || (payout.accountName ? `VERIFIED ${payout.accountName}` : 'Verify on save')}
-                  </span>
+                <label className="grid gap-1 text-[13px] text-white">{payout.method === 'bank' ? 'Bank account number' : 'MoMo number'}
+                  <input value={payout.account} onChange={(event) => setPayout((current) => ({ ...current, account: event.target.value }))} inputMode="numeric" placeholder={payout.method === 'bank' ? 'Account number' : 'MoMo number'} className={fieldClass} style={{ color: '#fff', WebkitTextFillColor: '#fff' }} />
+                  <span className={`text-right text-[11px] ${payoutError ? 'text-red-400' : 'text-[#3ddc84]'}`}>{payoutError || (payout.accountName ? `Verified ${payout.accountName}` : 'Verify on save')}</span>
                 </label>
-                <label className="grid gap-1.5 text-sm sm:col-span-2">Target audience
-                  <textarea value={targetAudience} onChange={(e) => setTargetAudience(e.target.value)} disabled={!activeStore} rows={3}
-                    className="resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring disabled:opacity-50" />
+                <label className="grid gap-1 text-[13px] text-white sm:col-span-2">Target audience
+                  <textarea value={targetAudience} onChange={(event) => setTargetAudience(event.target.value)} rows={3} placeholder="Who you sell to" className={`${fieldClass} h-auto py-2`} style={{ color: '#fff', WebkitTextFillColor: '#fff' }} />
                 </label>
               </div>
-              <p className="mt-3 text-xs text-muted-foreground">Changing payout details will require phone OTP verification before disbursement.</p>
-              <Button onClick={() => void saveAccount()} disabled={!activeStore || saving} className="mt-4 rounded-full">{saving ? 'Saving...' : 'Save account'}</Button>
+              <p className="mt-3 text-[12px] text-white/40">Changing payout details will require phone OTP verification before disbursement.</p>
+              <button type="button" onClick={() => void saveAccount()} disabled={!activeStore || saving} className="mt-3 h-8 rounded-lg bg-[#1f8f4a] px-3 text-[13px] text-white hover:bg-[#187a3e] disabled:opacity-50">{saving ? 'Saving...' : 'Save'}</button>
             </section>
           </div>
         )}
 
-        {mode === 'billing' && (
-          <div className="grid gap-5 lg:grid-cols-[1fr_.9fr]">
-            <section className="rounded-2xl border border-border bg-card/40 p-5">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-lg font-semibold">{plan === 'premium' ? 'Premium' : 'Free Trial'}</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {plan === 'premium'
-                      ? 'AI credit usage for the current window.'
-                      : 'AI credits are linked to your user account and shared across all your projects. 1 credit equals 1,000 weighted model tokens.'}
-                  </p>
+        {settingsSection === 'privacy' && (
+          <div className="max-w-3xl">
+            <h2 className="border-b border-white/10 pb-3 text-[17px] font-semibold tracking-[-0.02em]">Privacy</h2>
+            {([
+              ['protect', 'How we protect your data', 'Passwords are stored as hashes. Sign-in uses a one-time code sent to your inbox, and payout details stay on the merchant account that owns the store.'],
+              ['use', 'How we use your data', 'Your name, store, orders, and customers are used to run this workspace. Product emails are optional, and the unsubscribe link in those emails stops them.'],
+            ] as const).map(([id, label, body]) => (
+              <div key={id} className="border-b border-white/10">
+                <button type="button" onClick={() => setPrivacyOpen((current) => current === id ? null : id)} className="flex w-full items-center justify-between py-3 text-left text-[13px]">
+                  {label}
+                  <ChevronRight className={cn('h-4 w-4 text-white/40 transition-transform', privacyOpen === id && 'rotate-90')} />
+                </button>
+                {privacyOpen === id && <p className="pb-3 text-[12px] leading-relaxed text-white/50">{body}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {settingsSection === 'danger' && (
+          <div className="max-w-3xl">
+            <h2 className="border-b border-white/10 pb-3 text-[17px] font-semibold tracking-[-0.02em]">Danger zone</h2>
+            <div className="flex items-center justify-between gap-6 py-3">
+              <div className="min-w-0">
+                <div className="text-[13px]">Reset Everything</div>
+                <p className="text-[12px] text-white/40">Clears settings saved in this browser. Stores, orders, and the account stay in place.</p>
+              </div>
+              <button type="button" onClick={() => { if (!window.confirm('Reset settings saved in this browser? Stores and orders will stay.')) return; localStorage.removeItem(APPEARANCE_KEY); localStorage.removeItem('seltra:work-label'); localStorage.removeItem('seltra:notify-chat'); setAppearance(DEFAULT_APPEARANCE); setWorkLabel('Other'); setNotifyChat(true); toast.success('Browser settings reset') }} className="h-8 rounded-lg bg-[#dc2626] px-3 text-[13px] text-white hover:bg-[#b91c1c]">Reset</button>
+            </div>
+          </div>
+        )}
+
+        {settingsSection === 'billing' && (
+          <div className="max-w-3xl">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="text-[17px] font-semibold tracking-[-0.02em]">Billing</h2>
+                <p className="mt-1 text-[13px] text-white/45">Plan, credits, and billing controls for your Seltra workspace.</p>
+              </div>
+              {plan !== 'premium' && <button type="button" onClick={() => setUpgradeOpen(true)} className="h-8 shrink-0 rounded-lg bg-[#148754] px-3 text-[13px] font-medium text-white hover:bg-[#117a49]">Upgrade to Pro</button>}
+            </div>
+            <section className="mt-4 rounded-xl border border-white/10 bg-[#21211f] p-4">
+            <h3 className="text-[15px] font-semibold text-white">{plan === 'premium' ? 'Premium Plan' : 'Free Plan'}</h3>
+            <p className="mt-1 text-[13px] text-white/50">
+              {plan === 'premium' ? 'AI credit usage for the current window.' : 'Default monthly merchant credit limit for MVP operations.'}
+            </p>
+            <div className="mt-3 inline-flex rounded-full border border-[#1f8f4a] px-2.5 py-0.5 text-[12px] text-[#3ddc84]">
+              {plan === 'premium' ? '100 credits / month' : '10 credits / month'}
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2.5">
+              {([
+                ['Used', credits ? String(credits.used) : '—'],
+                ['Limit', credits ? String(credits.limit) : '—'],
+                ['Resets', credits ? new Date(credits.resetsAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—'],
+              ] as const).map(([label, value]) => (
+                <div key={label} className="rounded-lg border border-[#3a3a38] bg-[#1a1a1a] px-3 py-2.5">
+                  <div className="text-[10px] font-medium uppercase tracking-[0.06em] text-white/40">{label}</div>
+                  <div className="mt-1.5 text-[15px] font-semibold leading-none text-white">{value}</div>
                 </div>
-                {plan === 'free' && (
-                  <div className="rounded-full border border-border px-3 py-1 font-mono text-xs text-muted-foreground">
-                    Daily allowance
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-5 flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-mono text-xs text-primary">
-                  {credits ? `${credits.limit.toLocaleString()} credits / day` : 'Loading daily allowance'}
-                </span>
-                {credits && (
-                  <span className={`rounded-full border px-3 py-1 font-mono text-xs ${creditsExhausted ? 'border-red-500/30 text-red-400' : 'border-border text-muted-foreground'}`}>
-                    {credits.used}/{credits.limit} credits used
-                  </span>
-                )}
-              </div>
-
-              <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                <MetricCard label="used" value={credits ? String(credits.used) : '—'} />
-                <MetricCard label="limit" value={credits ? String(credits.limit) : '—'} />
-                <MetricCard label="resets" value={credits ? new Date(credits.resetsAt).toLocaleTimeString() : '—'} />
-              </div>
-
-              <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                <MetricCard label="free tier" value="$0/m" />
-                <MetricCard label="premium" value="$10/m" />
-                <MetricCard label="token budget" value={credits ? `${(credits.limit * 1000).toLocaleString()} / day` : '—'} />
-              </div>
-
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <MetricCard label="stores used" value={`${stores.length}/${storeLimit}`} />
-                <MetricCard label="products per store" value={String(productLimit)} />
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-border bg-card/40 p-5">
-              <h2 className="text-sm font-semibold">Premium Unlocks</h2>
-              <div className="mt-4 grid gap-2 text-sm text-muted-foreground">
-                {['3 stores', '100 product upgrades for each store', 'User roles and permissions', 'Custom domains', 'Remove the Seltra badge', 'ChatBot on stores', 'Instant and priority support', 'Unused credits rollover', 'On-demand credit top-ups'].map((item) => (
-                  <div key={item} className="flex items-center gap-2"><CheckCheck className="h-4 w-4 text-primary" /> {item}</div>
-                ))}
-              </div>
-              {plan === 'premium' ? (
-                <div className="mt-5 flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-500">
-                  <CheckCheck className="h-4 w-4" /> You&apos;re on Premium
+              ))}
+            </div>
+            <div className="mt-2.5 grid grid-cols-2 gap-2.5">
+              <div className={cn('rounded-lg border bg-[#1a1a1a] px-3 py-2.5', plan === 'free' ? 'border-[#30A66F]' : 'border-[#3a3a38]')}>
+                <div className="text-[10px] font-medium uppercase tracking-[0.06em] text-white/40">Free plan</div>
+                <div className="mt-1.5 flex items-center justify-between gap-2">
+                  <div className="text-[1.25rem] font-semibold leading-none text-white">$0<span className="text-[13px] font-medium text-white/70">/month</span></div>
+                  {plan === 'free' && <span className="rounded-full bg-[#14532d] px-2 py-0.5 text-[11px] text-[#86efac]">Your current tier</span>}
                 </div>
-              ) : (
-                <Button className="mt-5 w-full rounded-full" onClick={() => setUpgradeOpen(true)}>Upgrade to Premium</Button>
-              )}
+              </div>
+              <div className={cn('rounded-lg border bg-[#1a1a1a] px-3 py-2.5', plan === 'premium' ? 'border-[#30A66F]' : 'border-[#3a3a38]')}>
+                <div className="text-[10px] font-medium uppercase tracking-[0.06em] text-white/40">Premium plan</div>
+                <div className="mt-1.5 flex items-center justify-between gap-2">
+                  <div className="text-[1.25rem] font-semibold leading-none text-white">$15<span className="text-[13px] font-medium text-white/70">/month</span></div>
+                  {plan === 'premium' && <span className="rounded-full bg-[#14532d] px-2 py-0.5 text-[11px] text-[#86efac]">Your current tier</span>}
+                </div>
+              </div>
+            </div>
+            <div className="mt-2.5 grid grid-cols-2 gap-2.5">
+              {([
+                ['Stores used', `${stores.length}/${storeLimit}`],
+                ['Products per store', String(productLimit)],
+              ] as const).map(([label, value]) => (
+                <div key={label} className="rounded-lg border border-[#3a3a38] bg-[#1a1a1a] px-3 py-2.5">
+                  <div className="text-[10px] font-medium uppercase tracking-[0.06em] text-white/40">{label}</div>
+                  <div className="mt-1.5 text-[15px] font-semibold leading-none text-white">{value}</div>
+                </div>
+              ))}
+            </div>
             </section>
           </div>
         )}
 
-        {mode === 'domains' && (
+        {settingsSection === 'domain' && (
           <section className="rounded-2xl border border-border bg-card/40 p-5">
             <div>
               <h2 className="text-sm font-semibold">Your Seltra subdomain</h2>
@@ -6988,7 +7421,7 @@ function ProfileCenterTab({ mode, activeStore, user, stores, credits, onStoreUpd
           </section>
         )}
 
-        {mode === 'help' && (
+        {settingsSection === 'help' && (
           <div className="grid gap-4 md:grid-cols-2">
             {[
               ['Launch support', 'Store setup, products, storefront polish, and checkout readiness.'],
@@ -7066,57 +7499,8 @@ function ProfileCenterTab({ mode, activeStore, user, stores, credits, onStoreUpd
         </div>
       )}
 
-      {false && upgradeOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/65 px-3 py-4 backdrop-blur-sm sm:px-6 sm:py-8" onMouseDown={(event) => { if (event.target === event.currentTarget) setUpgradeOpen(false) }}>
-          <div role="dialog" aria-modal="true" aria-labelledby="seltra-pro-title" className="grid max-h-[min(720px,calc(100dvh-2rem))] w-full max-w-[980px] overflow-hidden rounded-[30px] border border-white/50 bg-[#f8faf8] text-slate-950 shadow-[0_32px_100px_rgba(0,0,0,.42)] md:grid-cols-[0.92fr_1.08fr]">
-            <div className="relative min-h-[220px] overflow-hidden bg-[#071b19] md:min-h-[590px]">
-              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_48%_43%,rgba(53,224,173,.26),transparent_40%),radial-gradient(ellipse_at_15%_80%,rgba(39,129,111,.28),transparent_48%),linear-gradient(155deg,#071a1b_0%,#0a2927_53%,#10261e_100%)]" />
-              <svg aria-hidden="true" viewBox="0 0 620 760" preserveAspectRatio="xMidYMid slice" className="absolute inset-0 h-full w-full opacity-95">
-                <defs>
-                  <radialGradient id="seltra-upgrade-core" cx="50%" cy="50%" r="50%"><stop offset="0" stopColor="#e6fff7" stopOpacity=".96"/><stop offset=".12" stopColor="#70f2c8" stopOpacity=".88"/><stop offset=".34" stopColor="#24bf91" stopOpacity=".3"/><stop offset="1" stopColor="#24bf91" stopOpacity="0"/></radialGradient>
-                  <linearGradient id="seltra-upgrade-orbit" x1="0" x2="1" y1="0" y2="1"><stop stopColor="#c7fff1" stopOpacity=".8"/><stop offset=".52" stopColor="#46d9ad" stopOpacity=".16"/><stop offset="1" stopColor="#d7fff4" stopOpacity=".62"/></linearGradient>
-                  <filter id="seltra-upgrade-glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="12" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-                </defs>
-                <g fill="none" stroke="url(#seltra-upgrade-orbit)" strokeWidth="1.2">
-                  <ellipse cx="310" cy="340" rx="218" ry="92" transform="rotate(-26 310 340)" opacity=".66"/>
-                  <ellipse cx="310" cy="340" rx="188" ry="136" transform="rotate(43 310 340)" opacity=".44"/>
-                  <ellipse cx="310" cy="340" rx="246" ry="174" transform="rotate(-67 310 340)" opacity=".28"/>
-                  <path d="M47 505 166 424l79 34 71-166 105 35 125-134M78 214l117 71 81-51 99 76 128-32" opacity=".38"/>
-                </g>
-                <g fill="#8df6d4" opacity=".8">
-                  <circle cx="166" cy="424" r="3"/><circle cx="245" cy="458" r="3"/><circle cx="316" cy="292" r="3.5"/><circle cx="421" cy="327" r="3"/><circle cx="546" cy="193" r="3"/><circle cx="195" cy="285" r="2.5"/><circle cx="375" cy="310" r="2.5"/><circle cx="503" cy="310" r="2.5"/>
-                </g>
-                <circle cx="310" cy="340" r="142" fill="url(#seltra-upgrade-core)" filter="url(#seltra-upgrade-glow)"/>
-                <g transform="translate(310 340)" filter="url(#seltra-upgrade-glow)">
-                  <circle r="58" fill="#0c2823" fillOpacity=".84" stroke="#95f8d9" strokeOpacity=".9" strokeWidth="1.5"/>
-                  <path d="M-20-15h40v30h-40zM-42-8h22v16h-22zM20-8h22v16h-22zM-8-37h16v22H-8zM-8 15h16v22H-8z" fill="#36d6a5"/>
-                  <path d="M-8-15 8-30v30L-8 15z" fill="#a0f7dc" fillOpacity=".85"/>
-                </g>
-                <g fill="#d9fff3" opacity=".7"><circle cx="102" cy="154" r="1.5"/><circle cx="500" cy="486" r="1.7"/><circle cx="131" cy="597" r="1.3"/><circle cx="456" cy="113" r="1.4"/><circle cx="356" cy="593" r="1.2"/><circle cx="557" cy="590" r="1.3"/></g>
-              </svg>
-              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#061412]/95 via-[#061412]/65 to-transparent px-6 pb-6 pt-24 sm:px-8 sm:pb-8">
-                <div className="mb-3 flex items-center gap-2"><img src="/assets/brand/mark.png" alt="" className="h-6 w-6 object-contain"/><span className="text-[10px] font-semibold tracking-[0.2em] text-emerald-100/80">SELTRA / PRO</span></div>
-                <p className="max-w-sm text-2xl font-semibold leading-tight tracking-[-0.035em] text-white sm:text-[30px]">Build what you imagine. Keep growing.</p>
-                <p className="mt-2 max-w-sm text-sm leading-6 text-emerald-50/65">More room for your ideas, your projects, and the next version of your business.</p>
-              </div>
-            </div>
-            <div className="relative flex min-h-0 flex-col overflow-y-auto px-6 py-6 sm:px-9 sm:py-8">
-              <button type="button" onClick={() => setUpgradeOpen(false)} aria-label="Close Seltra Pro details" className="absolute right-5 top-5 grid h-9 w-9 place-items-center rounded-full text-slate-500 transition hover:bg-slate-200/70 hover:text-slate-900"><X className="h-4 w-4" /></button>
-              <p className="text-[11px] font-semibold tracking-[0.17em] text-emerald-700">SELTRA PRO</p>
-              <h2 id="seltra-pro-title" className="mt-4 max-w-md pr-8 text-[28px] font-semibold leading-[1.08] tracking-[-0.04em] sm:text-[36px]">More room for your next big idea.</h2>
-              <p className="mt-3 max-w-md text-sm leading-6 text-slate-600">Keep building with more space and capabilities, all connected to one account and one shared credit balance.</p>
-              <div className="mt-7 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
-                <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">Your plan</p><p className="mt-2 text-base font-semibold">Free</p></div><div className="text-right"><p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">Seltra Pro</p><p className="mt-2 text-base font-semibold text-emerald-800">More room to build</p></div></div>
-                <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full w-full rounded-full bg-emerald-500"/></div>
-                <p className="mt-2 text-xs text-slate-500">Your workspace is ready to grow</p>
-              </div>
-              <ul className="mt-6 space-y-3.5 text-sm text-slate-700">{['Create up to 3 projects', 'One shared credit balance across your projects', 'Custom domains and business tools', 'Team access and priority assistance'].map((item) => <li key={item} className="flex items-start gap-3"><span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md bg-emerald-100 text-emerald-800"><CheckCheck className="h-3.5 w-3.5"/></span><span>{item}</span></li>)}</ul>
-              <div className="mt-auto pt-8"><button type="button" onClick={() => { setUpgradeOpen(false); toast.message('Seltra Pro checkout will be available here soon.') }} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-emerald-700">Upgrade <ArrowRight className="h-4 w-4" /></button><p className="mt-3 text-center text-xs leading-5 text-slate-500">Upgrade checkout is coming soon.</p></div>
-            </div>
-          </div>
-        </div>
-      )}
       <AnimatePresence>{upgradeOpen && <BillingPlansModal plan={plan} credits={credits} onClose={() => setUpgradeOpen(false)} onUpgrade={() => { setUpgradeOpen(false); toast.message('Seltra Pro checkout will be available here soon.') }} />}</AnimatePresence>
+      </div>
     </div>
   )
 }

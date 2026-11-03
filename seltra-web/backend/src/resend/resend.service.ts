@@ -196,6 +196,24 @@ export class ResendService {
     })
   }
 
+  async sendSignupEmailCode(input: { to: string; code: string }) {
+    if (!getResend()) throw new Error('RESEND_API_KEY is not configured')
+    const result = await resend.emails.send({
+      from: FROM,
+      to: input.to,
+      subject: `${input.code} confirms your Seltra email`,
+      headers: { 'OTP-Token': otpTokenHeader(input.code) },
+      html: emailShell(`
+        <tr><td style="background:#ffffff;padding:36px 40px">
+          <p style="margin:0 0 14px;font-size:15px;font-weight:600;color:#0a0a0a">Confirm this email address</p>
+          <p style="margin:0 0 16px;font-size:34px;font-weight:750;letter-spacing:0.22em;color:#111827">✦ ${escapeHtml(input.code)}</p>
+          <p style="margin:0;font-size:14px;color:#52525b;line-height:1.7">Enter this code to finish creating your Seltra account. It expires in 10 minutes. If you don’t see it, this inbox can’t receive mail and the account will not be created.</p>
+        </td></tr>
+      `, true),
+    })
+    if (result.error) throw result.error
+  }
+
   async sendLoginOtp(input: { to: string; code: string }) {
     if (!getResend()) throw new Error('RESEND_API_KEY is not configured')
     const result = await resend.emails.send({

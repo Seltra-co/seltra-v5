@@ -36,6 +36,7 @@ class SignupDto {
   @IsString() @MaxLength(100) monthly_revenue!: string
   @IsString() @MinLength(10) @MaxLength(128) password!: string
   @IsOptional() @IsString() @MaxLength(600) existing_links?: string
+  @IsOptional() @IsString() @MinLength(6) @MaxLength(6) email_code?: string
   @IsOptional() @IsString() @MaxLength(120) ai_familiarity?: string
   @IsOptional() @IsBoolean() ai_used_before?: boolean
   @IsOptional() @IsString() @MaxLength(300) ai_tools_used?: string

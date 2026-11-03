@@ -1552,22 +1552,22 @@ html {
 }
 
 /* ── Bestseller badge ───────────────────────────────────────────────── */
-/* ── Dashboard shell (Lovable: #383837 chrome + pure-black square sidebar) ─ */
+/* ── Dashboard shell: light black page, black cards, pure-black sidebar ─ */
 .dash-app {
-  background: #383837;
+  background: #272727;
   color: #fff;
 }
 
 /* Only this column scrolls — scrollbar sits on the window’s right edge */
 .dash-scroll {
   scrollbar-width: thin;
-  scrollbar-color: #a3a3a3 #383837;
+  scrollbar-color: #a3a3a3 #272727;
 }
 .dash-scroll::-webkit-scrollbar {
   width: 6px;
 }
 .dash-scroll::-webkit-scrollbar-track {
-  background: #383837;
+  background: #272727;
 }
 .dash-scroll::-webkit-scrollbar-thumb {
   background: #a3a3a3;
@@ -1596,9 +1596,9 @@ html {
 .dash-canvas {
   border-radius: 24px;
   overflow: hidden;
-  background: hsl(var(--background));
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-  /* Clip wash / aurora to the same curve so the #383837 chrome wraps cleanly */
+  background: #272727;
+  box-shadow: none;
+  /* Clip wash / aurora to the same curve so the page color wraps cleanly */
   isolation: isolate;
 }
 

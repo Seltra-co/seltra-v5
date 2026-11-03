@@ -3,6 +3,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, Unauthoriz
 import { JwtService } from '@nestjs/jwt'
 import * as bcrypt from 'bcryptjs'
 import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'crypto'
+import { Resolver } from 'node:dns/promises'
 import { Cron } from '@nestjs/schedule'
 import { prisma } from '../db'
 import { TenantEventsService } from '../internal-ops/events/tenant-events.service'
@@ -12,8 +13,13 @@ import { REFRESH_TOKEN_TTL_MS } from './auth.constants'
 import { creditAllowanceForPlan } from '../common/credit-plan'
 import { mirrorWorkspaceCredit } from '../credits/workspace_credit_mirror'
 
-const GENERIC_LOGIN_ERROR = 'That email or password is incorrect.'
+const NO_ACCOUNT_ERROR = 'No account for this email. Sign up to continue.'
+const WRONG_PASSWORD_ERROR = 'That password is incorrect.'
+const WRONG_MERCHANT_ID_ERROR = 'That merchant ID is incorrect.'
+const ACCOUNT_NOT_READY_ERROR = 'This account is not ready to sign in yet.'
+const TOO_MANY_SIGNINS = 'Too many sign-in attempts. Try again in a minute.'
 const MERCHANT_ID_PATTERN = /^(SELTRA-[A-Z0-9]+-[0-9A-Z]+|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i
+const DELIVERABLE_EMAIL = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i
 const LOGIN_LIMIT = 3
 const LOGIN_WINDOW_MS = 60_000
 const SCHEDULED_EMAIL_DB_RETRY_BASE_MS = 60_000
@@ -60,7 +66,7 @@ export class AuthService {
   }
 
   async registerMerchant(input: Record<string, any>, ip = 'unknown') {
-    this.enforceLoginRateLimit(`signup:${ip}`)
+    this.enforceLoginRateLimit(`signup:${ip}`, 'Too many signup attempts. Try again in a minute.')
     const email = String(input.email || '').trim().toLowerCase()
     const name = String(input.full_name || '').trim()
     const password = String(input.password || '')
@@ -101,6 +107,13 @@ export class AuthService {
     if (Object.values(normalized).some((value) => typeof value === 'string' && value.length > 600)) {
       throw new BadRequestException('One or more fields are too long.')
     }
+    await this.assertDeliverableEmail(email)
+    const emailCode = String(input.email_code || '').trim()
+    if (!emailCode) {
+      await this.issueSignupEmailCode(email)
+      return { verificationRequired: true, email: this.maskEmail(email), message: 'Enter the code we sent to confirm this email. If the inbox is not real, no code will arrive and no account will be created.' }
+    }
+    await this.consumeSignupEmailCode(email, emailCode)
     let user
     try {
       user = await prisma.$transaction(async (tx) => {
@@ -287,43 +300,28 @@ export class AuthService {
   }
 
   async signin(input: MerchantLoginInput, ip = 'unknown') {
-    this.enforceLoginRateLimit(ip)
+    this.enforceLoginRateLimit(ip, TOO_MANY_SIGNINS)
 
     const email = input.email?.trim().toLowerCase()
-    if (email) this.enforceLoginRateLimit(`account:${email}`)
-    if (input.password && !MERCHANT_ID_PATTERN.test(input.password.trim())) {
+    if (!email) throw new BadRequestException('Enter your email.')
+    this.enforceLoginRateLimit(`account:${email}`, TOO_MANY_SIGNINS)
+    if (input.password && !input.merchantId && !MERCHANT_ID_PATTERN.test(input.password.trim())) {
       return this.signinWithPassword(email, input.password, ip)
     }
 
     const merchantId = (input.merchantId || input.password)?.trim().toUpperCase()
-    if (!email || !merchantId || !MERCHANT_ID_PATTERN.test(merchantId)) {
-      throw new UnauthorizedException(GENERIC_LOGIN_ERROR)
+    if (!merchantId || !MERCHANT_ID_PATTERN.test(merchantId)) {
+      throw new BadRequestException('Enter your password or merchant ID.')
     }
 
     const merchant = await prisma.merchantApplication.findFirst({
-    where: {
-      email: {
-        equals: email,
-        mode: 'insensitive',
-      },
-      merchantId,
-      status: 'approved',
-    },
-    include: {
-      user: true,
-    },
-  })
-
-  if (!merchant?.user) {
-  throw new UnauthorizedException(
-    'Merchant account has not been provisioned yet.',
-  )
-}
-
-   const user = merchant.user
-
-    if (!merchant?.merchantId) {
-      throw new UnauthorizedException(GENERIC_LOGIN_ERROR)
+      where: { email: { equals: email, mode: 'insensitive' } },
+      include: { user: true },
+    })
+    if (!merchant) throw new UnauthorizedException(NO_ACCOUNT_ERROR)
+    if (merchant.status !== 'approved' || !merchant.user) throw new UnauthorizedException(ACCOUNT_NOT_READY_ERROR)
+    if (!merchant.merchantId || merchant.merchantId.toUpperCase() !== merchantId) {
+      throw new UnauthorizedException(WRONG_MERCHANT_ID_ERROR)
     }
 
     await this.issueLoginOtp(merchant.merchantId, email)
@@ -341,7 +339,7 @@ export class AuthService {
     if (!email) throw new BadRequestException('Enter your email')
 
     const user = await prisma.user.findUnique({ where: { email } })
-    if (!user) throw new UnauthorizedException("We couldn't find an account with that email.")
+    if (!user) throw new UnauthorizedException(NO_ACCOUNT_ERROR)
 
     const code = String(randomInt(100000, 1000000))
     const hashedCode = await bcrypt.hash(code, 12)
@@ -388,16 +386,16 @@ export class AuthService {
   }
 
   private async signinWithPassword(email: string, password: string, ip: string) {
-    if (!email || !password.trim()) throw new UnauthorizedException(GENERIC_LOGIN_ERROR)
+    if (!password.trim()) throw new BadRequestException('Enter your password.')
 
     const prismaUser = await prisma.user.findUnique({ where: { email } })
-    if (!prismaUser) throw new UnauthorizedException(GENERIC_LOGIN_ERROR)
+    if (!prismaUser) throw new UnauthorizedException(NO_ACCOUNT_ERROR)
 
     const valid = await bcrypt.compare(password, prismaUser.passwordHash)
-    if (!valid) throw new UnauthorizedException(GENERIC_LOGIN_ERROR)
-    this.enforceLoginRateLimit(`${ip}:${email}`)
+    if (!valid) throw new UnauthorizedException(WRONG_PASSWORD_ERROR)
+    this.enforceLoginRateLimit(`${ip}:${email}`, TOO_MANY_SIGNINS)
     const application = await prisma.merchantApplication.findFirst({ where: { email, status: 'approved' }, select: { merchantId: true } })
-    if (!application?.merchantId) throw new UnauthorizedException(GENERIC_LOGIN_ERROR)
+    if (!application?.merchantId) throw new UnauthorizedException(ACCOUNT_NOT_READY_ERROR)
     await this.issueLoginOtp(application.merchantId, email)
     return {
       otpRequired: true,
@@ -630,7 +628,7 @@ export class AuthService {
     }
   }
 
-  private enforceLoginRateLimit(ip: string) {
+  private enforceLoginRateLimit(ip: string, message = 'Too many attempts. Try again in a minute.') {
     const key = ip || 'unknown'
     const now = Date.now()
     if (this.loginAttempts.size > 5000) {
@@ -644,7 +642,7 @@ export class AuthService {
     }
 
     if (current.count >= LOGIN_LIMIT) {
-      throw new UnauthorizedException(GENERIC_LOGIN_ERROR)
+      throw new UnauthorizedException(message)
     }
 
     current.count += 1
@@ -664,6 +662,75 @@ export class AuthService {
     }
     if (current.count >= 8) throw new UnauthorizedException('Too many code attempts. Try again later.')
     current.count += 1
+  }
+
+  private signupEmailKey(email: string) {
+    return `SIGNUP:${email}`
+  }
+
+  private async assertDeliverableEmail(email: string) {
+    if (email.startsWith('mailto:') || email.includes(' ') || !DELIVERABLE_EMAIL.test(email)) {
+      throw new BadRequestException('Enter a real email address, like you@gmail.com.')
+    }
+    const domain = email.split('@')[1]
+    const reachable = await this.domainCanReceiveMail(domain)
+    if (reachable === false) throw new BadRequestException('That email domain can’t receive mail. Check the address and try again.')
+  }
+
+  private async domainCanReceiveMail(domain: string): Promise<boolean | null> {
+    for (const servers of [['1.1.1.1'], ['8.8.8.8']]) {
+      const resolver = new Resolver()
+      resolver.setServers(servers)
+      try {
+        const records = await Promise.race([
+          resolver.resolveMx(domain),
+          new Promise<never>((_, reject) => setTimeout(() => reject(Object.assign(new Error('timeout'), { code: 'ETIMEOUT' })), 4000)),
+        ])
+        if (records.length) return true
+      } catch (error) {
+        const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : ''
+        if (code === 'ENOTFOUND') return false
+        if (code !== 'ENODATA' && code !== 'ENOTIMP') continue
+      }
+      try {
+        const addresses = await resolver.resolve4(domain)
+        if (addresses.length) return true
+      } catch (error) {
+        const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : ''
+        if (code === 'ENOTFOUND' || code === 'ENODATA') return false
+      }
+    }
+    return null
+  }
+
+  private async issueSignupEmailCode(email: string) {
+    this.enforceOtpRateLimit(`signup-send:${email}`)
+    const code = String(randomInt(100000, 1000000))
+    const hashedCode = await bcrypt.hash(code, 12)
+    const merchantId = this.signupEmailKey(email)
+    await prisma.otpCode.updateMany({ where: { merchantId, used: false }, data: { used: true } })
+    await prisma.otpCode.create({ data: { merchantId, hashedCode, expiresAt: new Date(Date.now() + 10 * 60_000) } })
+    try {
+      await this.resend.sendSignupEmailCode({ to: email, code })
+    } catch (error) {
+      console.error('[auth] signup email code delivery failed', error)
+      throw new BadRequestException('We could not send a code to that email. Check the address and try again.')
+    }
+  }
+
+  private async consumeSignupEmailCode(email: string, code: string) {
+    if (!/^\d{6}$/.test(code)) throw new BadRequestException('Enter the 6-digit code from your email.')
+    this.enforceOtpRateLimit(`signup-check:${email}`)
+    const otp = await prisma.otpCode.findFirst({
+      where: { merchantId: this.signupEmailKey(email), used: false },
+      orderBy: { createdAt: 'desc' },
+    })
+    if (!otp || otp.expiresAt.getTime() < Date.now()) {
+      throw new BadRequestException('That code is expired. Request a new one.')
+    }
+    const valid = await bcrypt.compare(code, otp.hashedCode)
+    if (!valid) throw new BadRequestException('That code does not match. Check the inbox and try again.')
+    await prisma.otpCode.update({ where: { id: otp.id }, data: { used: true } })
   }
 
   private async issueLoginOtp(merchantId: string, email: string) {
