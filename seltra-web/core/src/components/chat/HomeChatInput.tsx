@@ -159,8 +159,9 @@ export function HomeChatInput({
         <div
           aria-disabled={disabled}
           inert={disabled}
+          data-testid="home-chat-composer"
           className={cn(
-            "relative flex flex-col border border-border rounded-2xl bg-(--background-lighter) transition-colors duration-200",
+            "relative flex min-h-[112px] flex-col border border-border rounded-2xl bg-(--background-lighter) transition-colors duration-200",
             "hover:border-primary/30",
             "focus-within:border-primary/30 focus-within:ring-1 focus-within:ring-primary/20",
             isDraggingOver && "ring-2 ring-blue-500 border-blue-500",
@@ -186,7 +187,7 @@ export function HomeChatInput({
             onCancel={cancelPendingFiles}
           />
 
-          <div className="flex items-end gap-1">
+          <div className="flex min-w-0 flex-1 items-start">
             {isWeb && isRecording ? (
               <VoiceRecordingControls
                 transcript={transcript}
@@ -216,107 +217,12 @@ export function HomeChatInput({
                 messageHistory={[]}
               />
             )}
-
-            {/* Voice-to-text button */}
-            {isWeb && isRecording ? null : isWeb || isProEnabled ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      onClick={toggleRecording}
-                      disabled={disabled || isTranscribing}
-                      aria-label={
-                        isRecording
-                          ? "Stop recording"
-                          : isTranscribing
-                            ? "Transcribing..."
-                            : "Voice to text"
-                      }
-                      className={cn(
-                        "px-2 py-2 mb-0.5 text-muted-foreground rounded-lg transition-colors duration-150 cursor-pointer disabled:cursor-default disabled:opacity-30",
-                        isRecording &&
-                          "text-red-500 hover:text-red-600 animate-pulse",
-                        !isRecording && !isTranscribing && "hover:text-primary",
-                      )}
-                    />
-                  }
-                >
-                  {isTranscribing ? (
-                    <Loader2 size={20} className="animate-spin" />
-                  ) : isRecording ? (
-                    <MicOff size={20} />
-                  ) : (
-                    <Mic size={20} />
-                  )}
-                </TooltipTrigger>
-                <TooltipContent>
-                  {isRecording
-                    ? "Stop recording"
-                    : isTranscribing
-                      ? "Transcribing..."
-                      : "Voice to text"}
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      onClick={() =>
-                        ipc.system.openExternalUrl("https://seltra.example/pro")
-                      }
-                      disabled={disabled}
-                      aria-label="Voice to text (Pro)"
-                      className="px-2 py-2 mb-0.5 text-muted-foreground hover:text-primary rounded-lg transition-colors duration-150 cursor-pointer relative"
-                    />
-                  }
-                >
-                  <Mic size={20} />
-                  <Lock size={10} className="absolute -top-0.5 -right-0.5" />
-                </TooltipTrigger>
-                <TooltipContent>Voice to text (requires Pro)</TooltipContent>
-              </Tooltip>
-            )}
-
-            {isWeb && isRecording ? null : isStreaming ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      aria-label="Cancel generation (unavailable here)"
-                      className="px-2 py-2 mb-0.5 mr-1 text-muted-foreground rounded-lg opacity-50 cursor-not-allowed transition-colors duration-150"
-                    />
-                  }
-                >
-                  <StopCircleIcon size={20} />
-                </TooltipTrigger>
-                <TooltipContent>
-                  Cancel generation (unavailable here)
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      onClick={() => void handleCustomSubmit()}
-                      disabled={
-                        disabled ||
-                        (!inputValue.trim() && attachments.length === 0)
-                      }
-                      aria-label="Send message"
-                      className="px-2 py-2 mb-0.5 mr-1 text-muted-foreground hover:text-primary rounded-lg transition-colors duration-150 disabled:opacity-30 disabled:hover:text-muted-foreground cursor-pointer disabled:cursor-default"
-                    />
-                  }
-                >
-                  <SendHorizontalIcon size={20} />
-                </TooltipTrigger>
-                <TooltipContent>Send message</TooltipContent>
-              </Tooltip>
-            )}
           </div>
-          <div className="px-2 flex items-center justify-between pb-0.5 pt-0.5">
-            <div className="flex items-center">
+          <div
+            data-testid="home-chat-composer-toolbar"
+            className="flex min-w-0 items-center justify-between gap-1 px-2 pb-1 pt-0.5"
+          >
+            <div className="flex min-w-0 items-center">
               <ChatInputControls />
               {canSelectApp && (
                 <Tooltip>
@@ -366,14 +272,116 @@ export function HomeChatInput({
               )}
             </div>
 
-            <AuxiliaryActionsMenu
-              onFileSelect={handleFileSelect}
-              onFigmaImport={(context) =>
-                setInputValue((current: string) =>
-                  current.trim() ? `${current}\n\n${context}` : context,
-                )
-              }
-            />
+            <div className="flex shrink-0 items-center">
+              <AuxiliaryActionsMenu
+                onFileSelect={handleFileSelect}
+                onFigmaImport={(context) =>
+                  setInputValue((current: string) =>
+                    current.trim() ? `${current}\n\n${context}` : context,
+                  )
+                }
+              />
+              {isWeb && isRecording ? null : isWeb || isProEnabled ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        onClick={toggleRecording}
+                        disabled={disabled || isTranscribing}
+                        aria-label={
+                          isRecording
+                            ? "Stop recording"
+                            : isTranscribing
+                              ? "Transcribing..."
+                              : "Voice to text"
+                        }
+                        className={cn(
+                          "px-2 py-2 text-muted-foreground rounded-lg transition-colors duration-150 cursor-pointer disabled:cursor-default disabled:opacity-30",
+                          isRecording &&
+                            "text-red-500 hover:text-red-600 animate-pulse",
+                          !isRecording &&
+                            !isTranscribing &&
+                            "hover:text-primary",
+                        )}
+                      />
+                    }
+                  >
+                    {isTranscribing ? (
+                      <Loader2 size={20} className="animate-spin" />
+                    ) : isRecording ? (
+                      <MicOff size={20} />
+                    ) : (
+                      <Mic size={20} />
+                    )}
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {isRecording
+                      ? "Stop recording"
+                      : isTranscribing
+                        ? "Transcribing..."
+                        : "Voice to text"}
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        onClick={() =>
+                          ipc.system.openExternalUrl(
+                            "https://seltra.example/pro",
+                          )
+                        }
+                        disabled={disabled}
+                        aria-label="Voice to text (Pro)"
+                        className="px-2 py-2 text-muted-foreground hover:text-primary rounded-lg transition-colors duration-150 cursor-pointer relative"
+                      />
+                    }
+                  >
+                    <Mic size={20} />
+                    <Lock size={10} className="absolute -top-0.5 -right-0.5" />
+                  </TooltipTrigger>
+                  <TooltipContent>Voice to text (requires Pro)</TooltipContent>
+                </Tooltip>
+              )}
+
+              {isWeb && isRecording ? null : isStreaming ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        aria-label="Cancel generation (unavailable here)"
+                        className="p-2 text-muted-foreground rounded-lg opacity-50 cursor-not-allowed transition-colors duration-150"
+                      />
+                    }
+                  >
+                    <StopCircleIcon size={20} />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Cancel generation (unavailable here)
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        onClick={() => void handleCustomSubmit()}
+                        disabled={
+                          disabled ||
+                          (!inputValue.trim() && attachments.length === 0)
+                        }
+                        aria-label="Send message"
+                        className="p-2 text-muted-foreground hover:text-primary rounded-lg transition-colors duration-150 disabled:opacity-30 disabled:hover:text-muted-foreground cursor-pointer disabled:cursor-default"
+                      />
+                    }
+                  >
+                    <SendHorizontalIcon size={20} />
+                  </TooltipTrigger>
+                  <TooltipContent>Send message</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           </div>
         </div>
       </div>

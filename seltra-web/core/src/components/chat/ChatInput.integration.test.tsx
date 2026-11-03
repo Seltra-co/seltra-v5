@@ -44,6 +44,26 @@ describe("chat input during turn admission", () => {
     await harness?.dispose();
   });
 
+  it("keeps a roomier editor above a separate composer toolbar", async () => {
+    const chatId = await harness.createChat();
+    harness.mount({ chatId });
+    await screen.findByTestId("chat-composer");
+
+    const composer = screen.getByTestId("chat-composer");
+    const editor = screen.getByTestId("chat-composer-editor");
+    const toolbar = screen.getByTestId("chat-composer-toolbar");
+
+    expect(composer.className).toContain("min-h-[112px]");
+    expect(editor.className).toContain("w-full");
+    expect(editor.className).toContain("min-h-[56px]");
+    expect(
+      Boolean(
+        editor.compareDocumentPosition(toolbar) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
+  });
+
   it.each([
     { rejected: false, nextDraft: "tc=no-code-response" },
     { rejected: true, nextDraft: "" },

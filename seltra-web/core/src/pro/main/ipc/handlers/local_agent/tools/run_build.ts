@@ -33,6 +33,7 @@ import { spawnStreaming } from "@/ipc/utils/spawn_streaming";
 import { getPackageManagerCommandEnv } from "@/ipc/utils/socket_firewall";
 import type { AppFrameworkType } from "@/lib/framework_constants";
 import { getUserDataPath } from "@/paths/paths";
+import { isPlaywrightAvailable } from "@/web/playwright_health";
 import type { AgentContext, ToolDefinition } from "./types";
 import { escapeXmlAttr, escapeXmlContent } from "./types";
 
@@ -612,7 +613,12 @@ export const runBuildTool: ToolDefinition<z.infer<typeof runBuildSchema>> = {
             let body = `Production build passed. ${timing}${output ? `\n\n${output}` : ""}`;
             let statusTitle = "Build passed";
             let status: "finished" | "warning" = "finished";
-            if (!runningApps.get(ctx.appId)) {
+            if (!isPlaywrightAvailable()) {
+              body +=
+                "\n\nBrowser QA unavailable in this environment because Playwright Chromium is not installed or failed its startup check.";
+              statusTitle = "Build passed; browser QA unavailable";
+              status = "warning";
+            } else if (!runningApps.get(ctx.appId)) {
               body +=
                 "\n\nBrowser runtime QA was not run because no preview is active. Start the preview and run repair_app before declaring a new app or major user flow complete.";
               statusTitle = "Build passed; browser QA unavailable";

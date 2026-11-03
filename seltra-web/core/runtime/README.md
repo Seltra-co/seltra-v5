@@ -3,10 +3,25 @@
 Build the image only after `node scripts/build-runtime.mjs` has produced
 `dist/runtime/runtime_main.js`. The image installs the Playwright Chromium
 bundle, including headless shell, at `/ms-playwright`. Runtime startup launches
-Chromium and captures a PNG; it fails with an explicit error if the browser or
-its required system libraries are unavailable. The container expects its
-persistent volume at `/workspace`; mount it read-write and keep the container
-root filesystem read-only.
+Chromium and captures a PNG. Set `REQUIRE_PLAYWRIGHT=1` to make startup fail
+when the browser or its required system libraries are unavailable. The
+container expects its persistent volume at `/workspace`; mount it read-write
+and keep the container root filesystem read-only.
+
+## Native Render deployment
+
+Render's native Node build does not run as root, so do not use Playwright's
+`--with-deps` there. The `render:build` script installs only Chromium's
+headless shell with `PLAYWRIGHT_BROWSERS_PATH=0`, which keeps it under
+`node_modules` and available in both build and runtime. Set the Render
+environment variable `PLAYWRIGHT_BROWSERS_PATH=0` as well; runtime defaults it
+for web mode when unset. `--with-deps` is reserved for the Docker image, where
+the image build can install operating-system packages.
+
+Do not install the browser on Render's persistent disk. Keep that disk for
+`DYAD_USER_DATA` and `DYAD_APPS_DIR`; the browser is part of the deploy artifact.
+Set `REQUIRE_PLAYWRIGHT=1` on Render after confirming Chromium works in the
+deployed environment.
 
 The image deliberately does not configure a Docker socket, capabilities,
 network policy, CPU/memory/pid limits, or disk quota. Those are deployment

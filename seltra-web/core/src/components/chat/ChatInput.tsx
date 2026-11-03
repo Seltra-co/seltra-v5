@@ -948,8 +948,9 @@ export function ChatInput({ chatId }: { chatId?: number }) {
           <CancellationBanner appId={activeChat?.appId} />
         )}
         <div
+          data-testid="chat-composer"
           className={cn(
-            "relative flex flex-col border border-border rounded-2xl bg-(--background-lighter) transition-colors duration-200",
+            "relative flex min-h-[112px] flex-col border border-border rounded-2xl bg-(--background-lighter) transition-colors duration-200",
             "focus-within:border-primary/30 focus-within:ring-1 focus-within:ring-primary/20",
             isDraggingOver && "ring-2 ring-blue-500 border-blue-500",
             (showBanner || showPromo || isCancellationRequested) &&
@@ -1106,7 +1107,7 @@ export function ChatInput({ chatId }: { chatId?: number }) {
             onCancel={cancelPendingFiles}
           />
 
-          <div className="flex items-end gap-1">
+          <div className="flex min-w-0 flex-1 items-start">
             {isWeb && isRecording ? (
               <VoiceRecordingControls
                 transcript={transcript}
@@ -1135,141 +1136,147 @@ export function ChatInput({ chatId }: { chatId?: number }) {
                 messageHistory={userMessageHistory}
               />
             )}
-
-            {/* Voice-to-text button */}
-            {isWeb && isRecording ? null : isWeb || isProEnabled ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      onClick={toggleRecording}
-                      disabled={isTranscribing}
-                      aria-label={
-                        isRecording
-                          ? t("stopRecording", "Stop recording")
-                          : isTranscribing
-                            ? t("transcribing", "Transcribing...")
-                            : t("voiceToText", "Voice to text")
-                      }
-                      className={cn(
-                        "px-2 py-2 mb-0.5 text-muted-foreground rounded-lg transition-colors duration-150 cursor-pointer disabled:cursor-default disabled:opacity-30",
-                        isRecording &&
-                          "text-red-500 hover:text-red-600 animate-pulse",
-                        !isRecording && !isTranscribing && "hover:text-primary",
-                      )}
-                    />
-                  }
-                >
-                  {isTranscribing ? (
-                    <Loader2 size={20} className="animate-spin" />
-                  ) : isRecording ? (
-                    <MicOff size={20} />
-                  ) : (
-                    <Mic size={20} />
-                  )}
-                </TooltipTrigger>
-                <TooltipContent>
-                  {isRecording
-                    ? t("stopRecording", "Stop recording")
-                    : isTranscribing
-                      ? t("transcribing", "Transcribing...")
-                      : t("voiceToText", "Voice to text")}
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      onClick={() =>
-                        ipc.system.openExternalUrl("https://seltra.example/pro")
-                      }
-                      aria-label={t("voiceToTextPro", "Voice to text (Pro)")}
-                      className="px-2 py-2 mb-0.5 text-muted-foreground hover:text-primary rounded-lg transition-colors duration-150 cursor-pointer relative"
-                    />
-                  }
-                >
-                  <Mic size={20} />
-                  <Lock size={10} className="absolute -top-0.5 -right-0.5" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t("voiceToTextRequiresPro", "Voice to text (requires Pro)")}
-                </TooltipContent>
-              </Tooltip>
-            )}
-
-            {isWeb && isRecording ? null : isStreaming ? (
-              // Cancelling is not instant — an in-flight tool has to unwind
-              // first. Confirm the click here (the banner above carries the
-              // reason) and refuse a second one, which would only re-abort an
-              // already-aborted controller.
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      onClick={handleCancel}
-                      disabled={isCancellationRequested}
-                      aria-label={
-                        isCancellationRequested
-                          ? t("stoppingGeneration", "Stopping…")
-                          : t("cancelGeneration")
-                      }
-                      className={cn(
-                        "px-2 py-2 mb-0.5 mr-1 rounded-lg transition-colors duration-150",
-                        isCancellationRequested
-                          ? "text-amber-600 dark:text-amber-500 cursor-default"
-                          : "text-muted-foreground hover:text-destructive cursor-pointer",
-                      )}
-                    />
-                  }
-                >
-                  {isCancellationRequested ? (
-                    <Loader2 size={20} className="animate-spin" />
-                  ) : (
-                    <StopCircleIcon size={20} />
-                  )}
-                </TooltipTrigger>
-                <TooltipContent>
-                  {isCancellationRequested
-                    ? t("stoppingGeneration", "Stopping…")
-                    : t("cancelGeneration")}
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      onClick={() => void handleSubmit()}
-                      disabled={!hasComposerPayload || disableSendButton}
-                      aria-label={t("sendMessage")}
-                      className="px-2 py-2 mb-0.5 mr-1 text-muted-foreground hover:text-primary rounded-lg transition-colors duration-150 disabled:opacity-30 disabled:hover:text-muted-foreground cursor-pointer disabled:cursor-default"
-                    />
-                  }
-                >
-                  <SendHorizontalIcon size={20} />
-                </TooltipTrigger>
-                <TooltipContent>{t("sendMessage")}</TooltipContent>
-              </Tooltip>
-            )}
           </div>
-          <div className="px-2 flex items-center justify-between pb-0.5 pt-0.5">
-            <div className="flex items-center">
+          <div
+            data-testid="chat-composer-toolbar"
+            className="flex min-w-0 items-center justify-between gap-1 px-2 pb-1 pt-0.5"
+          >
+            <div className="flex min-w-0 items-center">
               <ChatInputControls />
             </div>
 
-            <AuxiliaryActionsMenu
-              onFileSelect={handleFileSelect}
-              showTokenBar={showTokenBar}
-              toggleShowTokenBar={toggleShowTokenBar}
-              appId={appId ?? undefined}
-              onGenerateImage={handleOpenImageGenerator}
-              onFigmaImport={(context) =>
-                setInputValue((current) =>
-                  current.trim() ? `${current}\n\n${context}` : context,
-                )
-              }
-            />
+            <div className="flex shrink-0 items-center">
+              <AuxiliaryActionsMenu
+                onFileSelect={handleFileSelect}
+                showTokenBar={showTokenBar}
+                toggleShowTokenBar={toggleShowTokenBar}
+                appId={appId ?? undefined}
+                onGenerateImage={handleOpenImageGenerator}
+                onFigmaImport={(context) =>
+                  setInputValue((current) =>
+                    current.trim() ? `${current}\n\n${context}` : context,
+                  )
+                }
+              />
+              {isWeb && isRecording ? null : isWeb || isProEnabled ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        onClick={toggleRecording}
+                        disabled={isTranscribing}
+                        aria-label={
+                          isRecording
+                            ? t("stopRecording", "Stop recording")
+                            : isTranscribing
+                              ? t("transcribing", "Transcribing...")
+                              : t("voiceToText", "Voice to text")
+                        }
+                        className={cn(
+                          "px-2 py-2 text-muted-foreground rounded-lg transition-colors duration-150 cursor-pointer disabled:cursor-default disabled:opacity-30",
+                          isRecording &&
+                            "text-red-500 hover:text-red-600 animate-pulse",
+                          !isRecording &&
+                            !isTranscribing &&
+                            "hover:text-primary",
+                        )}
+                      />
+                    }
+                  >
+                    {isTranscribing ? (
+                      <Loader2 size={20} className="animate-spin" />
+                    ) : isRecording ? (
+                      <MicOff size={20} />
+                    ) : (
+                      <Mic size={20} />
+                    )}
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {isRecording
+                      ? t("stopRecording", "Stop recording")
+                      : isTranscribing
+                        ? t("transcribing", "Transcribing...")
+                        : t("voiceToText", "Voice to text")}
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        onClick={() =>
+                          ipc.system.openExternalUrl(
+                            "https://seltra.example/pro",
+                          )
+                        }
+                        aria-label={t("voiceToTextPro", "Voice to text (Pro)")}
+                        className="px-2 py-2 text-muted-foreground hover:text-primary rounded-lg transition-colors duration-150 cursor-pointer relative"
+                      />
+                    }
+                  >
+                    <Mic size={20} />
+                    <Lock size={10} className="absolute -top-0.5 -right-0.5" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {t(
+                      "voiceToTextRequiresPro",
+                      "Voice to text (requires Pro)",
+                    )}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+
+              {isWeb && isRecording ? null : isStreaming ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        onClick={handleCancel}
+                        disabled={isCancellationRequested}
+                        aria-label={
+                          isCancellationRequested
+                            ? t("stoppingGeneration", "Stopping…")
+                            : t("cancelGeneration")
+                        }
+                        className={cn(
+                          "p-2 rounded-lg transition-colors duration-150",
+                          isCancellationRequested
+                            ? "text-amber-600 dark:text-amber-500 cursor-default"
+                            : "text-muted-foreground hover:text-destructive cursor-pointer",
+                        )}
+                      />
+                    }
+                  >
+                    {isCancellationRequested ? (
+                      <Loader2 size={20} className="animate-spin" />
+                    ) : (
+                      <StopCircleIcon size={20} />
+                    )}
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {isCancellationRequested
+                      ? t("stoppingGeneration", "Stopping…")
+                      : t("cancelGeneration")}
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        onClick={() => void handleSubmit()}
+                        disabled={!hasComposerPayload || disableSendButton}
+                        aria-label={t("sendMessage")}
+                        className="p-2 rounded-lg text-muted-foreground hover:text-primary transition-colors duration-150 disabled:opacity-30 disabled:hover:text-muted-foreground cursor-pointer disabled:cursor-default"
+                      />
+                    }
+                  >
+                    <SendHorizontalIcon size={20} />
+                  </TooltipTrigger>
+                  <TooltipContent>{t("sendMessage")}</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           </div>
           {/* TokenBar is only displayed when showTokenBar is true */}
           {showTokenBar && <TokenBar chatId={chatId} />}

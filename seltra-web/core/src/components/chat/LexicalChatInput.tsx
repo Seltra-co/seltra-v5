@@ -551,11 +551,12 @@ export function LexicalChatInput({
 
   return (
     <LexicalComposer initialConfig={initialConfig}>
-      <div className="relative flex-1">
+      <div className="relative min-w-0 flex-1">
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
-              className="flex-1 px-3 pt-3 pb-2 focus:outline-none overflow-y-auto min-h-[44px] max-h-[200px] resize-none text-[15px]"
+              data-testid="chat-composer-editor"
+              className="w-full px-3 pt-3 pb-2 focus:outline-none overflow-y-auto min-h-[56px] max-h-[200px] text-[15px] leading-6 break-words"
               aria-placeholder={placeholder}
               placeholder={
                 <div className="absolute top-3 left-3 text-muted-foreground pointer-events-none select-none text-[15px]">

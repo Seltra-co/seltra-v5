@@ -93,9 +93,11 @@ vi.mock("./FileAttachmentTypeDialog", () => ({
 }));
 vi.mock("./LexicalChatInput", () => ({
   LexicalChatInput: ({ disabled }: { disabled: boolean }) => (
-    <button type="button" disabled={disabled}>
-      Editor
-    </button>
+    <div data-testid="chat-composer-editor" className="w-full min-h-[56px]">
+      <button type="button" disabled={disabled}>
+        Editor
+      </button>
+    </div>
   ),
 }));
 vi.mock("../ChatInputControls", () => ({
@@ -117,6 +119,30 @@ describe("HomeChatInput", () => {
     mocks.setInputValue.mockReset();
     mocks.setSelectedApp.mockReset();
     mocks.transcription = null;
+  });
+
+  it("keeps a roomier editor above a separate composer toolbar", () => {
+    render(<HomeChatInput onSubmit={vi.fn()} />);
+
+    const composer = screen.getByTestId("home-chat-composer");
+    const editor = screen.getByTestId("chat-composer-editor");
+    const toolbar = screen.getByTestId("home-chat-composer-toolbar");
+
+    expect(composer.className).toContain("min-h-[112px]");
+    expect(editor.className).toContain("w-full");
+    expect(editor.className).toContain("min-h-[56px]");
+    expect(
+      Boolean(
+        editor.compareDocumentPosition(toolbar) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
+    expect(
+      toolbar.contains(screen.getByRole("button", { name: "Send message" })),
+    ).toBe(true);
+    expect(
+      toolbar.contains(screen.getByRole("button", { name: "Voice to text" })),
+    ).toBe(true);
   });
 
   it("makes the entire snapshotted composer inert", () => {

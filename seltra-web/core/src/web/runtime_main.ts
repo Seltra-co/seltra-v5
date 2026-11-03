@@ -24,20 +24,25 @@ const logger = log.scope("web-runtime");
 
 export async function startRuntime(): Promise<void> {
   process.env.DYAD_WEB_RUNTIME = "1";
+  process.env.PLAYWRIGHT_BROWSERS_PATH ??= "0";
   const userData = process.env.DYAD_USER_DATA?.trim();
   if (userData) fs.mkdirSync(path.resolve(userData), { recursive: true });
   fs.mkdirSync(path.join(app.getPath("userData"), "logs"), { recursive: true });
   log.transports.file.resolvePathFn = () =>
     path.join(app.getPath("userData"), "logs", "runtime.log");
   if (!process.env.RUNTIME_SECRETS_KEY?.trim()) {
-    throw new Error("RUNTIME_SECRETS_KEY must be configured for encrypted runtime secrets");
+    throw new Error(
+      "RUNTIME_SECRETS_KEY must be configured for encrypted runtime secrets",
+    );
   }
   safeStorage.encryptString("");
   await verifyPlaywrightBrowser();
 
   // The authenticated RPC boundary is the only renderer entry point in web
   // mode. The shim models the same trusted main frame for existing handlers.
-  configureTrustedRenderer({ packagedRendererUrl: "file:///seltra/index.html" });
+  configureTrustedRenderer({
+    packagedRendererUrl: "file:///seltra/index.html",
+  });
 
   // Keep the desktop registration order: main.ts registers handlers before
   // app readiness and before database initialization.
@@ -74,7 +79,9 @@ export async function startRuntime(): Promise<void> {
     version: app.getVersion(),
     appsDirectory,
     database: getDatabasePath(),
-    appCount: await db.query.apps.findMany({ columns: { id: true } }).then((rows) => rows.length),
+    appCount: await db.query.apps
+      .findMany({ columns: { id: true } })
+      .then((rows) => rows.length),
   });
   const rpc = createRpcServer({
     host: process.env.RUNTIME_RPC_HOST ?? "127.0.0.1",
