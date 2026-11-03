@@ -7,19 +7,22 @@ import { runningApps } from "@/ipc/utils/process_manager";
 import { getLogs } from "@/lib/log_store";
 import { formatLogsForAI } from "@/shared/format_logs";
 import type { AgentContext, ToolDefinition } from "./types";
-import { escapeXmlAttr, escapeXmlContent } from "./types";
+import { escapeXmlContent } from "./types";
 
 const repairAppSchema = z.object({
   path: z.string().max(512).optional().describe("Optional same-origin route to inspect, such as /checkout. Do not include a host or credentials."),
 });
 
-type BrowserEvidence = {
+export type BrowserEvidence = {
   screenshot: Buffer;
   url: string;
   errors: string[];
 };
 
-async function captureBrowserEvidence(ctx: AgentContext, routePath?: string): Promise<BrowserEvidence | null> {
+export async function captureBrowserEvidence(
+  ctx: AgentContext,
+  routePath?: string,
+): Promise<BrowserEvidence | null> {
   const runtime = runningApps.get(ctx.appId);
   const baseUrl = runtime?.cloudPreviewUrl ?? runtime?.proxyUrl ?? runtime?.originalUrl;
   if (!runtime || !baseUrl) return null;
@@ -37,7 +40,9 @@ async function captureBrowserEvidence(ctx: AgentContext, routePath?: string): Pr
     const context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
       deviceScaleFactor: 1,
-      ...(authToken ? { extraHTTPHeaders: { Authorization: `Bearer ${authToken}` } } : {}),
+      ...(authToken
+        ? { extraHTTPHeaders: { Authorization: `Bearer ${authToken}` } }
+        : {}),
     });
     const page = await context.newPage();
     const errors: string[] = [];
@@ -52,7 +57,7 @@ async function captureBrowserEvidence(ctx: AgentContext, routePath?: string): Pr
     await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 20_000 }).catch((error: unknown) => {
       errors.push(`navigation: ${error instanceof Error ? error.message : String(error)}`);
     });
-    await page.waitForTimeout(1_000);
+    await page.waitForTimeout(3_000);
     const screenshot = await page.screenshot({ type: "png", fullPage: false, timeout: 10_000 });
     return { screenshot, url: target.toString(), errors: [...new Set(errors)].slice(0, 40) };
   } finally {
@@ -87,7 +92,7 @@ async function inspectWithVision(ctx: AgentContext, evidence: BrowserEvidence, l
 
 export const repairAppTool: ToolDefinition<z.infer<typeof repairAppSchema>> = {
   name: "repair_app",
-  description: `Use this when the preview shows a runtime error, blank page, failed request, or broken UI. Capture browser console, uncaught page errors, failed network requests, recent app logs, and a preview screenshot. Return the concrete root cause and a smallest-code-change repair brief. Then apply that code fix with the normal file tools and verify it; do not stop after reporting diagnostics. Vision inspection is optional and may be unavailable when no Seltra engine is configured; the captured browser and app errors must still be included.`,
+  description: `Use this for the mandatory browser QA pass on every newly generated app or major user flow, and whenever the preview shows a runtime error, blank page, failed request, or broken UI. Capture browser console, uncaught page errors, failed network requests, HTTP 5xx responses, recent app logs, and a preview screenshot. Treat uncaught exceptions and first-party 5xx responses as defects even when the production build passed. Return the concrete root cause and a smallest-code-change repair brief. Then apply the code fix with the normal file tools and verify it; do not stop after reporting diagnostics. Vision inspection is optional and may be unavailable when no Seltra engine is configured; the captured browser and app errors must still be included.`,
   inputSchema: repairAppSchema,
   defaultConsent: "always",
   modifiesState: false,

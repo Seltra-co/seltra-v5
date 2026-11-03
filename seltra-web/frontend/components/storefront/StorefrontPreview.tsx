@@ -19,12 +19,14 @@ export type StoreData = {
   manifest?: StoreManifest | null
   heroSource?: string | null
   navSource?: string | null
+  heroSnapshotUrl?: string | null
+  heroSnapshotUpdatedAt?: string | null
   status?: string | null
   storeUrl?: string | null
   createdAt?: string
   updatedAt?: string
-  apps?: Array<{ coreAppId: number; name: string; status: string; previewUrl?: string | null; publishedUrl?: string | null; version: number; blueprint?: Record<string, unknown> | null; updatedAt: string }>
-  dashboardApp?: { coreAppId: number; status: string; previewUrl?: string | null; publishedUrl?: string | null; version: number; blueprint?: Record<string, unknown> | null; updatedAt: string }
+  apps?: Array<{ coreAppId: number; name: string; status: string; previewUrl?: string | null; publishedUrl?: string | null; version: number; blueprint?: Record<string, unknown> | null; updatedAt: string; heroSnapshotUrl?: string | null; heroSnapshotUpdatedAt?: string | null }>
+  dashboardApp?: { coreAppId: number; status: string; previewUrl?: string | null; publishedUrl?: string | null; version: number; blueprint?: Record<string, unknown> | null; updatedAt: string; heroSnapshotUrl?: string | null; heroSnapshotUpdatedAt?: string | null }
   storefrontCode?: string | null; storefrontVersion?: number
   fulfillmentMode?: 'delivery' | 'pickup' | 'both' | null
   contactPhone?: string | null

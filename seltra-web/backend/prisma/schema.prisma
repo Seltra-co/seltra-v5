@@ -65,6 +65,8 @@ model Tenant {
   manifest              Json?
   heroSource            String?
   heroGeneratedAt       DateTime?
+  heroSnapshotUrl       String?
+  heroSnapshotUpdatedAt DateTime?
   navSource             String?
   navGeneratedAt        DateTime?
   storeDNA              Json?
@@ -130,6 +132,8 @@ model TenantApp {
   version       Int      @default(0)
   blueprint     Json?
   appManifest   Json?
+  heroSnapshotUrl       String?
+  heroSnapshotUpdatedAt DateTime?
   blueprintApprovedAt DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

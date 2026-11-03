@@ -52,6 +52,40 @@ export class StoreImageService {
     return { url: finalUrl, source: 'provided-url' as const }
   }
 
+  async setHeroSnapshotUrl(tenantId: string, snapshotUrl: string, coreAppId?: number) {
+    const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } })
+    if (!tenant) throw new NotFoundException('Store not found')
+
+    let finalUrl: string
+    if (snapshotUrl.startsWith('data:image/')) {
+      const match = snapshotUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/)
+      if (!match) throw new BadRequestException('The preview snapshot is not a valid base64 image.')
+      const uploaded = await uploadImageBuffer(
+        match[2],
+        match[1],
+        `seltra/${tenantId}/hero-snapshot/${Date.now()}`,
+      )
+      finalUrl = uploaded.secure_url
+    } else {
+      finalUrl = await this.rehostExternalImage(snapshotUrl, `seltra/${tenantId}/hero-snapshot/${Date.now()}`)
+    }
+    const now = new Date()
+    await prisma.tenant.update({
+      where: { id: tenantId },
+      data: { heroSnapshotUrl: finalUrl, heroSnapshotUpdatedAt: now, updatedAt: now },
+    })
+
+    if (Number.isSafeInteger(coreAppId) && Number(coreAppId) > 0) {
+      await prisma.tenantApp.updateMany({
+        where: { tenantId, coreAppId: Number(coreAppId) },
+        data: { heroSnapshotUrl: finalUrl, heroSnapshotUpdatedAt: now, updatedAt: now },
+      })
+    }
+
+    void this.tenantEvents.recordForTenant(tenantId, 'theme_updated', { source: 'hero_snapshot_capture' })
+    return { url: finalUrl, updatedAt: now.toISOString() }
+  }
+
   async setStoryImageUrl(tenantId: string, requestedUrl: string) {
     const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } })
     if (!tenant) throw new NotFoundException('Store not found')

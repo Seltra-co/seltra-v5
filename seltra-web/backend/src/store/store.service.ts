@@ -1072,7 +1072,7 @@ export class StoreService {
       shippingZones: true,
       // Dashboard project cards need the Core app identity and its actual
       // deployment/build state alongside the tenant workspace.
-      apps: { select: { coreAppId: true, name: true, status: true, previewUrl: true, publishedUrl: true, version: true, blueprint: true, updatedAt: true } },
+      apps: { select: { coreAppId: true, name: true, status: true, previewUrl: true, publishedUrl: true, version: true, blueprint: true, updatedAt: true, heroSnapshotUrl: true, heroSnapshotUpdatedAt: true } },
     } as const
   }
 }

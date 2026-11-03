@@ -46,6 +46,20 @@ export function isPreviewErrorMessage(message: string): boolean {
   return /\bERR_PNPM_[A-Z0-9_]+\b/.test(message);
 }
 
+export function resolvePreviewStage(
+  latestServerLine: string | null,
+  runPhase: string,
+): "preparing_workspace" | "installing_dependencies" | "compiling" | "starting_server" | "first_render" | "failed" {
+  const line = latestServerLine?.toLowerCase() ?? "";
+  if (runPhase === "errored") return "failed";
+  if (/error|failed|exited/.test(line)) return "failed";
+  if (/install|node_modules|pnpm|npm/.test(line)) return "installing_dependencies";
+  if (/compil|build|hmr|vite/.test(line)) return "compiling";
+  if (/server|listening|ready|proxy/.test(line)) return "first_render";
+  if (/start|restart|spawn/.test(line)) return "starting_server";
+  return "preparing_workspace";
+}
+
 function isActionableErrorEntry(entry: ConsoleEntry): boolean {
   if (isWarningMessage(entry.message)) {
     return false;
@@ -238,6 +252,16 @@ export function PreviewLoadingScreen({
     return null;
   }, [sessionEntries]);
 
+  const previewStage = resolvePreviewStage(latestServerLine, runState.phase);
+  const previewStageLabels = {
+    preparing_workspace: "Preparing workspace",
+    installing_dependencies: "Installing dependencies",
+    compiling: "Compiling",
+    starting_server: "Starting server",
+    first_render: "Waiting for first render",
+    failed: "Preview failed",
+  } as const;
+
   useEffect(() => {
     const el = logListRef.current;
     if (!el || !isAtBottomRef.current) return;
@@ -304,7 +328,7 @@ export function PreviewLoadingScreen({
         <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-[var(--background-darkest)] flex-shrink-0">
           <Loader2 className="size-4 animate-spin text-primary flex-shrink-0" />
           <span className="text-sm font-medium text-foreground flex-shrink-0">
-            Preparing preview
+            {previewStageLabels[previewStage]}
           </span>
           {latestServerLine && (
             <>

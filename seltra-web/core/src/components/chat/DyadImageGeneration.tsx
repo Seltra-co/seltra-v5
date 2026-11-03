@@ -44,6 +44,7 @@ export const DyadImageGeneration: React.FC<DyadImageGenerationProps> = ({
   const state = node?.properties?.state;
   const inProgress = state === "pending";
   const aborted = state === "aborted";
+  const failed = state === "error";
 
   const selectedAppId = useAtomValue(selectedAppIdAtom);
   const { app } = useLoadApp(selectedAppId);
@@ -98,6 +99,12 @@ export const DyadImageGeneration: React.FC<DyadImageGenerationProps> = ({
                   abortedLabel="Did not finish"
                 />
               )}
+              {failed && (
+                <DyadStateIndicator
+                  state="error"
+                  errorLabel="Generation failed"
+                />
+              )}
               <div className="ml-auto flex items-center gap-1">
                 <DyadExpandIcon isExpanded={isExpanded} />
               </div>
@@ -126,6 +133,11 @@ export const DyadImageGeneration: React.FC<DyadImageGenerationProps> = ({
                 )}
                 {children && (
                   <div className="mt-0.5 text-foreground">{children}</div>
+                )}
+                {failed && !imagePath && (
+                  <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                    Image generation failed. No image file was saved or counted as an asset.
+                  </div>
                 )}
               </div>
             </DyadCardContent>

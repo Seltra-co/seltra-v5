@@ -4,12 +4,26 @@ import {
   Param, Post, UnauthorizedException,
 } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
+import { IsInt, IsOptional, IsString } from 'class-validator'
 import { prisma } from '../db'
 import { StoreImageService } from './store-image.service'
 
 class ChangeImageDto {
+  @IsOptional()
+  @IsString()
   prompt?: string
+
+  @IsOptional()
+  @IsString()
   imageUrl?: string
+
+  @IsOptional()
+  @IsString()
+  snapshotUrl?: string
+
+  @IsOptional()
+  @IsInt()
+  coreAppId?: number
 }
 
 @Controller('seltra/store/:storeId')
@@ -28,6 +42,21 @@ export class StoreImageController {
     const tenant = await this.assertOwner(storeId, auth)
     if (body.imageUrl) return this.storeImageService.setHeroImageUrl(tenant.id, body.imageUrl)
     return this.storeImageService.regenerateHeroImage(tenant.id, body.prompt)
+  }
+
+  @Post('hero-snapshot')
+  async saveHeroSnapshot(
+    @Param('storeId') storeId: string,
+    @Body() body: ChangeImageDto,
+    @Headers('authorization') auth?: string,
+  ) {
+    if (!body.snapshotUrl) throw new BadRequestException('snapshotUrl is required')
+    const tenant = await this.assertOwner(storeId, auth)
+    return this.storeImageService.setHeroSnapshotUrl(
+      tenant.id,
+      body.snapshotUrl,
+      body.coreAppId,
+    )
   }
 
   @Post('products/:productId/image')

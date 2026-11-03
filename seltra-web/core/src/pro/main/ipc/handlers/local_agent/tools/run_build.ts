@@ -411,7 +411,8 @@ export const runBuildTool: ToolDefinition<z.infer<typeof runBuildSchema>> = {
 - Use after build configuration, dependencies, framework routing, server/static-generation, environment loading, or substantial production-path changes, or when the user explicitly asks.
 - Do not use after routine small UI, styling, copy, or asset edits. Type checking is the normal verification step.
 - Finish related edits first and run once. A failed build may be retried only after making a relevant change.
-- The active preview stays running. Builds that could interfere with it are verified in an isolated workspace with clean dependencies.`,
+- The active preview stays running. Builds that could interfere with it are verified in an isolated workspace with clean dependencies.
+- After a successful build, check the running preview for browser console/page errors, failed requests, and HTTP 4xx/5xx responses. Surface findings for repair; compilation success alone is not runtime verification.`,
   inputSchema: runBuildSchema,
   defaultConsent: "always",
   modifiesState: true,
@@ -608,8 +609,40 @@ export const runBuildTool: ToolDefinition<z.infer<typeof runBuildSchema>> = {
               completeStatus(ctx, "Build failed", body, "warning");
               return body;
             }
-            const body = `Production build passed. ${timing}${output ? `\n\n${output}` : ""}`;
-            completeStatus(ctx, "Build passed", body);
+            let body = `Production build passed. ${timing}${output ? `\n\n${output}` : ""}`;
+            let statusTitle = "Build passed";
+            let status: "finished" | "warning" = "finished";
+            if (!runningApps.get(ctx.appId)) {
+              body +=
+                "\n\nBrowser runtime QA was not run because no preview is active. Start the preview and run repair_app before declaring a new app or major user flow complete.";
+              statusTitle = "Build passed; browser QA unavailable";
+              status = "warning";
+            } else {
+              try {
+                const { captureBrowserEvidence } = await import("./repair_app");
+                const evidence = await captureBrowserEvidence(ctx);
+                if (!evidence) {
+                  body +=
+                    "\n\nBrowser runtime QA was not run because no preview URL is available. Run repair_app after the preview is available before declaring the work complete.";
+                  statusTitle = "Build passed; browser QA unavailable";
+                  status = "warning";
+                } else if (evidence.errors.length > 0) {
+                  body += `\n\nBrowser runtime QA found ${evidence.errors.length} issue(s):\n${evidence.errors.join("\n")}\n\nTreat these as defects even though compilation passed. Apply a targeted fix and rerun browser QA.`;
+                  statusTitle = "Build passed; browser errors detected";
+                  status = "warning";
+                } else {
+                  body +=
+                    "\n\nBrowser runtime QA passed: no console errors, uncaught page errors, failed requests, or HTTP 4xx/5xx responses were captured.";
+                }
+              } catch (error) {
+                const reason =
+                  error instanceof Error ? error.message : String(error);
+                body += `\n\nBrowser runtime QA could not complete: ${reason}. Do not treat compilation success as runtime verification; run repair_app when the preview is available.`;
+                statusTitle = "Build passed; browser QA failed";
+                status = "warning";
+              }
+            }
+            completeStatus(ctx, statusTitle, body, status);
             return body;
           } catch (error) {
             if (phase === "snapshot setup" && !ctx.abortSignal?.aborted) {

@@ -104,6 +104,10 @@
           // html-to-image otherwise multiplies the canvas by devicePixelRatio,
           // which can turn a bounded screenshot into a 4-9x memory spike.
           pixelRatio: 1,
+          // Cross-origin stylesheets (for example Google Fonts) reject access
+          // to cssRules. The page is already rendered, so embedding fonts is
+          // unnecessary and can prevent the entire preview capture.
+          skipFonts: true,
         };
 
         if (dimensions.isViewport) {

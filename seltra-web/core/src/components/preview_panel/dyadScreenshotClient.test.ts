@@ -113,6 +113,7 @@ describe("dyad screenshot client", () => {
         width: 1200,
         height: 3000,
         pixelRatio: 1,
+        skipFonts: true,
       }),
     );
   });
@@ -137,6 +138,7 @@ describe("dyad screenshot client", () => {
         width: 1280,
         height: 720,
         pixelRatio: 1,
+        skipFonts: true,
         style: {
           position: "relative",
           left: "-120px",

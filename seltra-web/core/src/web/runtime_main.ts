@@ -18,6 +18,7 @@ import { getDyadAppsBaseDirectory } from "../paths/paths";
 import { configureTrustedRenderer } from "../ipc/utils/renderer_security";
 import { createRpcServer } from "./rpc_server";
 import { seedSeltraModels } from "./seed_seltra_models";
+import { verifyPlaywrightBrowser } from "./playwright_health";
 
 const logger = log.scope("web-runtime");
 
@@ -32,6 +33,7 @@ export async function startRuntime(): Promise<void> {
     throw new Error("RUNTIME_SECRETS_KEY must be configured for encrypted runtime secrets");
   }
   safeStorage.encryptString("");
+  await verifyPlaywrightBrowser();
 
   // The authenticated RPC boundary is the only renderer entry point in web
   // mode. The shim models the same trusted main frame for existing handlers.

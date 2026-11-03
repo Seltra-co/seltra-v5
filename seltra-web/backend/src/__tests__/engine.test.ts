@@ -139,6 +139,22 @@ describe('Seltra Engine service', () => {
     expect(Buffer.from(result.data[0].b64_json, 'base64')).toEqual(bytes)
   })
 
+  it('falls back from a 401 primary image model to Cloudflare FLUX Klein', async () => {
+    process.env.AI_MODEL_IMAGE = '@cf/primary/image-model'
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, result: { image: png } }), { headers: { 'content-type': 'application/json' } }))
+
+    const result = await service().generateImages(identity, { prompt: 'fallback product image' }, 'request-fallback')
+
+    expect(result.data[0].b64_json).toBe(png)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(String(fetchMock.mock.calls[1][0])).toBe('https://api.cloudflare.com/client/v4/accounts/account-test/ai/run')
+    const fallbackBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body))
+    expect(fallbackBody.model).toBe('black-forest-labs/flux-3-image-klein')
+    expect(fallbackBody.input.prompt).toBe('fallback product image')
+  })
+
   it('rejects invalid image requests and provider bytes without writing usage', async () => {
     await expect(service().generateImages(identity, { prompt: 'x'.repeat(2049) }, 'request-2')).rejects.toBeInstanceOf(HttpException)
     jest.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify({ result: { image: Buffer.from('not an image').toString('base64') } }), { headers: { 'content-type': 'application/json' } }))

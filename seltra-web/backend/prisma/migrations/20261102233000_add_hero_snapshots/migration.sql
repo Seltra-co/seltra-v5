@@ -1,0 +1,7 @@
+ALTER TABLE "Tenant"
+ADD COLUMN IF NOT EXISTS "heroSnapshotUrl" TEXT,
+ADD COLUMN IF NOT EXISTS "heroSnapshotUpdatedAt" TIMESTAMP(3);
+
+ALTER TABLE "TenantApp"
+ADD COLUMN IF NOT EXISTS "heroSnapshotUrl" TEXT,
+ADD COLUMN IF NOT EXISTS "heroSnapshotUpdatedAt" TIMESTAMP(3);

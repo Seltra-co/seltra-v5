@@ -1713,3 +1713,20 @@ html {
   from { transform: translateX(0); }
   to   { transform: translateX(-50%); }
 }
+
+.seltra-auth-pulse {
+  animation: seltra-auth-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes seltra-auth-pulse {
+  0%, 100% { transform: scale(0.92); opacity: 0.6; }
+  50% { transform: scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .seltra-auth-pulse {
+    animation: none;
+    transform: none;
+    opacity: 1;
+  }
+}

@@ -1,9 +1,12 @@
 # Workspace runtime image
 
 Build the image only after `node scripts/build-runtime.mjs` has produced
-`dist/runtime_main.js`. The container expects its persistent volume at
-`/workspace`; mount it read-write and keep the container root filesystem
-read-only.
+`dist/runtime/runtime_main.js`. The image installs the Playwright Chromium
+bundle, including headless shell, at `/ms-playwright`. Runtime startup launches
+Chromium and captures a PNG; it fails with an explicit error if the browser or
+its required system libraries are unavailable. The container expects its
+persistent volume at `/workspace`; mount it read-write and keep the container
+root filesystem read-only.
 
 The image deliberately does not configure a Docker socket, capabilities,
 network policy, CPU/memory/pid limits, or disk quota. Those are deployment

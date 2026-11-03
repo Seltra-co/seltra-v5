@@ -1,6 +1,6 @@
 //seltra-web/frontend/context/StoreContext.tsx
 'use client'
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
 import type { StoreData } from '@/components/storefront/StorefrontPreview'
 
 const KEY = 'seltra:active_store'
@@ -15,13 +15,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Restoring it here caused requests to run against a previous account or
   // database before the dashboard could reconcile ownership.
   const [store, setStoreState] = useState<StoreData | null>(null)
+  const setActiveStore = useCallback((s: StoreData | null) => {
+    setStoreState(s)
+    if (typeof window !== 'undefined') {
+      if (s) localStorage.setItem(KEY, JSON.stringify(s))
+      else localStorage.removeItem(KEY)
+    }
+  }, [])
   const value = useMemo<Ctx>(() => ({
     activeStore: store,
-    setActiveStore: (s) => {
-      setStoreState(s)
-      if (typeof window !== 'undefined') { if (s) localStorage.setItem(KEY, JSON.stringify(s)); else localStorage.removeItem(KEY) }
-    },
-  }), [store])
+    setActiveStore,
+  }), [store, setActiveStore])
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
 }
 

@@ -60,7 +60,7 @@ export class SeltraEngineService implements OnModuleInit {
     if ((process.env.SELTRA_ENGINE_BASE_PATH ?? '/v1') !== '/v1') throw new Error('SELTRA_ENGINE_BASE_PATH must remain /v1 to match the core client contract.')
     if (process.env.SELTRA_ENGINE_PORT && process.env.PORT && process.env.SELTRA_ENGINE_PORT !== process.env.PORT) throw new Error('SELTRA_ENGINE_PORT must match PORT because the engine shares the Seltra API process.')
     if ((process.env.AI_PROVIDER ?? 'cloudflare') !== 'cloudflare') throw new Error('Only AI_PROVIDER=cloudflare is implemented by Seltra Engine.')
-    for (const role of ['AI_MODEL_DEFAULT', 'AI_MODEL_VISION', 'AI_MODEL_IMAGE']) {
+    for (const role of ['AI_MODEL_DEFAULT', 'AI_MODEL_VISION']) {
       if (!process.env[role]) throw new Error(`${role} is required by Seltra Engine.`)
     }
     if (!(process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.MODEL_ACCOUNT_ID)) throw new Error('CLOUDFLARE_ACCOUNT_ID is required by Seltra Engine.')
@@ -127,15 +127,11 @@ export class SeltraEngineService implements OnModuleInit {
     if (body.response_format !== undefined && !['b64_json', 'url'].includes(String(body.response_format))) throw this.httpError(400, 'invalid_request', 'response_format must be b64_json or url.')
     const reservation = await this.reserveCredits(identity, requestId, '/images/generations', Number(n) * this.imageCreditCost())
     try {
-    const model = this.requireModel('IMAGE')
     const data: Array<{ b64_json: string; revised_prompt: string }> = []
     for (let index = 0; index < Number(n); index++) {
-      const result = await this.cloudflareRun(model, { prompt: prompt.trim() }, requestId)
-      const image = typeof result === 'string' ? result : (result as { image?: unknown })?.image
-      if (typeof image !== 'string') {
-        this.logger.error(JSON.stringify({ event: 'unexpected_image_response', requestId, preview: JSON.stringify(result).slice(0, 300) }))
-        throw this.httpError(502, 'upstream_error', 'Image provider returned an unexpected response.')
-      }
+      const generated = await this.generateImageWithFallback(prompt.trim(), requestId)
+      const image = generated.b64Json
+      const model = generated.model
       const bytes = Buffer.from(image, 'base64')
       const mime = this.imageMime(bytes)
       if (!mime) {
@@ -250,6 +246,73 @@ export class SeltraEngineService implements OnModuleInit {
     return model
   }
 
+  private shouldFallbackFromImageStatus(status: number): boolean {
+    return status === 401 || status === 403 || status === 404 || status === 429 || status === 504 || status >= 500
+  }
+
+  private imageProviderChain(): string[] {
+    const primary = process.env.AI_MODEL_IMAGE?.trim()
+    const fallbackList = (process.env.AI_IMAGE_FALLBACKS ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => value === 'cloudflare-flux-klein'
+        ? 'black-forest-labs/flux-3-image-klein'
+        : value)
+    const exactFlux = 'black-forest-labs/flux-3-image-klein'
+    return [...new Set([...(primary ? [primary] : []), exactFlux, ...fallbackList])]
+  }
+
+  private async generateImageWithFallback(prompt: string, requestId: string): Promise<{ b64Json: string; model: string }> {
+    const account = process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.MODEL_ACCOUNT_ID
+    const token = process.env.CLOUDFLARE_API_TOKEN ?? process.env.MODEL_API_KEY
+    if (!account || !token) {
+      throw this.httpError(503, 'engine_not_configured', 'Missing CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN for image generation.')
+    }
+
+    const failures: string[] = []
+    for (const model of this.imageProviderChain()) {
+      try {
+        const result = model === 'black-forest-labs/flux-3-image-klein'
+          ? await this.cloudflareFluxKlein(prompt, requestId)
+          : await this.cloudflareRun(model, { prompt }, requestId)
+        const image = typeof result === 'string'
+          ? result
+          : (result as { image?: unknown })?.image
+        if (typeof image !== 'string' || image.length === 0) {
+          throw new Error(`${model}: empty image payload`)
+        }
+
+        let b64Json = image
+        if (/^https?:\/\//i.test(image)) {
+          const downloaded = await fetch(image, { signal: AbortSignal.timeout(45_000) })
+          if (!downloaded.ok) throw new Error(`${model}: generated image URL returned HTTP ${downloaded.status}`)
+          const bytes = Buffer.from(await downloaded.arrayBuffer())
+          if (!this.imageMime(bytes)) throw new Error(`${model}: downloaded payload was not a valid PNG/WebP/JPEG`)
+          b64Json = bytes.toString('base64')
+        } else {
+          b64Json = image.includes(',') ? image.split(',', 2)[1] : image
+          if (!this.imageMime(Buffer.from(b64Json, 'base64'))) throw new Error(`${model}: invalid image bytes`)
+        }
+        this.logger.log(JSON.stringify({ event: 'image_provider_served', requestId, provider: 'cloudflare', model }))
+        return { b64Json, model }
+      } catch (error) {
+        let status = 502
+        if (error instanceof HttpException) {
+          status = typeof error.getStatus === 'function' ? error.getStatus() : 502
+        }
+        const message = error instanceof Error ? error.message : String(error)
+        const safeMessage = message.slice(0, 300).replace(/(?:authorization|api[_ -]?token)[=: ]\S+/gi, '[redacted]')
+        failures.push(`${model}: HTTP ${status}${status === 502 ? '' : ` (${safeMessage})`}`)
+        this.logger.warn(JSON.stringify({ event: 'image_provider_fallback', requestId, provider: 'cloudflare', model, status, reason: safeMessage }))
+
+        if (status >= 400 && status < 500 && status !== 401 && status !== 403 && status !== 404 && status !== 429) break
+        if (!this.shouldFallbackFromImageStatus(status) && status !== 502) break
+      }
+    }
+    throw this.httpError(502, 'image_providers_failed', `All image providers failed. ${failures.join('; ')}`)
+  }
+
   private configuredRole(requested: unknown): string | null {
     if (typeof requested !== 'string') return null
     for (const role of ['DEFAULT', 'REASONING', 'FAST', 'VISION']) {
@@ -257,6 +320,56 @@ export class SeltraEngineService implements OnModuleInit {
       if (model && requested === model) return role
     }
     return null
+  }
+
+  private async cloudflareFluxKlein(prompt: string, requestId: string) {
+    const account = process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.MODEL_ACCOUNT_ID
+    const token = process.env.CLOUDFLARE_API_TOKEN ?? process.env.MODEL_API_KEY
+    if (!account || !token) throw this.httpError(503, 'engine_not_configured', 'Missing Cloudflare image credentials.')
+    const url = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/ai/run`
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 45_000)
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'X-Request-ID': requestId,
+          },
+          body: JSON.stringify({
+            model: 'black-forest-labs/flux-3-image-klein',
+            input: { prompt, resolution: '1k' },
+          }),
+          signal: controller.signal,
+        })
+        const bytes = await this.readUpstream(response)
+        const text = Buffer.from(bytes).toString('utf8')
+        if (!response.ok) {
+          if ((response.status === 429 || response.status >= 500) && attempt === 0) continue
+          throw this.httpError(
+            response.status,
+            response.status === 429 ? 'upstream_rate_limited' : 'upstream_error',
+            `Cloudflare FLUX Klein request failed with HTTP ${response.status}.`,
+          )
+        }
+        let parsed: any
+        try { parsed = JSON.parse(text) } catch { throw this.httpError(502, 'upstream_error', 'Cloudflare FLUX Klein returned invalid JSON.') }
+        if (parsed?.success === false || parsed?.errors?.length) throw this.httpError(502, 'upstream_error', 'Cloudflare FLUX Klein provider error.')
+        const image = parsed?.result?.image ?? parsed?.result?.sample ?? parsed?.result?.url ?? parsed?.image
+        if (typeof image !== 'string' || !image.trim()) throw this.httpError(502, 'upstream_error', 'Cloudflare FLUX Klein returned no image payload.')
+        return { image }
+      } catch (error) {
+        if (error instanceof HttpException) throw error
+        if (controller.signal.aborted) throw this.httpError(504, 'upstream_timeout', 'Cloudflare FLUX Klein timed out.')
+        throw this.httpError(502, 'upstream_error', 'Could not connect to Cloudflare FLUX Klein.')
+      } finally {
+        clearTimeout(timeout)
+      }
+    }
+    throw this.httpError(502, 'upstream_error', 'Cloudflare FLUX Klein failed after retry.')
   }
 
   private async cloudflareRun(model: string, input: Record<string, unknown>, requestId: string) {
@@ -291,7 +404,10 @@ export class SeltraEngineService implements OnModuleInit {
       if (!response.ok) {
         const preview = Buffer.from(bytes).toString('utf8').slice(0, 300)
         this.logger.error(JSON.stringify({ event: 'upstream_failure', requestId, status: response.status, preview }))
-        throw this.httpError(response.status === 429 ? 429 : 502, 'upstream_error', response.status === 429 ? 'Image provider is rate limited; retry shortly.' : 'Image provider request failed.')
+        const fallbackStatus = [401, 403, 404, 429, 504].includes(response.status) || response.status >= 500
+          ? response.status
+          : 502
+        throw this.httpError(fallbackStatus, response.status === 429 ? 'upstream_rate_limited' : 'upstream_error', response.status === 429 ? 'Image provider is rate limited; retry shortly.' : 'Image provider request failed.')
       }
       if (type.startsWith('image/')) return { image: Buffer.from(bytes).toString('base64') }
       const text = Buffer.from(bytes).toString('utf8')

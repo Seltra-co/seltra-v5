@@ -5,6 +5,7 @@ import {
   getPreviewLoadingSessionStartedAt,
   isPreviewErrorMessage,
   isWarningMessage,
+  resolvePreviewStage,
   sanitizePreviewErrorForPrompt,
   shouldShowPreviewErrorBanner,
 } from "./PreviewLoadingScreen";
@@ -22,6 +23,13 @@ const entry = (
 });
 
 describe("PreviewLoadingScreen helpers", () => {
+  it("maps startup logs to practical preview status stages", () => {
+    expect(resolvePreviewStage("Installing packages with pnpm", "starting")).toBe("installing_dependencies");
+    expect(resolvePreviewStage("Vite is compiling", "starting")).toBe("compiling");
+    expect(resolvePreviewStage("Server listening on port", "ready")).toBe("first_render");
+    expect(resolvePreviewStage(null, "errored")).toBe("failed");
+    expect(resolvePreviewStage(null, "starting")).toBe("preparing_workspace");
+  });
   it("uses the latest startup log as the loading session boundary", () => {
     const consoleEntries = [
       entry("Connecting to app...", 100),

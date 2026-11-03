@@ -22,18 +22,30 @@ export function playCompletionTone() {
   if (!soundEffectsEnabled() || typeof window === 'undefined') return
   unlockCompletionTone()
   if (!audioContext) return
-  const now = audioContext.currentTime
-  const gain = audioContext.createGain()
+  if (audioContext.state === 'suspended') {
+    void audioContext.resume().then(() => playCompletionTone())
+    return
+  }
+  const context = audioContext
+  const now = context.currentTime + 0.02
+  const gain = context.createGain()
+  const limiter = context.createDynamicsCompressor()
+  limiter.threshold.value = -12
+  limiter.knee.value = 8
+  limiter.ratio.value = 12
+  limiter.attack.value = 0.003
+  limiter.release.value = 0.18
   gain.gain.setValueAtTime(0.0001, now)
-  gain.gain.exponentialRampToValueAtTime(0.08, now + 0.02)
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.78)
-  gain.connect(audioContext.destination)
-  ;[523.25, 659.25].forEach((frequency, index) => {
-    const oscillator = audioContext!.createOscillator()
-    oscillator.type = 'sine'
-    oscillator.frequency.value = frequency
+  gain.gain.exponentialRampToValueAtTime(0.85, now + 0.025)
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.95)
+  gain.connect(limiter)
+  limiter.connect(context.destination)
+  ;[523.25, 659.25, 783.99].forEach((frequency, index) => {
+    const oscillator = context.createOscillator()
+    oscillator.type = 'triangle'
+    oscillator.frequency.setValueAtTime(frequency, now + index * 0.16)
     oscillator.connect(gain)
-    oscillator.start(now + index * 0.18)
-    oscillator.stop(now + 0.72 + index * 0.06)
+    oscillator.start(now + index * 0.16)
+    oscillator.stop(now + 0.78 + index * 0.08)
   })
 }

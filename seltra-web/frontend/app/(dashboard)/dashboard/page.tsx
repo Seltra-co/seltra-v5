@@ -34,6 +34,8 @@ import { CorePreviewAnnotator } from '@/components/dashboard/CorePreviewAnnotato
 import { CoreAgentMessage, CoreTodoProgress, type CoreBlueprint, type CoreQuestionnaire, type CoreTodo } from '@/components/dashboard/CoreAgentMessage'
 import { CURRENT_ANNOUNCEMENT_VERSION, WHATS_NEW } from './config/whats-new'
 import { getGreeting } from '@/lib/greetings'
+import { safeDate, safeISOString } from '@/lib/safe-date'
+import { playCompletionTone, unlockCompletionTone } from '@/lib/completion-tone'
 
 // Use the Next.js same-origin proxy in development and production. Direct
 // cross-origin calls bypass the proxy and fail CORS before reaching the API.
@@ -74,20 +76,30 @@ function readRecentStoreIds() {
   }
 }
 
+function readPreferredStoreId() {
+  if (typeof window === 'undefined') return ''
+  try {
+    const stored = JSON.parse(localStorage.getItem('seltra:active_store') ?? 'null') as StoreData | null
+    return stored?.id || stored?.slug || ''
+  } catch {
+    return ''
+  }
+}
+
 function imageUrl(value?: string | null) {
   if (!value) return ''
   return /^https?:\/\//.test(value) || value.startsWith('/') ? value : ''
 }
 
 function editedLabel(iso?: string) {
-  if (!iso) return ''
-  const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return ''
+  const date = safeDate(iso)
+  if (!date) return ''
+  const then = date.getTime()
   const days = Math.floor((Date.now() - then) / 86_400_000)
   if (days <= 0) return 'Edited today'
   if (days === 1) return 'Edited yesterday'
   if (days < 30) return `Edited ${days} days ago`
-  return `Edited ${new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
+  return `Edited ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
 }
 
 function clearAuth() {
@@ -357,8 +369,8 @@ type Msg = { role: 'user' | 'assistant' | 'planner-question' | 'stopped'; conten
 
 function formatChatTime(iso?: string) {
   if (!iso) return ''
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ''
+  const date = safeDate(iso)
+  if (!date) return ''
   const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
   const today = new Date()
   const sameDay = date.toDateString() === today.toDateString()
@@ -842,7 +854,10 @@ function WhatsNewBanner({ onDismiss }: { onDismiss: () => void }) {
 
 export default function DashboardPage() {
   const router = useRouter()
-  const { activeStore, setActiveStore } = useStore()
+  const storeContext = useStore()
+  const activeStore = storeContext.activeStore
+  const [coreWorkspaceOpened, setCoreWorkspaceOpened] = useState(false)
+  const [projectSessionActive, setProjectSessionActive] = useState(false)
   const coreClientRef = useRef<CoreClient | null>(null)
   const coreRuntimeRef = useRef<string>()
   const coreTenantRef = useRef<string>()
@@ -871,8 +886,10 @@ export default function DashboardPage() {
   const previewRecoveryInFlightRef = useRef(false)
   const previewUrlAtRecoveryRef = useRef('')
   const corePreviewFrameRef = useRef<HTMLIFrameElement | null>(null)
-  const completionAudioRef = useRef<AudioContext | null>(null)
+  const completionTonePlayedForRef = useRef('')
   const corePreviewScreenshotRequestRef = useRef<string>()
+  const coreSnapshotRequestRef = useRef<string>()
+  const coreSnapshotCapturedForRef = useRef('')
   const [corePreviewScreenshot, setCorePreviewScreenshot] = useState('')
   const [coreElementPickerActive, setCoreElementPickerActive] = useState(false)
   const [coreSelectedComponents, setCoreSelectedComponents] = useState<Array<{ id: string; name: string; runtimeId?: string; relativePath: string; lineNumber: number; columnNumber: number }>>([])
@@ -1139,6 +1156,71 @@ export default function DashboardPage() {
     }, 10_000)
   }
 
+  useEffect(() => {
+    if (!corePreviewLoaded || !corePreviewUrl || !activeStore?.id) return
+    const appId = activeStore.dashboardApp?.coreAppId
+      ?? activeStore.apps?.find((app) => app.coreAppId === coreAppRef.current)?.coreAppId
+      ?? coreAppRef.current
+    const frame = corePreviewFrameRef.current
+    if (!appId || !frame?.contentWindow) return
+
+    const captureKey = `${activeStore.id}:${appId}:${activeStore.dashboardApp?.version ?? ''}:${corePreviewUrl}`
+    if (coreSnapshotCapturedForRef.current === captureKey) return
+    coreSnapshotCapturedForRef.current = captureKey
+    const requestId = crypto.randomUUID()
+    const origin = new URL(corePreviewUrl).origin
+    coreSnapshotRequestRef.current = requestId
+
+    const timeout = window.setTimeout(() => {
+      if (coreSnapshotRequestRef.current !== requestId) return
+      coreSnapshotRequestRef.current = undefined
+      coreSnapshotCapturedForRef.current = ''
+      window.removeEventListener('message', handleSnapshot)
+      console.warn('[dashboard] Core did not return a preview snapshot.')
+    }, 15_000)
+    const handleSnapshot = async (event: MessageEvent) => {
+      const data = event.data as { type?: string; requestId?: string; success?: boolean; dataUrl?: string }
+      if (event.origin !== origin || event.source !== frame.contentWindow) return
+      if (data?.type !== 'dyad-screenshot-response' || data.requestId !== requestId) return
+      window.clearTimeout(timeout)
+      window.removeEventListener('message', handleSnapshot)
+      coreSnapshotRequestRef.current = undefined
+      if (!data.success || typeof data.dataUrl !== 'string' || !data.dataUrl.startsWith('data:image/')) {
+        coreSnapshotCapturedForRef.current = ''
+        console.warn('[dashboard] Core could not capture a preview snapshot.')
+        return
+      }
+
+      const { data: saved, error } = await apiFetch<{ url: string }>(
+        `/api/v5/seltra/store/${encodeURIComponent(activeStore.id!)}/hero-snapshot`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ snapshotUrl: data.dataUrl, coreAppId: appId }),
+        },
+      )
+      if (error || !saved?.url) {
+        coreSnapshotCapturedForRef.current = ''
+        console.error('[dashboard] Could not persist the Core preview snapshot.', error || 'The server returned no snapshot URL.')
+        return
+      }
+      setStores((current) => current.map((store) => store.id !== activeStore.id ? store : {
+        ...store,
+        heroSnapshotUrl: saved.url,
+        apps: store.apps?.map((app) => app.coreAppId === appId
+          ? { ...app, heroSnapshotUrl: saved.url }
+          : app),
+      }))
+    }
+
+    window.addEventListener('message', handleSnapshot)
+    frame.contentWindow.postMessage({ type: 'dyad-take-screenshot', requestId }, origin)
+    return () => {
+      window.clearTimeout(timeout)
+      window.removeEventListener('message', handleSnapshot)
+      if (coreSnapshotRequestRef.current === requestId) coreSnapshotRequestRef.current = undefined
+    }
+  }, [activeStore?.id, activeStore?.dashboardApp?.coreAppId, activeStore?.dashboardApp?.version, activeStore?.apps, corePreviewLoaded, corePreviewUrl])
+
   const toggleCoreElementPicker = () => {
     if (!corePreviewFrameRef.current?.contentWindow || !corePreviewUrl) return
     const type = coreElementPickerActive ? 'deactivate-dyad-component-selector' : 'activate-dyad-component-selector'
@@ -1199,33 +1281,6 @@ export default function DashboardPage() {
   const [resumeProjectAvailable, setResumeProjectAvailable] = useState(false)
   const [connection, setConnection] = useState<LinkState>('online')
   const [pillDismissed, setPillDismissed] = useState(false)
-  const unlockCompletionAudio = () => {
-    if (typeof window === 'undefined' || !('AudioContext' in window)) return
-    try {
-      completionAudioRef.current ??= new AudioContext()
-      if (completionAudioRef.current.state === 'suspended') void completionAudioRef.current.resume()
-    } catch { /* Audio is an optional enhancement. */ }
-  }
-  const playCompletionTone = () => {
-    unlockCompletionAudio()
-    const context = completionAudioRef.current
-    if (!context || context.state !== 'running') return
-    const start = context.currentTime + 0.02
-    ;[587.33, 783.99].forEach((frequency, index) => {
-      const oscillator = context.createOscillator()
-      const gain = context.createGain()
-      const at = start + index * 0.22
-      oscillator.type = 'sine'
-      oscillator.frequency.setValueAtTime(frequency, at)
-      gain.gain.setValueAtTime(0.0001, at)
-      gain.gain.exponentialRampToValueAtTime(0.055, at + 0.035)
-      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.38)
-      oscillator.connect(gain)
-      gain.connect(context.destination)
-      oscillator.start(at)
-      oscillator.stop(at + 0.4)
-    })
-  }
   const connectionRef = useRef<LinkState>('online')
   const browserOffline = useRef(false)
   const reconnectSource = useRef<'browser' | 'stream'>('browser')
@@ -1245,6 +1300,7 @@ export default function DashboardPage() {
   const [mobileSidebar, setMobileSidebar] = useState(false)
   const [mobileView, setMobileView] = useState<'chat' | 'store'>('chat')
   const [stores, setStores] = useState<StoreData[]>([])
+  const [storesLoading, setStoresLoading] = useState(true)
   const [projectLimitOpen, setProjectLimitOpen] = useState(false)
   const [projectLimitInfo, setProjectLimitInfo] = useState<{ currentStoreCount?: number; maxStores?: number; plan?: 'free' | 'premium' }>({})
   const [announcementVisible, setAnnouncementVisible] = useState(false)
@@ -1269,7 +1325,7 @@ export default function DashboardPage() {
   // connection here means prompts, streamed messages, and preview state stay
   // in the existing dashboard conversation instead of navigating to /builder.
   useEffect(() => {
-    if (!activeStore?.id || !getToken()) {
+    if (!activeStore?.id || !coreWorkspaceOpened || !getToken()) {
       coreEventsRef.current?.close()
       coreEventsRef.current = null
       coreClientRef.current = null
@@ -1305,7 +1361,12 @@ export default function DashboardPage() {
         const app = await client.invoke<{ name?: string; path?: string }>('get-app', [appId], runtimeId).catch(() => null)
         await client.invoke('select-app-for-preview', [{ appId }], runtimeId)
         const previewUrl = actor.encodedState?.url?.appUrl
-        if (previewUrl && coreRuntimeRef.current === runtimeId) { setCorePreviewUrl(previewUrl); setPreviewOpen(true) }
+        if (previewUrl && coreRuntimeRef.current === runtimeId) {
+          setCorePreviewLoaded(false)
+          setCorePreviewUrl(previewUrl)
+          setPreviewOpen(true)
+        }
+        else await client.invoke('restart-app', [{ appId }], runtimeId)
         if (app?.name && coreRuntimeRef.current === runtimeId) {
           void apiFetch('/api/v5/builder/apps/state', {
             method: 'POST',
@@ -1321,13 +1382,15 @@ export default function DashboardPage() {
       try {
         const chats = await client.invoke<Array<{ id: number; createdAt: Date }>>('get-chats', [appId], runtimeId)
         if (coreRuntimeRef.current !== runtimeId || coreAppRef.current !== appId || coreChatRef.current) return
-        const latest = [...chats].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0]
+        const latest = [...chats].sort((left, right) =>
+          (safeDate(right.createdAt, 0)?.getTime() ?? 0) - (safeDate(left.createdAt, 0)?.getTime() ?? 0),
+        )[0]
         if (!latest || !Number.isSafeInteger(latest.id) || latest.id <= 0) return
         coreChatRef.current = latest.id
         localStorage.setItem(`seltra:core:last-app:${tenantId}`, JSON.stringify({ appId, chatId: latest.id }))
-        const chat = await client.invoke<{ messages?: Array<{ role: 'user' | 'assistant'; content: string; createdAt?: string | Date }> }>('get-chat', [latest.id], runtimeId)
+        const chat = await client.invoke<{ messages?: Array<{ role: 'user' | 'assistant'; content: string; createdAt?: unknown }> }>('get-chat', [latest.id], runtimeId)
         if (coreRuntimeRef.current !== runtimeId || coreChatRef.current !== latest.id || !Array.isArray(chat.messages)) return
-        setMsgs(chat.messages.map((message) => ({ role: message.role, content: message.content, createdAt: message.createdAt ? new Date(message.createdAt).toISOString() : undefined })))
+        setMsgs(chat.messages.map((message) => ({ role: message.role, content: message.content, createdAt: safeISOString(message.createdAt, Date.now()) })))
         coreReplyRef.current = chat.messages.filter((message) => message.role === 'assistant').at(-1)?.content ?? ''
         void client.invoke('distributed-machine:subscribe', [{ protocolVersion: 1, machineId: 'chat_stream', encodedKey: { chatId: latest.id } }], runtimeId).catch(() => undefined)
       } catch { /* A Core app can exist before its first chat is created. */ }
@@ -1431,9 +1494,9 @@ export default function DashboardPage() {
           const client = coreClientRef.current
           const chatId = coreChatRef.current
           if (client && chatId) {
-            void client.invoke<{ messages?: Array<{ role: 'user' | 'assistant'; content: string; createdAt?: string | Date }> }>('get-chat', [chatId], id).then((chat) => {
+            void client.invoke<{ messages?: Array<{ role: 'user' | 'assistant'; content: string; createdAt?: unknown }> }>('get-chat', [chatId], id).then((chat) => {
               if (coreRuntimeRef.current !== id || coreClientRef.current !== client || coreChatRef.current !== chatId || !Array.isArray(chat.messages)) return
-              setMsgs(chat.messages.map((message) => ({ role: message.role, content: message.content, createdAt: message.createdAt ? new Date(message.createdAt).toISOString() : undefined })))
+              setMsgs(chat.messages.map((message) => ({ role: message.role, content: message.content, createdAt: safeISOString(message.createdAt, Date.now()) })))
               setConvId(undefined)
               coreReplyRef.current = chat.messages.filter((message) => message.role === 'assistant').at(-1)?.content ?? ''
             }).catch(() => undefined)
@@ -1518,6 +1581,7 @@ export default function DashboardPage() {
         const value = frame.payload as { machineId?: string; encodedKey?: { appId?: number; chatId?: number }; encodedState?: { phase?: string; url?: { appUrl?: string }; operationError?: { message?: string }; lastCompletion?: { intentId?: string; outcome?: string; error?: string; targetAppId?: number | null } } }
         if (value.machineId === 'app_run' && value.encodedKey?.appId === coreAppRef.current) {
           if (value.encodedState?.url?.appUrl) {
+            setCorePreviewLoaded(false)
             setCorePreviewUrl(value.encodedState.url.appUrl)
             setPreviewOpen(true)
             // A working preview is still a draft; publishing is a separate lifecycle action.
@@ -1558,7 +1622,11 @@ export default function DashboardPage() {
               if (completion.outcome === 'completed') {
                 setCoreBuildCompleted(true)
                 setPreviewOpen(true)
-                playCompletionTone()
+                const toneKey = `${coreChatRef.current ?? 'chat'}:${coreRuntimeRef.current ?? 'runtime'}`
+                if (completionTonePlayedForRef.current !== toneKey) {
+                  completionTonePlayedForRef.current = toneKey
+                  playCompletionTone()
+                }
                 const currentTodos = coreTodosRef.current
                 const remainingTodos = currentTodos && currentTodos.chatId === coreChatRef.current
                   ? currentTodos.todos.filter((todo) => todo.status !== 'completed')
@@ -1627,7 +1695,7 @@ export default function DashboardPage() {
       coreRuntimeRef.current = undefined
       setCoreConnected(false)
     }
-  }, [activeStore?.id])
+  }, [activeStore?.id, coreWorkspaceOpened])
 
   useEffect(() => {
     return () => {
@@ -1704,6 +1772,18 @@ export default function DashboardPage() {
       const profileResult = await apiFetch<{ user?: { merchantProfile?: typeof merchantProfile; dismissedAnnouncements?: string[] } }>('/api/v5/auth/me')
       setAnnouncementVisible(Boolean(profileResult.data?.user && !profileResult.data.user.dismissedAnnouncements?.includes(CURRENT_ANNOUNCEMENT_VERSION)))
       if (profileResult.data?.user?.merchantProfile) setMerchantProfile(profileResult.data.user.merchantProfile)
+      const profileUser = profileResult.data?.user as Partial<UserRecord> | null | undefined
+      if (profileUser) {
+        const metadata = profileUser.user_metadata ?? {}
+        setUser({
+          id: profileUser.id || resolvedUser?.id,
+          email: profileUser.email || resolvedUser?.email || '',
+          name: metadata.full_name || metadata.name || profileUser.name || resolvedUser?.name || profileUser.email?.split('@')[0] || '',
+          avatar: metadata.avatar_url || metadata.picture || resolvedUser?.avatar || (profileUser.email ? `https://api.dicebear.com/7.x/bottts/svg?seed=${profileUser.email}` : ''),
+          joinedAt: profileUser.created_at || profileUser.createdAt || resolvedUser?.joinedAt,
+          plan: profileUser.plan === 'premium' ? 'premium' : resolvedUser?.plan || 'free',
+        })
+      }
       const pending = await takePendingBuild().catch(() => null)
       const legacyPending = sessionStorage.getItem('seltra:pending_prompt')
       if (legacyPending) sessionStorage.removeItem('seltra:pending_prompt')
@@ -1720,33 +1800,49 @@ export default function DashboardPage() {
       } catch {
         preferredStore = null
       }
+      setStoresLoading(true)
       const { data } = await apiFetch<StoreData[]>('/api/v5/seltra/store')
-      const fromApi = data ?? []
+      const fromApi = Array.isArray(data) ? data : []
       const showPreviewStores = DEV_PREVIEW && fromApi.length === 0 && new URLSearchParams(window.location.search).get('preview') === 'stores'
       const existing = showPreviewStores ? DEV_PREVIEW_STORES : fromApi
-      setStores(existing)
+      if (Array.isArray(data)) setStores(existing)
+      setStoresLoading(false)
 
       if (existing.length > 0) {
         const current = preferredStore && existing.find((store) => store.id === preferredStore?.id || store.slug === preferredStore?.slug)
         const selected = current ?? existing[0]
-        setActiveStore(selected)
+        if (!pending && !legacyPending && !routePrompt && (current || !preferredStore)) {
+          storeContext.setActiveStore(selected)
+        }
         if (pending) {
+          setCoreWorkspaceOpened(true)
+          setProjectSessionActive(true)
+          storeContext.setActiveStore(selected);
           (window as Window & { __seltraBuilderFiles?: File[] }).__seltraBuilderFiles = pending.files
           await openCoreBuilder({ prompt: pending.prompt, mode: pending.mode, option: pending.figma ? 'figma' : undefined, autoSubmit: !pending.figma, storeOverride: selected })
-        } else if (legacyPending) await openCoreBuilder({ prompt: legacyPending, mode: builderMode, autoSubmit: true, storeOverride: selected })
-        else if (routePrompt) await openCoreBuilder({ prompt: routePrompt, mode: routeMode, option: routeOption, autoSubmit: routeAutoStart, storeOverride: selected })
+        } else if (legacyPending) {
+          setCoreWorkspaceOpened(true)
+          setProjectSessionActive(true)
+          storeContext.setActiveStore(selected)
+          await openCoreBuilder({ prompt: legacyPending, mode: builderMode, autoSubmit: true, storeOverride: selected })
+        } else if (routePrompt) {
+          setCoreWorkspaceOpened(true)
+          setProjectSessionActive(true)
+          storeContext.setActiveStore(selected)
+          await openCoreBuilder({ prompt: routePrompt, mode: routeMode, option: routeOption, autoSubmit: routeAutoStart, storeOverride: selected })
+        }
       } else if (pending) {
-        setActiveStore(null);
+        storeContext.setActiveStore(null);
         (window as Window & { __seltraBuilderFiles?: File[] }).__seltraBuilderFiles = pending.files
         await openCoreBuilder({ prompt: pending.prompt, mode: pending.mode, option: pending.figma ? 'figma' : undefined, autoSubmit: !pending.figma })
       } else if (legacyPending) {
-        setActiveStore(null)
+        storeContext.setActiveStore(null)
         await openCoreBuilder({ prompt: legacyPending, mode: builderMode, autoSubmit: true })
       } else if (routePrompt) {
-        setActiveStore(null)
+        storeContext.setActiveStore(null)
         await openCoreBuilder({ prompt: routePrompt, mode: routeMode, option: routeOption, autoSubmit: routeAutoStart })
       } else {
-        setActiveStore(null)
+        storeContext.setActiveStore(null)
       }
       if (routeParams.has('prompt')) router.replace('/dashboard', { scroll: false })
     }
@@ -1780,6 +1876,7 @@ export default function DashboardPage() {
   }, [sending, buildId, user?.id])
 
   useEffect(() => {
+    if (!coreWorkspaceOpened) return
     const projectId = storeIdOf(activeStore)
     if (coreRunProjectRef.current !== projectId) {
       coreRunProjectRef.current = projectId
@@ -1844,7 +1941,7 @@ export default function DashboardPage() {
         coreRunHeartbeatRef.current = undefined
       }
     }
-  }, [activeStore])
+  }, [activeStore, coreWorkspaceOpened])
 
   useEffect(() => {
     if (!sending || !coreRunRef.current?.id) return
@@ -1904,18 +2001,26 @@ export default function DashboardPage() {
   }, [sending, coreRunRef.current?.id])
 
   const loadStores = useCallback(async () => {
+    setStoresLoading(true)
     const { data } = await apiFetch<StoreData[]>('/api/v5/seltra/store')
-    const stores = data ?? []
-    setStores(stores)
-    if (stores.length === 0) return
+    const stores = Array.isArray(data) ? data : []
+    if (Array.isArray(data)) setStores(stores)
+    setStoresLoading(false)
+  }, [])
 
-    const current = activeStore && stores.find((store) => store.id === activeStore.id || store.slug === activeStore.slug)
-    if (current) {
-      setActiveStore(current)
-    } else if (!activeStore) {
-      setActiveStore(stores[0])
+  useEffect(() => {
+    if (!getToken()) return
+    const reloadOnReturn = () => {
+      if (document.visibilityState === 'visible') void loadStores()
     }
-  }, [activeStore])
+    window.addEventListener('focus', reloadOnReturn)
+    document.addEventListener('visibilitychange', reloadOnReturn)
+    void loadStores()
+    return () => {
+      window.removeEventListener('focus', reloadOnReturn)
+      document.removeEventListener('visibilitychange', reloadOnReturn)
+    }
+  }, [loadStores])
 
   const dismissAnnouncement = useCallback(() => {
     setAnnouncementVisible(false)
@@ -1937,6 +2042,7 @@ export default function DashboardPage() {
     if (error) { toast.error(error); return }
     setConvId(conversation.id)
     setMsgs((data ?? []).map((m) => ({ role: m.role, content: m.content, createdAt: m.created_at })))
+    setProjectSessionActive(true)
     setTab('home')
   }
 
@@ -2212,7 +2318,8 @@ export default function DashboardPage() {
   const runCorePrompt = async (text: string, requestedMode: 'build' | 'plan' | 'chat', store: StoreData, stagedFiles: File[] = [], resumeExistingChat = false) => {
     if (corePromptInFlightRef.current) return
     corePromptInFlightRef.current = true
-    unlockCompletionAudio()
+    completionTonePlayedForRef.current = ''
+    unlockCompletionTone()
     const tenantId = store.id
     if (!tenantId) {
       corePromptInFlightRef.current = false
@@ -2355,7 +2462,9 @@ export default function DashboardPage() {
         if (!chatId) {
           try {
             const chats = await client.invoke<Array<{ id: number; chatMode?: string | null; createdAt: Date }>>('get-chats', [appId], runtime)
-            const previousChat = [...chats].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0]
+            const previousChat = [...chats].sort((left, right) =>
+              (safeDate(right.createdAt, 0)?.getTime() ?? 0) - (safeDate(left.createdAt, 0)?.getTime() ?? 0),
+            )[0]
             if (previousChat && Number.isSafeInteger(previousChat.id) && previousChat.id > 0) {
               chatId = previousChat.id
               continuingPlan = previousChat.chatMode === 'plan'
@@ -2528,9 +2637,11 @@ export default function DashboardPage() {
       toast.error('Enter a valid Figma design or file link.')
       return false
     }
+    setCoreWorkspaceOpened(true)
+    setProjectSessionActive(true)
     const prompt = options.prompt?.trim() ?? ''
     let store = options.storeOverride ?? activeStore ?? stores[0] ?? null
-    if (store && !activeStore) setActiveStore(store)
+    if (store && !activeStore) storeContext.setActiveStore(store)
     if (!store) {
       setSending(true)
       try {
@@ -2549,7 +2660,7 @@ export default function DashboardPage() {
         if (!result.data?.store) throw new Error(result.error || 'Could not create the Core workspace.')
         store = result.data.store
         setStores((current) => [store!, ...current.filter((item) => item.id !== store!.id)])
-        setActiveStore(store)
+        storeContext.setActiveStore(store)
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Could not prepare the Core workspace.')
         setSending(false)
@@ -2603,7 +2714,8 @@ export default function DashboardPage() {
 const send = async () => {
   const text = input.trim()
   if ((!text && !pendingAttachment && coreFiles.length === 0) || sending) return
-  unlockCompletionAudio()
+  completionTonePlayedForRef.current = ''
+  unlockCompletionTone()
   if (pendingAttachment?.uploading) {
     toast.message('Image is still uploading.')
     return
@@ -2613,6 +2725,7 @@ const send = async () => {
     return
   }
 
+  setProjectSessionActive(true)
   // Show immediate feedback before workspace checks, file encoding, app
   // recovery, or RPC dispatch can wait on network or runtime startup.
   setSending(true)
@@ -2650,6 +2763,7 @@ const send = async () => {
     setCoreBlueprint(null)
     setCoreBlueprintName('')
     coreBlueprintRef.current = null
+    setCorePreviewLoaded(false)
     setCorePreviewUrl('')
     setCorePreviewError('')
     setPreviewRecoveryError('')
@@ -2658,8 +2772,10 @@ const send = async () => {
 
   const openStoreProject = (store: StoreData) => {
     rememberRecentStore(store)
+    setCoreWorkspaceOpened(true)
+    setProjectSessionActive(true)
     const sameWorkspace = coreTenantRef.current === store.id
-    setActiveStore(store)
+    storeContext.setActiveStore(store)
     setTab('home')
     setRev((v) => v + 1)
     resetProjectSurface()
@@ -2674,11 +2790,30 @@ const send = async () => {
         const client = coreClientRef.current
         const runtime = coreRuntimeRef.current
         const chatId = coreChatRef.current
-        if (client && runtime && chatId) void client.invoke<{ messages?: Array<{ role: 'user' | 'assistant'; content: string; createdAt?: string | Date }> }>('get-chat', [chatId], runtime).then((chat) => {
-          if (coreRuntimeRef.current !== runtime || coreChatRef.current !== chatId || !Array.isArray(chat.messages)) return
-          setMsgs(chat.messages.map((message) => ({ role: message.role, content: message.content, createdAt: message.createdAt ? new Date(message.createdAt).toISOString() : undefined })))
-          coreReplyRef.current = chat.messages.filter((message) => message.role === 'assistant').at(-1)?.content ?? ''
-        }).catch((error) => toast.error(error instanceof Error ? `Could not restore the saved Core conversation: ${error.message}` : 'Could not restore the saved Core conversation.'))
+        if (client && runtime && chatId) {
+          const savedClient = client
+          const savedRuntime = runtime
+          const savedAppId = coreAppRef.current
+          void savedClient.invoke<{ messages?: Array<{ role: 'user' | 'assistant'; content: string; createdAt?: unknown }> }>('get-chat', [chatId], savedRuntime).then((chat) => {
+            if (coreRuntimeRef.current !== savedRuntime || coreChatRef.current !== chatId || !Array.isArray(chat.messages)) return
+            setMsgs(chat.messages.map((message) => {
+              const normalized = safeISOString(message.createdAt, Date.now())
+              if (process.env.NODE_ENV === 'development' && message.createdAt != null && !safeDate(message.createdAt)) {
+                console.warn('[builder] Invalid conversation timestamp; using fallback.', { rawTimestamp: message.createdAt })
+              }
+              return { role: message.role, content: message.content, createdAt: normalized }
+            }))
+            coreReplyRef.current = chat.messages.filter((message) => message.role === 'assistant').at(-1)?.content ?? ''
+          }).catch((error) => toast.error(error instanceof Error ? `Could not restore the saved Core conversation: ${error.message}` : 'Could not restore the saved Core conversation.'))
+          // Preview startup is independent from agent-run completion. Opening a
+          // saved app always attempts to start/restart its sandbox.
+          if (!corePreviewUrl) {
+            void savedClient.invoke('restart-app', [{ appId: savedAppId }], savedRuntime).catch((error) => {
+              console.warn('[builder] Saved preview could not be started automatically.', error)
+              setCorePreviewError('The saved preview could not be restarted. Use Retry preview.')
+            })
+          }
+        }
       }
     } catch (error) {
       setResumeProjectAvailable(false)
@@ -2697,7 +2832,9 @@ const send = async () => {
     }
     if (activeStore && (Boolean(activeStore.id && deletedIds.has(activeStore.id)) || Boolean(activeStore.slug && deletedIds.has(activeStore.slug)))) {
       resetProjectSurface()
-      setActiveStore(null)
+      setCoreWorkspaceOpened(false)
+      setProjectSessionActive(false)
+      storeContext.setActiveStore(null)
       setTab('home')
       setSidebarOpen(true)
     }
@@ -2715,19 +2852,23 @@ const send = async () => {
       return
     }
     resetProjectSurface()
-    setActiveStore(null)
+    setCoreWorkspaceOpened(false)
+    setProjectSessionActive(false)
+    storeContext.setActiveStore(null)
     setRev((v) => v + 1)
     setTab('home')
     setSidebarOpen(true)
   }
 
-  const signOut = () => { clearAuth(); setActiveStore(null); router.push('/auth') }
+  const signOut = () => { clearAuth(); setCoreWorkspaceOpened(false); setProjectSessionActive(false); storeContext.setActiveStore(null); router.push('/auth') }
 
   const storeTitle = activeStore?.name ?? msgs[0]?.content?.slice(0, 40) ?? 'My Store'
   const handleBuildPreview = useCallback((store?: StoreData | null) => {
     setBuildLaunchStarted(true)
     if (!store) return
-    setActiveStore(store)
+    setCoreWorkspaceOpened(true)
+    setProjectSessionActive(true)
+    storeContext.setActiveStore(store)
     setStores((prev) => [store, ...prev.filter((item) => item.id !== store.id && item.slug !== store.slug)])
     setRev((v) => v + 1)
   }, [])
@@ -2761,7 +2902,7 @@ const send = async () => {
     if (stoppedRef.current) return
 
     if (confirmedStore) {
-      setActiveStore(confirmedStore)
+      storeContext.setActiveStore(confirmedStore)
       setStores((prev) => [confirmedStore!, ...prev.filter((item) => item.id !== confirmedStore!.id && item.slug !== confirmedStore!.slug)])
     }
 
@@ -2832,7 +2973,14 @@ const handleAgentAttach = async (f: File) => {
     credits,
     onUpgrade: () => setTab('billing'),
     tab,
-    setTab,
+    setTab: (next) => {
+      if (next === 'home' && !sending && !buildId) {
+        setCoreWorkspaceOpened(false)
+        setProjectSessionActive(false)
+        setResumeProjectAvailable(false)
+      }
+      setTab(next)
+    },
     onSignOut: signOut,
     onNewStore: newStore,
     open: sidebarOpen,
@@ -2853,7 +3001,7 @@ const handleAgentAttach = async (f: File) => {
       galleryTitle: '',
     })
   }, [buildId])
-  const showAgentHome = msgs.length === 0 && !sending && !buildId && !resumeProjectAvailable
+  const showAgentHome = !projectSessionActive && !sending && !buildId && !resumeProjectAvailable
   const chatTitle = conversations.find((item) => item.id === convId)?.title
     || msgs.find((item) => item.role === 'user')?.content?.slice(0, 48)
     || activeStore?.name
@@ -3069,6 +3217,7 @@ const handleAgentAttach = async (f: File) => {
             coreFiles={coreFiles}
             onRemoveCoreFile={(name) => setCoreFiles((current) => { const index = current.findIndex((file) => file.name === name); return index < 0 ? current : current.filter((_, fileIndex) => fileIndex !== index) })}
             stores={stores}
+            storesLoading={storesLoading}
             sidebarOpen={sidebarOpen}
             onToggleSidebar={() => setSidebarOpen((p) => !p)}
             onMenu={() => setMobileSidebar(true)}
@@ -3076,6 +3225,16 @@ const handleAgentAttach = async (f: File) => {
             showUpgrade={user?.plan !== 'premium'}
             activeStore={activeStore}
             onOpenStore={openStoreProject}
+            onStoreSnapshotSaved={(storeId, coreAppId, url) => setStores((current) => current.map((store) => {
+              if (store.id !== storeId) return store
+              return {
+                ...store,
+                heroSnapshotUrl: url,
+                apps: store.apps?.map((app) => app.coreAppId === coreAppId
+                  ? { ...app, heroSnapshotUrl: url }
+                  : app),
+              }
+            }))}
             onSeeAllStores={() => setTab('store')}
             onAttach={handleAgentAttach}
             builderMode={builderMode}
@@ -3202,7 +3361,7 @@ const handleAgentAttach = async (f: File) => {
                     if (message.role === 'user') {
                       return (
                         <UserPromptBubble
-                          key={`${message.createdAt ?? index}`}
+                          key={`${message.createdAt ?? 'user'}-${index}-user`}
                           content={message.content}
                           attachments={message.attachments}
                           createdAt={message.createdAt}
@@ -3212,7 +3371,7 @@ const handleAgentAttach = async (f: File) => {
                     }
                     const isLatestAssistant = index === msgs.map((item) => item.role).lastIndexOf('assistant')
                     return (
-                      <div key={`${message.createdAt ?? index}-assistant`} className="w-full min-w-0 max-w-[680px]">
+                      <div key={`${message.createdAt ?? 'assistant'}-${index}-assistant`} className="w-full min-w-0 max-w-[680px]">
                         <AgentReply
                           content={message.content}
                           streamingPreview={isLatestAssistant && coreStreamingPreview ? coreStreamingPreview : undefined}
@@ -3498,7 +3657,7 @@ function NotificationBell({ activeStore, tone = 'dark' }: { activeStore: StoreDa
     let cancelled = false
     let loading = false
     const load = async () => {
-      if (cancelled || loading || !tenantId || !getToken() || document.visibilityState !== 'visible') return
+      if (cancelled || loading || !getToken() || document.visibilityState !== 'visible') return
       loading = true
       try {
         const path = `/api/v5/notifications${tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : ''}`
@@ -3974,7 +4133,13 @@ function storeCover(store: StoreData) {
     ? visuals.map((visual) => visual && typeof visual === 'object' ? (visual as { url?: unknown }).url : null).find((url): url is string => typeof url === 'string' && Boolean(imageUrl(url)))
     : undefined
   const productImage = store.products?.flatMap((product) => product.images ?? []).find((image) => imageUrl(image?.url))?.url
-  return imageUrl(visualImage) || imageUrl(store.canonical?.heroImageUrl) || imageUrl(productImage) || imageUrl(store.heroSource) || imageUrl(store.canonical?.logoUrl)
+  const snapshot = store.dashboardApp?.heroSnapshotUrl || store.heroSnapshotUrl
+  return imageUrl(snapshot)
+    || imageUrl(store.canonical?.heroImageUrl)
+    || imageUrl(store.heroSource)
+    || imageUrl(visualImage)
+    || imageUrl(productImage)
+    || imageUrl(store.canonical?.logoUrl)
 }
 
 function storeStatusLabel(store: StoreData) {
@@ -3990,10 +4155,19 @@ function storeStatusLabel(store: StoreData) {
   return 'Pending'
 }
 
-function ProjectCardPreview({ store, cover }: { store: StoreData; cover: string }) {
+function ProjectCardPreview({ store, cover, onSnapshotSaved }: {
+  store: StoreData
+  cover: string
+  onSnapshotSaved: (storeId: string, coreAppId: number, url: string) => void
+}) {
   const [previewReady, setPreviewReady] = useState(false)
   const [previewSrc, setPreviewSrc] = useState('')
+  const [snapshotLoaded, setSnapshotLoaded] = useState(false)
+  const [snapshotFailed, setSnapshotFailed] = useState(false)
+  const snapshotCaptureRequested = useRef(false)
+  const previewFrameRef = useRef<HTMLIFrameElement | null>(null)
   const { session, refreshSession } = useWorkspace()
+  const hasPersistedSnapshot = Boolean(imageUrl(store.dashboardApp?.heroSnapshotUrl || store.heroSnapshotUrl))
   const blueprint = store.dashboardApp?.blueprint
   const primaryColor = typeof blueprint?.primaryColor === 'string' && /^#[\da-f]{3,8}$/i.test(blueprint.primaryColor)
     ? blueprint.primaryColor
@@ -4003,9 +4177,47 @@ function ProjectCardPreview({ store, cover }: { store: StoreData; cover: string 
   const summary = projectPrompt || direction || `A first look at ${store.name}.`
 
   useEffect(() => {
+    setSnapshotLoaded(false)
+    setSnapshotFailed(false)
+    snapshotCaptureRequested.current = false
+  }, [cover])
+
+  useEffect(() => {
+    snapshotCaptureRequested.current = false
+  }, [store.id, store.dashboardApp?.coreAppId])
+
+  useEffect(() => {
+    if (!previewReady || !previewSrc || hasPersistedSnapshot || snapshotCaptureRequested.current) return
+    snapshotCaptureRequested.current = true
+    const requestId = crypto.randomUUID()
+    const origin = new URL(previewSrc).origin
+    const handleScreenshot = async (event: MessageEvent) => {
+      const data = event.data as { type?: string; requestId?: string; success?: boolean; dataUrl?: string }
+      if (event.origin !== origin || event.source !== previewFrameRef.current?.contentWindow) return
+      if (data?.type !== 'dyad-screenshot-response' || data.requestId !== requestId) return
+      window.removeEventListener('message', handleScreenshot)
+      if (!data.success || typeof data.dataUrl !== 'string' || !data.dataUrl.startsWith('data:image/')) return
+      if (!store.id) return
+      const { data: saved, error } = await apiFetch<{ url: string }>(`/api/v5/seltra/store/${encodeURIComponent(store.id)}/hero-snapshot`, {
+        method: 'POST',
+        body: JSON.stringify({ snapshotUrl: data.dataUrl, coreAppId: store.dashboardApp?.coreAppId }),
+      })
+      if (error || !saved?.url || !store.dashboardApp?.coreAppId) {
+        console.error('[dashboard] Could not persist the project preview snapshot.', error || 'Missing snapshot URL or app ID.')
+        return
+      }
+      onSnapshotSaved(store.id, store.dashboardApp.coreAppId, saved.url)
+    }
+    window.addEventListener('message', handleScreenshot)
+    previewFrameRef.current?.contentWindow?.postMessage({ type: 'dyad-take-screenshot', requestId }, origin)
+    window.setTimeout(() => window.removeEventListener('message', handleScreenshot), 15_000)
+    return () => window.removeEventListener('message', handleScreenshot)
+  }, [previewReady, previewSrc, hasPersistedSnapshot, store.id, store.dashboardApp?.coreAppId, onSnapshotSaved])
+
+  useEffect(() => {
     let cancelled = false
     const rawPreviewUrl = store.dashboardApp?.previewUrl
-    if (!rawPreviewUrl) {
+    if (!rawPreviewUrl || (hasPersistedSnapshot && !snapshotFailed)) {
       setPreviewSrc('')
       return
     }
@@ -4041,12 +4253,28 @@ function ProjectCardPreview({ store, cover }: { store: StoreData; cover: string 
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [store.dashboardApp?.coreAppId, store.dashboardApp?.previewUrl, session?.expiresIn, refreshSession])
+  }, [store.dashboardApp?.coreAppId, store.dashboardApp?.previewUrl, session?.expiresIn, refreshSession, hasPersistedSnapshot, snapshotFailed])
 
   return (
     <div className="absolute inset-0 overflow-hidden bg-[#101916]">
       {cover ? (
-        <img src={cover} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        <>
+          {!snapshotLoaded && !snapshotFailed && (
+            <div className="absolute inset-0 animate-pulse bg-[linear-gradient(110deg,#101916_8%,#1b2921_18%,#101916_33%)] bg-[length:200%_100%]" />
+          )}
+          {!snapshotFailed && (
+            <img
+              src={cover}
+              alt=""
+              onLoad={() => setSnapshotLoaded(true)}
+              onError={() => setSnapshotFailed(true)}
+              className={`absolute inset-0 h-full w-full object-cover transition-opacity ${snapshotLoaded ? 'opacity-100' : 'opacity-0'}`}
+            />
+          )}
+          {snapshotFailed && (
+            <div className="absolute inset-0" style={{ background: `linear-gradient(145deg, ${primaryColor}55, #101916 68%)` }} />
+          )}
+        </>
       ) : (
         <div className="absolute inset-0 p-4" style={{ background: `linear-gradient(145deg, ${primaryColor}55, #101916 68%)` }}>
           <div className="flex items-center justify-between border-b border-white/20 pb-2 text-[9px] font-semibold text-white/90">
@@ -4061,16 +4289,17 @@ function ProjectCardPreview({ store, cover }: { store: StoreData; cover: string 
           </div>
         </div>
       )}
-      {previewSrc && (
+      {previewSrc && (!cover || snapshotFailed) && (
         <iframe
+          ref={previewFrameRef}
           src={previewSrc}
           title={`${store.name} project preview`}
-          sandbox="allow-scripts"
+          sandbox="allow-same-origin allow-scripts"
           tabIndex={-1}
           aria-hidden="true"
           onLoad={() => setPreviewReady(true)}
           onError={() => setPreviewReady(false)}
-          className={`pointer-events-none absolute left-0 top-0 h-[400%] w-[400%] origin-top-left border-0 transition-opacity ${previewReady ? 'opacity-100' : 'opacity-0'}`}
+          className="pointer-events-none absolute left-0 top-0 h-[400%] w-[400%] origin-top-left border-0 opacity-0"
           style={{ transform: 'scale(0.25)' }}
         />
       )}
@@ -4082,7 +4311,7 @@ function ProjectCardPreview({ store, cover }: { store: StoreData; cover: string 
 function EmptyState({
   input, setInput, send, sending, name, userId, merchantProfile, onAttach, pendingAttachment, onClearAttachment, coreFiles = [], onRemoveCoreFile,
   builderMode = 'build', onBuilderModeChange, onOpenCoreComposer,
-  stores, sidebarOpen, onToggleSidebar, onMenu, onUpgrade, showUpgrade, activeStore, onOpenStore, onSeeAllStores,
+  stores, storesLoading = false, sidebarOpen, onToggleSidebar, onMenu, onUpgrade, showUpgrade, activeStore, onOpenStore, onStoreSnapshotSaved, onSeeAllStores,
   announcementVisible, onDismissAnnouncement,
 }: {
   input: string; setInput: (v: string) => void; send: () => void
@@ -4094,6 +4323,7 @@ function EmptyState({
   builderMode?: 'build' | 'plan' | 'chat'; onBuilderModeChange?: (mode: 'build' | 'plan' | 'chat') => void
   onOpenCoreComposer?: (option?: 'files' | 'figma') => void
   stores: StoreData[]
+  storesLoading?: boolean
   sidebarOpen: boolean
   onToggleSidebar: () => void
   onMenu: () => void
@@ -4101,6 +4331,7 @@ function EmptyState({
   showUpgrade: boolean
   activeStore: StoreData | null
   onOpenStore: (store: StoreData) => void
+  onStoreSnapshotSaved: (storeId: string, coreAppId: number, url: string) => void
   onSeeAllStores: () => void
   announcementVisible?: boolean
   onDismissAnnouncement?: () => void
@@ -4178,6 +4409,7 @@ function EmptyState({
     el.style.height = '22px'
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 22), 160)}px`
   }, [input])
+  const preferredStoreId = activeStore?.id || activeStore?.slug || readPreferredStoreId()
   const projectCards = stores.flatMap((store) => store.apps?.length
     ? store.apps.map((app) => {
         const blueprintName = typeof app.blueprint?.appName === 'string' ? app.blueprint.appName.trim() : ''
@@ -4185,7 +4417,11 @@ function EmptyState({
         const name = (!appName || /^seltra app$|^app \d+$/i.test(appName)) && blueprintName ? blueprintName : appName || store.name
         return { ...store, name, updatedAt: app.updatedAt, dashboardApp: app }
       })
-    : [store])
+    : [store]).sort((a, b) => {
+      const aPreferred = a.id === preferredStoreId || a.slug === preferredStoreId
+      const bPreferred = b.id === preferredStoreId || b.slug === preferredStoreId
+      return Number(bPreferred) - Number(aPreferred)
+    })
   const filtered = projectCards.filter((store) => store.name.toLowerCase().includes(query.trim().toLowerCase()))
   const viewed = recentIds
     .map((id) => filtered.find((store) => store.id === id || store.slug === id))
@@ -4339,10 +4575,10 @@ function EmptyState({
 
         <div className="relative z-20 flex w-full flex-col items-center px-4 pt-[20vh] sm:px-6">
           <div className="flex w-full max-w-[640px] flex-col items-center">
-            <div className="flex w-full items-center justify-center gap-2.5 sm:gap-3">
-              <img src="/assets/brand/mark.png" alt="" className="h-7 w-7 flex-shrink-0 object-contain sm:h-8 sm:w-8" />
-              <h1 className="flex min-h-8 min-w-0 flex-1 items-center justify-center overflow-hidden whitespace-nowrap text-center text-[clamp(0.8rem,3.6vw,1.375rem)] font-semibold leading-tight tracking-[-0.03em] text-neutral-950 sm:min-h-9 sm:text-[1.75rem] lg:text-[2rem]">
-                <span key={greeting} className={greetingContext ? 'greeting-fade-in block max-w-full truncate' : 'block max-w-full truncate'}>
+            <div className="inline-flex max-w-full items-center justify-center gap-3 text-center">
+              <img src="/assets/brand/mark.png" alt="" className="h-7 w-7 flex-none object-contain sm:h-8 sm:w-8" />
+              <h1 className="flex min-w-0 items-center justify-center text-balance text-center text-[clamp(1.25rem,2.1vw,1.75rem)] font-semibold leading-tight tracking-[-0.02em] text-neutral-950 whitespace-normal sm:whitespace-nowrap">
+                <span key={greeting} className={greetingContext ? 'greeting-fade-in min-w-0' : 'min-w-0'}>
                   {greeting}
                 </span>
               </h1>
@@ -4402,7 +4638,14 @@ function EmptyState({
 
       {/* Block 2 — dark panel; only ~85px peeks on first load */}
       <div className="relative z-10 mt-0 w-full px-4 pb-8 sm:-mt-20 sm:px-12">
-        {stores.length === 0 ? (
+        {storesLoading ? (
+          <section className="rounded-[32px] bg-[#161817] px-4 py-5 text-white sm:px-6 sm:py-6" aria-label="Loading stores">
+            <div className="h-4 w-28 animate-pulse rounded bg-white/10" />
+            <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {[0, 1, 2].map((item) => <div key={item} className="overflow-hidden rounded-2xl bg-[#242624]"><div className="h-36 animate-pulse bg-white/[0.06] sm:h-[168px]" /><div className="px-3.5 py-3"><div className="h-4 w-32 animate-pulse rounded bg-white/10" /><div className="mt-2 h-3 w-24 animate-pulse rounded bg-white/[0.06]" /></div></div>)}
+            </div>
+          </section>
+        ) : stores.length === 0 ? (
           <section className="rounded-[32px] bg-[#161817] px-4 py-5 text-white sm:px-6 sm:py-6">
             <h2 className="px-1 text-base font-semibold">Getting started</h2>
             <div className="mt-4 grid gap-3 md:grid-cols-2 md:gap-4">
@@ -4456,7 +4699,7 @@ function EmptyState({
                   return (
                     <button key={store.dashboardApp ? `${store.id}:${store.dashboardApp.coreAppId}` : store.id ?? store.slug} type="button" onClick={() => onOpenStore(store)} className="overflow-hidden rounded-2xl bg-[#242624] text-left transition-colors hover:bg-[#2c2e2c]">
                       <div className="relative h-36 bg-[#101211] sm:h-[168px]">
-                        {store.dashboardApp ? <ProjectCardPreview store={store} cover={cover} /> : cover ? (
+                        {store.dashboardApp ? <ProjectCardPreview store={store} cover={cover} onSnapshotSaved={onStoreSnapshotSaved} /> : cover ? (
                           <img src={cover} alt="" className="h-full w-full object-cover" />
                         ) : (
                           <div className="flex h-full items-end bg-[radial-gradient(circle_at_30%_20%,rgba(74,222,128,0.35),transparent_55%),linear-gradient(160deg,#10241a,#1a1c1b)] p-4">
