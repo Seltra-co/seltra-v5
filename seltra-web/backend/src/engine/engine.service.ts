@@ -1,11 +1,12 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
 import { HttpException } from '@nestjs/common'
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { prisma } from '../db'
 import { creditCost, type ModelRole } from '../ai/model-router'
 import { mirrorWorkspaceCredit } from '../credits/workspace_credit_mirror'
+import { hashEngineApiKey } from './engine-key'
 
 // Credit reservations can contend with account-level usage writes. Keep the
 // transaction atomic while allowing transient Neon latency beyond Prisma's
@@ -50,6 +51,8 @@ export class SeltraEngineService implements OnModuleInit {
 
   private validateConfig() {
     if (this.salt.length < 32) throw new Error('SELTRA_ENGINE_API_KEY_HASH_SALT must contain at least 32 characters.')
+    const encryptionSecret = process.env.ENGINE_KEY_ENCRYPTION_SECRET
+    if (!encryptionSecret || Buffer.byteLength(encryptionSecret, 'utf8') < 32) throw new Error('ENGINE_KEY_ENCRYPTION_SECRET must contain at least 32 bytes.')
     if (!Number.isInteger(this.maxImages) || this.maxImages < 1 || this.maxImages > 8) throw new Error('SELTRA_ENGINE_MAX_IMAGES_PER_REQUEST must be an integer from 1 to 8.')
     if (!Number.isInteger(this.timeoutMs) || this.timeoutMs < 1000 || this.timeoutMs > 180_000) throw new Error('SELTRA_ENGINE_UPSTREAM_TIMEOUT_MS must be from 1000 to 180000.')
     if (!Number.isInteger(Number(process.env.SELTRA_ENGINE_RATE_LIMIT_PER_MINUTE ?? 60))) throw new Error('SELTRA_ENGINE_RATE_LIMIT_PER_MINUTE must be an integer.')
@@ -69,22 +72,24 @@ export class SeltraEngineService implements OnModuleInit {
     if (bootstrap && !/^sk_seltra_[A-Za-z0-9_-]{40,}$/.test(bootstrap)) throw new Error('SELTRA_ENGINE_BOOTSTRAP_KEY must be a generated sk_seltra_ key.')
   }
 
-  private hashKey(key: string) { return createHash('sha256').update(this.salt).update(':').update(key).digest('hex') }
+  private hashKey(key: string) { return hashEngineApiKey(key, this.salt) }
 
   async authenticate(header?: string, creditIdentityToken?: string): Promise<KeyIdentity | null> {
     if (!header?.startsWith('Bearer ')) return null
     const key = header.slice(7).trim()
     if (!/^sk_seltra_[A-Za-z0-9_-]{40,}$/.test(key)) return null
     const digest = Buffer.from(this.hashKey(key), 'hex')
-    const candidates = await prisma.seltraEngineApiKey.findMany({ where: { revokedAt: null }, select: { id: true, workspaceId: true, keyHash: true } })
+    const creditIdentity = this.verifyCreditIdentity(creditIdentityToken)
+    const candidates = await prisma.seltraEngineApiKey.findMany({ where: { revokedAt: null }, select: { id: true, workspaceId: true, tenantId: true, keyHash: true } })
     let match: KeyIdentity | null = null
     for (const candidate of candidates) {
       const stored = Buffer.from(candidate.keyHash, 'hex')
       const equal = stored.length === digest.length && timingSafeEqual(stored, digest)
-      if (equal) match = { id: candidate.id, workspaceId: candidate.workspaceId }
+      if (equal && (!candidate.tenantId || !creditIdentity || candidate.tenantId === creditIdentity.tenantId)) {
+        match = { id: candidate.id, workspaceId: candidate.workspaceId, ...(candidate.tenantId ? { tenantId: candidate.tenantId } : {}) }
+      }
     }
     if (match) await prisma.seltraEngineApiKey.update({ where: { id: match.id }, data: { lastUsedAt: new Date() } })
-    const creditIdentity = this.verifyCreditIdentity(creditIdentityToken)
     return match && creditIdentity ? { ...match, userId: creditIdentity.userId, tenantId: creditIdentity.tenantId } : match
   }
 
@@ -143,11 +148,11 @@ export class SeltraEngineService implements OnModuleInit {
       let storageRef = `${id}.${extension}`
       if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
         const { uploadImageBuffer } = await import('../store/cloudinary.service')
-        storageRef = (await uploadImageBuffer(image, mime, `engine/${identity.workspaceId}/${id}`)).secure_url
+        storageRef = (await uploadImageBuffer(image, mime, `engine/${identity.tenantId ?? identity.workspaceId}/${id}`)).secure_url
       } else {
         await writeFile(join(this.storageDir, `${id}.${extension}`), bytes, { flag: 'wx' })
       }
-      await prisma.seltraEngineAsset.create({ data: { id, keyId: identity.id, workspaceId: reservation.userId, prompt: prompt.trim(), model, mimeType: mime, sizeBytes: bytes.length, storageRef } })
+      await prisma.seltraEngineAsset.create({ data: { id, keyId: identity.id, workspaceId: identity.workspaceId, prompt: prompt.trim(), model, mimeType: mime, sizeBytes: bytes.length, storageRef } })
       data.push({ b64_json: image, revised_prompt: prompt.trim() })
     }
     await this.commitUsage(reservation, identity, requestId, '/images/generations', 'image', 0, 0, data.length)
@@ -529,7 +534,7 @@ export class SeltraEngineService implements OnModuleInit {
       const updated = await tx.userCredit.findUniqueOrThrow({ where: { userId: reservation.userId } })
       await mirrorWorkspaceCredit(tx, updated)
       await tx.userCreditLedger.create({ data: { userId: reservation.userId, projectId: reservation.tenantId, kind: 'seltra_engine_usage', delta: adjustment, balanceAfter: updated.balance, modelRole, tokensIn, tokensOut, meta: { route, requestId, images, reservationId: reservation.id, settledCost: costUnits, engineWorkspaceId: identity.workspaceId } } })
-      await tx.seltraEngineUsage.create({ data: { keyId: identity.id, workspaceId: reservation.userId, route, modelRole: role, tokensIn, tokensOut, images, costUnits, requestId } })
+      await tx.seltraEngineUsage.create({ data: { keyId: identity.id, workspaceId: identity.workspaceId, route, modelRole: role, tokensIn, tokensOut, images, costUnits, requestId } })
     }, CREDIT_TRANSACTION_OPTIONS)
     this.logger.log(JSON.stringify({ event: 'usage_committed', requestId, keyId: identity.id, userId: reservation.userId, projectId: reservation.tenantId, route, modelRole, tokensIn, tokensOut, images, creditDelta: -costUnits, reservationId: reservation.id }))
   }

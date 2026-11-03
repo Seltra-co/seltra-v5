@@ -37,6 +37,7 @@ describe("single-attempt subscription usage", () => {
     mocks.key = "test-dyad-key";
     mocks.proEnabled = true;
     mocks.warn.mockClear();
+    vi.stubEnv("SELTRA_ENGINE_URL", "http://localhost:3001/v1");
     mocks.directory = fs.mkdtempSync(
       path.join(os.tmpdir(), "dyad-usage-test-"),
     );
@@ -47,6 +48,7 @@ describe("single-attempt subscription usage", () => {
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     fs.rmSync(mocks.directory, { recursive: true, force: true });
   });
   it("keeps explicitly free requests free after Pro is enabled", async () => {
@@ -232,6 +234,8 @@ it("reports mixed-model buckets once under the captured account without rechecki
   const { checkSubscriptionCredits } =
     await import("./codex_subscription_credit_check");
   vi.mocked(checkSubscriptionCredits).mockClear();
+  vi.stubEnv("DYAD_WEB_RUNTIME", "1");
+  vi.stubEnv("SELTRA_ENGINE_API_KEY", "sk_seltra_workspace-scoped-test-key");
   const send = vi.fn(async () => Response.json({}));
   vi.stubGlobal("fetch", send);
   try {
@@ -258,10 +262,11 @@ it("reports mixed-model buckets once under the captured account without rechecki
     ]);
     for (const [, init] of requests)
       expect(init.headers).toMatchObject({
-        Authorization: "Bearer accepted-test-key",
+        Authorization: "Bearer sk_seltra_workspace-scoped-test-key",
       });
     expect(reports.every((report) => report.totalTokens === 150)).toBe(true);
   } finally {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   }
 });

@@ -15,6 +15,7 @@ let warnedLegacyKey = false;
 function getSeltraEngineApiKey(settings = readSettings()): string | undefined {
   const seltraKey = process.env.SELTRA_ENGINE_API_KEY?.trim();
   if (seltraKey) return seltraKey;
+  if (process.env.DYAD_WEB_RUNTIME === "1") return undefined;
   const configuredKey = settings.seltraEngineApiKey?.value;
   if (configuredKey) return configuredKey;
   if (process.env.SELTRA_ENGINE_URL) return undefined;

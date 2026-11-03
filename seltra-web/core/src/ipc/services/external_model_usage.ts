@@ -112,6 +112,13 @@ export async function finishExternalModelUsageBatch(
   const request = active.get(id);
   if (!request) return;
   active.delete(id);
+  const engineApiKey = process.env.DYAD_WEB_RUNTIME === "1"
+    ? process.env.SELTRA_ENGINE_API_KEY?.trim()
+    : request.key;
+  if (!engineApiKey) {
+    logger.warn("Workspace Seltra Engine key is unavailable; usage report was not sent", { id });
+    return;
+  }
   await Promise.all(
     models.map(async ({ model, usage }, index) => {
       const reportId = index === 0 ? id : randomUUID();
@@ -125,7 +132,13 @@ export async function finishExternalModelUsageBatch(
             signal: AbortSignal.timeout(15_000),
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${request.key}`,
+              Authorization: `Bearer ${engineApiKey}`,
+              ...(process.env.SELTRA_ENGINE_CREDIT_IDENTITY?.trim()
+                ? {
+                    "x-seltra-credit-identity":
+                      process.env.SELTRA_ENGINE_CREDIT_IDENTITY.trim(),
+                  }
+                : {}),
             },
             body: JSON.stringify({
               version: 1,

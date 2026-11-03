@@ -20,14 +20,22 @@ const usage = {
   outputTokens: { total: 50, text: 30, reasoning: 20 },
 };
 const finishReason = { unified: "stop" as const, raw: "stop" };
+const workspaceEngineKey = "sk_seltra_workspace-scoped-test-key";
 beforeEach(() => {
   mocks.credits.mockReset();
+  vi.stubEnv("DYAD_WEB_RUNTIME", "1");
+  vi.stubEnv("SELTRA_ENGINE_URL", "http://localhost:3001/v1");
+  vi.stubEnv("SELTRA_ENGINE_API_KEY", workspaceEngineKey);
+  vi.stubEnv("SELTRA_ENGINE_CREDIT_IDENTITY", "signed-workspace-credit-identity");
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => Response.json({ chargedUsd: 0.1 })),
   );
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 it.each(["local", "byok"] as const)(
   "reports %s generate usage without sending inference content",
   async (connection) => {
@@ -63,7 +71,10 @@ it.each(["local", "byok"] as const)(
       outputTokens: 50,
     });
     expect(String(init?.body)).not.toContain("private");
-    expect(init?.headers).toMatchObject({ Authorization: "Bearer dyad-key" });
+    expect(init?.headers).toMatchObject({
+      Authorization: `Bearer ${workspaceEngineKey}`,
+      "x-seltra-credit-identity": "signed-workspace-credit-identity",
+    });
   },
 );
 it("reports streamed usage once and uses resolved model attribution", async () => {

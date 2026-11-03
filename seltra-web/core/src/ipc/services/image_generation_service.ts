@@ -150,8 +150,9 @@ export class ImageGenerationService {
     const settings = readSettings();
     const apiKey =
       process.env.SELTRA_ENGINE_API_KEY ??
+      (process.env.DYAD_WEB_RUNTIME === "1" ? undefined :
       settings.seltraEngineApiKey?.value ??
-      (process.env.SELTRA_ENGINE_URL ? undefined : settings.providerSettings?.auto?.apiKey?.value);
+      (process.env.SELTRA_ENGINE_URL ? undefined : settings.providerSettings?.auto?.apiKey?.value));
 
     if (!apiKey) {
       throw new DyadError(

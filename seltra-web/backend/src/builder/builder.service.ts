@@ -7,6 +7,7 @@ import { resolveUserIdFromAuthorization } from '../auth/resolve-user'
 import { planLimits } from '../common/plan-limits'
 import { CreditsService } from '../credits/credits.service'
 import { creditAllowanceForPlan, nextUtcCreditReset } from '../common/credit-plan'
+import { provisionEngineKey } from '../engine/engine-key'
 
 function workspaceFileMime(filePath: string) {
   const extension = filePath.toLowerCase().split('.').pop()
@@ -115,7 +116,8 @@ export class BuilderService {
       this.redeemedTickets.set(payload.jti, (payload as typeof payload & { exp: number }).exp * 1000)
       const entitlement = await this.entitlement(payload.workspaceId)
       if (!entitlement.active) throw new ForbiddenException('Workspace access is inactive.')
-      return { workspaceId: payload.workspaceId, creditWorkspaceId: entitlement.creditWorkspaceId, userId: entitlement.userId, coreWorkspaceKey: entitlement.coreWorkspaceKey, storeSlug: entitlement.storeSlug, email: entitlement.email, plan: entitlement.plan }
+      const engineApiKey = await provisionEngineKey(payload.workspaceId)
+      return { workspaceId: payload.workspaceId, creditWorkspaceId: entitlement.creditWorkspaceId, userId: entitlement.userId, coreWorkspaceKey: entitlement.coreWorkspaceKey, storeSlug: entitlement.storeSlug, email: entitlement.email, plan: entitlement.plan, engineApiKey }
     } catch (error) {
       if (error instanceof UnauthorizedException || error instanceof ForbiddenException) throw error
       throw new UnauthorizedException('Invalid websocket ticket.')
@@ -305,13 +307,17 @@ export class BuilderService {
     if (!tenant.ownerId) return { active: false, reason: 'workspace_owner_missing' }
     const plan = tenant.owner?.plan ?? 'free'
     const account = await this.credits.ensureAccount(tenant.ownerId, plan)
+    const engineApiKey = await provisionEngineKey(tenantId)
     const used = Math.max(0, account.windowAllowance - Math.min(account.balance, account.windowAllowance))
     const exhausted = account.balance <= 0
-    return { active: tenant.status === 'active', reason: exhausted ? 'credits_exhausted' : tenant.status !== 'active' ? 'workspace_inactive' : undefined, tenantId, creditWorkspaceId: tenant.ownerId, userId: tenant.ownerId, coreWorkspaceKey: tenant.coreWorkspaceKey, storeSlug: tenant.slug, email: tenant.owner?.email ?? '', plan, credits: { used, limit: account.windowAllowance, balance: account.balance, resetsAt: nextUtcCreditReset().toISOString() } }
+    return { active: tenant.status === 'active', reason: exhausted ? 'credits_exhausted' : tenant.status !== 'active' ? 'workspace_inactive' : undefined, tenantId, creditWorkspaceId: tenant.ownerId, userId: tenant.ownerId, coreWorkspaceKey: tenant.coreWorkspaceKey, storeSlug: tenant.slug, email: tenant.owner?.email ?? '', plan, engineApiKey, credits: { used, limit: account.windowAllowance, balance: account.balance, resetsAt: nextUtcCreditReset().toISOString() } }
   }
 
   async reportUsage(input: { tenantId: string; workspaceId?: string; userId: string; runId?: string; role?: string; tokens?: number; tokensIn?: number; tokensOut?: number; ok: boolean }) {
-    const tenant = await prisma.tenant.findFirst({ where: { id: input.tenantId, ownerId: input.userId }, select: { id: true } })
+    const tenant = await prisma.tenant.findFirst({
+      where: { id: input.tenantId, ownerId: input.userId },
+      select: { id: true, ownerId: true, creditWorkspaceId: true, coreWorkspaceKey: true },
+    })
     if (!tenant) throw new UnauthorizedException('Workspace ownership could not be verified.')
     // Meter actual model usage in weighted tokens. The account owns the budget,
     // so every project draws from the same user balance.
@@ -319,7 +325,13 @@ export class BuilderService {
       const role = input.role && ['reasoning', 'default', 'fast', 'vision', 'image'].includes(input.role)
         ? input.role as 'reasoning' | 'default' | 'fast' | 'vision' | 'image'
         : 'default'
-      if (input.workspaceId && input.workspaceId !== input.userId) {
+      const reportedWorkspaceIds = new Set([
+        tenant.id,
+        tenant.ownerId,
+        tenant.creditWorkspaceId,
+        tenant.coreWorkspaceKey,
+      ].filter((value): value is string => Boolean(value)))
+      if (input.workspaceId && !reportedWorkspaceIds.has(input.workspaceId)) {
         throw new UnauthorizedException('The reported credit account does not match the authenticated user.')
       }
       await this.credits.commitUsage({

@@ -101,6 +101,7 @@ model Tenant {
   marketingMessages     MarketingMessage[]
   marketingTemplates    MarketingTemplate[]
   apps                  TenantApp[]
+  seltraEngineApiKeys   SeltraEngineApiKey[]
 
   aiCreditsUsed        Int      @default(0)
   aiCreditsWindowStart DateTime @default(now())
@@ -119,24 +120,24 @@ model Tenant {
 }
 
 model TenantApp {
-  id            String   @id @default(uuid())
-  tenantId      String
-  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  coreAppId     Int
-  corePath      String?
-  name          String
-  status        String   @default("draft")
-  previewUrl    String?
-  publishedUrl  String?
-  lastCommitSha String?
-  version       Int      @default(0)
-  blueprint     Json?
-  appManifest   Json?
+  id                    String    @id @default(uuid())
+  tenantId              String
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  coreAppId             Int
+  corePath              String?
+  name                  String
+  status                String    @default("draft")
+  previewUrl            String?
+  publishedUrl          String?
+  lastCommitSha         String?
+  version               Int       @default(0)
+  blueprint             Json?
+  appManifest           Json?
   heroSnapshotUrl       String?
   heroSnapshotUpdatedAt DateTime?
-  blueprintApprovedAt DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  blueprintApprovedAt   DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   @@unique([tenantId, coreAppId])
   @@index([tenantId])
@@ -668,16 +669,16 @@ model ProjectSnapshot {
 }
 
 model WorkspaceCredit {
-  workspaceId     String         @id
-  balance         Int            @default(0)
-  lifetimeGranted Int            @default(0)
-  lifetimeUsed    Int            @default(0)
-  windowStartedAt DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  ledger          CreditLedger[]
-  tenants         Tenant[]
-  seltraEngineKeys SeltraEngineApiKey[]
-  seltraEngineUsage SeltraEngineUsage[]
+  workspaceId        String               @id
+  balance            Int                  @default(0)
+  lifetimeGranted    Int                  @default(0)
+  lifetimeUsed       Int                  @default(0)
+  windowStartedAt    DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  ledger             CreditLedger[]
+  tenants            Tenant[]
+  seltraEngineKeys   SeltraEngineApiKey[]
+  seltraEngineUsage  SeltraEngineUsage[]
   seltraEngineAssets SeltraEngineAsset[]
 
   @@map("workspace_credits")
@@ -704,15 +705,15 @@ model CreditLedger {
 }
 
 model UserCredit {
-  userId          String            @id
-  balance         Int               @default(0)
-  lifetimeGranted Int               @default(0)
-  lifetimeUsed    Int               @default(0)
-  windowStartedAt DateTime          @default(now())
-  windowAllowance Int               @default(0)
-  plan            String            @default("free")
-  updatedAt       DateTime          @updatedAt
-  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String             @id
+  balance         Int                @default(0)
+  lifetimeGranted Int                @default(0)
+  lifetimeUsed    Int                @default(0)
+  windowStartedAt DateTime           @default(now())
+  windowAllowance Int                @default(0)
+  plan            String             @default("free")
+  updatedAt       DateTime           @updatedAt
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   ledger          UserCreditLedger[]
 
   @@map("user_credits")
@@ -761,35 +762,39 @@ model ProjectAsset {
 }
 
 model SeltraEngineApiKey {
-  id          String    @id @default(uuid())
-  workspaceId String
-  label       String
-  keyHash     String    @unique
-  revokedAt   DateTime?
-  lastUsedAt  DateTime?
-  createdAt   DateTime  @default(now())
-  workspace   WorkspaceCredit @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
-  usage       SeltraEngineUsage[]
-  assets      SeltraEngineAsset[]
+  id           String              @id @default(uuid())
+  workspaceId  String
+  tenantId     String?
+  label        String
+  keyHash      String              @unique
+  encryptedKey String?
+  revokedAt    DateTime?
+  lastUsedAt   DateTime?
+  createdAt    DateTime            @default(now())
+  workspace    WorkspaceCredit     @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  tenant       Tenant?             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  usage        SeltraEngineUsage[]
+  assets       SeltraEngineAsset[]
 
   @@index([workspaceId, revokedAt])
+  @@index([tenantId, revokedAt])
   @@map("seltra_engine_api_keys")
 }
 
 model SeltraEngineUsage {
-  id          String   @id @default(uuid())
+  id          String             @id @default(uuid())
   keyId       String
   workspaceId String
   route       String
   modelRole   String
-  tokensIn    Int      @default(0)
-  tokensOut   Int      @default(0)
-  images      Int      @default(0)
-  costUnits   Int      @default(0)
+  tokensIn    Int                @default(0)
+  tokensOut   Int                @default(0)
+  images      Int                @default(0)
+  costUnits   Int                @default(0)
   requestId   String
-  createdAt   DateTime @default(now())
+  createdAt   DateTime           @default(now())
   key         SeltraEngineApiKey @relation(fields: [keyId], references: [id], onDelete: Cascade)
-  workspace   WorkspaceCredit @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  workspace   WorkspaceCredit    @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
 
   @@index([workspaceId, createdAt])
   @@index([keyId, createdAt])
@@ -798,7 +803,7 @@ model SeltraEngineUsage {
 }
 
 model SeltraEngineAsset {
-  id          String   @id @default(uuid())
+  id          String             @id @default(uuid())
   keyId       String
   workspaceId String
   prompt      String
@@ -806,9 +811,9 @@ model SeltraEngineAsset {
   mimeType    String
   sizeBytes   Int
   storageRef  String
-  createdAt   DateTime @default(now())
+  createdAt   DateTime           @default(now())
   key         SeltraEngineApiKey @relation(fields: [keyId], references: [id], onDelete: Cascade)
-  workspace   WorkspaceCredit @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
+  workspace   WorkspaceCredit    @relation(fields: [workspaceId], references: [workspaceId], onDelete: Cascade)
 
   @@index([workspaceId, createdAt])
   @@map("seltra_engine_assets")

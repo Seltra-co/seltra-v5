@@ -272,9 +272,12 @@ export async function getModelClient(
   const legacyDyadApiKey = settings.enableDyadPro && !process.env.SELTRA_ENGINE_URL
     ? settings.providerSettings?.auto?.apiKey?.value
     : undefined;
+  const workspaceRuntime = process.env.DYAD_WEB_RUNTIME === "1";
   const dyadApiKey = seltraEngineApiKey
     ? getProviderApiKeyForRequest(seltraEngineApiKey, "Seltra Engine")
-    : settings.seltraEngineApiKey?.value
+    : workspaceRuntime
+      ? undefined
+      : settings.seltraEngineApiKey?.value
       ? getProviderApiKeyForRequest(settings.seltraEngineApiKey.value, "Seltra Engine")
     : legacyDyadApiKey
       ? getProviderApiKeyForRequest(legacyDyadApiKey, "Seltra Engine")

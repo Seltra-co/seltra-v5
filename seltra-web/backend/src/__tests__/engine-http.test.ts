@@ -12,6 +12,7 @@ const engineMock = {
   generateImages: jest.fn(async () => ({ created: 1, data: [{ b64_json: 'abc' }] })),
   assetFile: jest.fn(async () => null),
 }
+const workspaceEngineKey = `sk_seltra_${Buffer.alloc(32, 4).toString('base64url')}`
 
 @Module({
   controllers: [SeltraEngineController],
@@ -31,6 +32,11 @@ describe('Seltra Engine HTTP contract', () => {
     baseUrl = `http://127.0.0.1:${address.port}`
   })
   afterAll(async () => app.close())
+  afterEach(() => {
+    engineMock.authenticate.mockImplementation(async (header?: string) =>
+      header?.startsWith('Bearer ') ? { id: 'key-1', workspaceId: 'workspace-1' } : null,
+    )
+  })
 
   it('serves unauthenticated health and echoes a request id', async () => {
     const response = await fetch(`${baseUrl}/v1/health`, { headers: { 'X-Request-ID': 'health-1' } })
@@ -46,6 +52,21 @@ describe('Seltra Engine HTTP contract', () => {
     const unsupported = await fetch(`${baseUrl}/v1/tools/web-search`, { method: 'POST', headers: { Authorization: 'Bearer valid-key', 'Content-Type': 'application/json' }, body: JSON.stringify({ query: 'test' }) })
     expect(unsupported.status).toBe(501)
     expect((await unsupported.json() as any).error.code).toBe('not_implemented')
+  })
+
+  it('accepts a workspace Engine key for image generation and returns the OpenAI image response', async () => {
+    engineMock.authenticate.mockImplementation(async (header?: string) =>
+      header === `Bearer ${workspaceEngineKey}` ? { id: 'key-tenant-1', workspaceId: 'user-1', tenantId: 'tenant-1', userId: 'user-1' } : null,
+    )
+    const response = await fetch(`${baseUrl}/v1/images/generations`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${workspaceEngineKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: 'A green glass bottle' }),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: [{ b64_json: 'abc' }] })
+    expect(engineMock.generateImages).toHaveBeenCalled()
+    engineMock.authenticate.mockImplementation(async (header?: string) => header === '******' ? { id: 'key-1', workspaceId: 'workspace-1' } : null)
   })
 
   it('returns JSON completions or OpenAI-compatible SSE for streaming callers', async () => {

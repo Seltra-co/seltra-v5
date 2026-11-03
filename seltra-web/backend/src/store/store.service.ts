@@ -13,6 +13,7 @@ import type { StoreDNA } from '../types/store-dna'
 import type { BuildContext } from './build-events.service'
 import { getStoreCreationError, planLimits } from '../common/plan-limits'
 import { CreditsService } from '../credits/credits.service'
+import { provisionEngineKey } from '../engine/engine-key'
 import * as crypto from 'crypto'
 
 type PlannerAnswers = {
@@ -307,7 +308,7 @@ export class StoreService {
     const name = coreWorkspaceTenantName(input.name, prompt)
     const baseSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'new-store'
     const slug = await this.uniqueSlug(baseSlug)
-    return prisma.tenant.create({
+    const tenant = await prisma.tenant.create({
       data: {
         ownerId,
         creditWorkspaceId: ownerId,
@@ -319,6 +320,8 @@ export class StoreService {
       },
       include: this.storeInclude(),
     })
+    await provisionEngineKey(tenant.id)
+    return tenant
   }
 
   async checkStoreCreationLimit(authorization?: string) {

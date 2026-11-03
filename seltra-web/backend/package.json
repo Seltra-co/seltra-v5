@@ -19,6 +19,7 @@
     "logs:prod-test": "node scripts/test-production-logging.mjs",
     "engine:key:create": "node scripts/engine-key.mjs create",
     "engine:key:revoke": "node scripts/engine-key.mjs revoke",
+    "engine:key:backfill": "npm run build && node scripts/backfill-engine-keys.cjs",
     "engine:test:all": "npm run engine:test && npm --prefix ../core run engine:check && npm --prefix ../core run engine:test:contracts"
   },
   "prisma": {

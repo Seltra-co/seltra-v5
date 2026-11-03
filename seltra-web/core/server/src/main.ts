@@ -563,7 +563,7 @@ async function main(): Promise<void> {
     publicApiUrl: config.SELTRA_PUBLIC_API_URL,
     env: process.env,
   });
-  const entitlementCache = new Map<string, { expiresAt: number; active: boolean; reason?: string }>();
+  const entitlementCache = new Map<string, { expiresAt: number; active: boolean; reason?: string; engineApiKey: string }>();
   const sessionOwners = new Map<string, SessionClaims>();
   const modelTokens = new Map<string, SessionClaims>();
   const eventSessions = new Set<EventSession>();
@@ -870,10 +870,12 @@ async function main(): Promise<void> {
         throw new HttpError(503, "ENTITLEMENT_UNAVAILABLE", "Seltra could not verify builder access.");
       }
       if (!response.ok) throw new HttpError(503, "ENTITLEMENT_UNAVAILABLE", "Seltra could not verify builder access.");
-      const entitlement = await response.json() as { active?: boolean; reason?: string; userId?: string; creditWorkspaceId?: string; coreWorkspaceKey?: string; storeSlug?: string };
+      const entitlement = await response.json() as { active?: boolean; reason?: string; userId?: string; creditWorkspaceId?: string; coreWorkspaceKey?: string; storeSlug?: string; engineApiKey?: string };
       if (entitlement.userId !== claims.sub || entitlement.coreWorkspaceKey !== claims.coreWorkspaceKey || entitlement.storeSlug !== claims.storeSlug)
         throw new HttpError(403, "WORKSPACE_FORBIDDEN", "Builder token does not match this workspace.");
-      result = { active: entitlement.active === true, reason: entitlement.reason, expiresAt: Date.now() + 60_000 };
+      if (typeof entitlement.engineApiKey !== "string" || !/^sk_seltra_[A-Za-z0-9_-]{40,}$/.test(entitlement.engineApiKey))
+        throw new HttpError(503, "ENGINE_KEY_UNAVAILABLE", "A workspace-scoped Seltra Engine key is unavailable.");
+      result = { active: entitlement.active === true, reason: entitlement.reason, engineApiKey: entitlement.engineApiKey, expiresAt: Date.now() + 60_000 };
       entitlementCache.set(claims.workspaceId, result);
     }
     if (result.reason === "credits_exhausted" && !allowExhausted)
@@ -881,12 +883,14 @@ async function main(): Promise<void> {
     if (!result.active) {
       throw new HttpError(403, "WORKSPACE_INACTIVE", "Builder access is not active for this workspace.");
     }
+    return { engineApiKey: result.engineApiKey };
   }
 
   async function runtimeFor(claims: Pick<SessionClaims, "sub" | "email" | "plan" | "workspaceId" | "coreWorkspaceKey" | "storeSlug">): Promise<WorkspaceRuntime> {
     let runtime: WorkspaceRuntime;
     try {
-      runtime = await supervisor.get(claims.workspaceId, claims.coreWorkspaceKey, claims.storeSlug, claims.sub);
+      const entitlement = await assertEntitlement(claims, true);
+      runtime = await supervisor.get(claims.workspaceId, claims.coreWorkspaceKey, claims.storeSlug, claims.sub, entitlement.engineApiKey);
     } catch (error) {
       const status = Number((error as { status?: number }).status) || 503;
       throw new HttpError(status, String((error as { code?: string }).code ?? "WORKSPACE_RUNTIME_UNAVAILABLE"), (error as Error).message || "Workspace runtime is unavailable.");
@@ -2186,7 +2190,7 @@ async function main(): Promise<void> {
         checkOrigin(request);
         const ticket = url.searchParams.get("ticket");
         if (!ticket || ticket.length > 4096) throw new HttpError(401, "WS_TICKET_REQUIRED", "A websocket ticket is required.");
-        let redeemed: { workspaceId?: string; creditWorkspaceId?: string; userId?: string; coreWorkspaceKey?: string; storeSlug?: string; email?: string; plan?: string };
+        let redeemed: { workspaceId?: string; creditWorkspaceId?: string; userId?: string; coreWorkspaceKey?: string; storeSlug?: string; email?: string; plan?: string; engineApiKey?: string };
         try {
           const result = await fetch(`${config.NEST_INTERNAL_URL.replace(/\/+$/, "")}/api/v5/internal/core/ws-ticket/redeem`, {
             method: "POST", headers: { "content-type": "application/json", "x-core-service-secret": config.CORE_SERVICE_SECRET },
@@ -2195,9 +2199,10 @@ async function main(): Promise<void> {
           if (!result.ok) throw new Error("ticket rejected");
           redeemed = await result.json() as typeof redeemed;
         } catch { throw new HttpError(401, "WS_TICKET_INVALID", "Websocket ticket is invalid or expired."); }
-        if (!redeemed.workspaceId || !redeemed.userId || !redeemed.coreWorkspaceKey || !redeemed.storeSlug || !redeemed.email || !redeemed.plan)
+        if (!redeemed.workspaceId || !redeemed.userId || !redeemed.coreWorkspaceKey || !redeemed.storeSlug || !redeemed.email || !redeemed.plan || typeof redeemed.engineApiKey !== "string" || !/^sk_seltra_[A-Za-z0-9_-]{40,}$/.test(redeemed.engineApiKey))
           throw new HttpError(401, "WS_TICKET_INVALID", "Websocket ticket is invalid or expired.");
         const claims: SessionClaims = { workspaceId: redeemed.workspaceId, creditWorkspaceId: redeemed.creditWorkspaceId, sub: redeemed.userId, coreWorkspaceKey: redeemed.coreWorkspaceKey, storeSlug: redeemed.storeSlug, email: redeemed.email, plan: redeemed.plan };
+        entitlementCache.set(redeemed.workspaceId, { active: true, engineApiKey: redeemed.engineApiKey, expiresAt: Date.now() + 60_000 });
         await assertEntitlement(claims, true);
         const workspaceRuntime = await runtimeFor(claims);
         url.searchParams.delete("ticket");

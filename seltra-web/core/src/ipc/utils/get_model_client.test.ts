@@ -985,7 +985,7 @@ describe("getModelClient", () => {
     expect(runtimeModel).toEqual({ provider: "auto", name: "balanced" });
   });
 
-  test("rejects Auto (balanced) without Dyad Pro instead of falling back", async () => {
+  test("rejects Auto (balanced) without a Seltra Engine key instead of falling back", async () => {
     await expect(
       getModelClient({ provider: "auto", name: "balanced" }, {
         enableDyadPro: false,
@@ -995,7 +995,7 @@ describe("getModelClient", () => {
       } as unknown as UserSettings),
     ).rejects.toMatchObject({
       message:
-        "Auto (balanced) requires Dyad Pro. Switch to another model or enable Dyad Pro.",
+        "Auto (balanced) requires a Seltra Engine key. Configure the Seltra Engine or switch to another model.",
     });
   });
 

@@ -77,8 +77,7 @@ export class SeltraEngineController {
       } else {
         receivedLen = raw.replace(/^Bearer\s+/i, '').trim().length
       }
-      const expectedLen = (process.env.SELTRA_ENGINE_BOOTSTRAP_KEY ?? '').trim().length
-      this.logger.warn(JSON.stringify({ event: 'request_rejected', requestId, route: req.path, status: 401, ip, reason, headerName, receivedLen, expectedLen }))
+      this.logger.warn(JSON.stringify({ event: 'request_rejected', requestId, route: req.path, status: 401, ip, reason, headerName, receivedLen }))
       throw new HttpException({ error: { code: 'invalid_api_key', message: 'A valid Seltra Engine API key is required.' } }, 401)
     }
     const retryAfter = this.engine.enforceRateLimit(identity, ip || 'unknown')

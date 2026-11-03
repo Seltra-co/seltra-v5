@@ -91,7 +91,7 @@ export class WorkspaceSupervisor {
     this.timer.unref()
   }
 
-  async get(workspaceId: string, workspaceKey: string, storeSlug: string, userId: string) {
+  async get(workspaceId: string, workspaceKey: string, storeSlug: string, userId: string, engineApiKey: string) {
     const active = this.runtimes.get(workspaceId)
     if (active && active.child.exitCode === null) {
       if (active.workspaceKey !== workspaceKey) throw Object.assign(new Error('Workspace key does not match the active runtime.'), { code: 'WORKSPACE_KEY_MISMATCH', status: 403 })
@@ -101,7 +101,7 @@ export class WorkspaceSupervisor {
     }
     const pending = this.starts.get(workspaceId)
     if (pending) return pending
-    const start = this.start(workspaceId, workspaceKey, storeSlug, userId)
+    const start = this.start(workspaceId, workspaceKey, storeSlug, userId, engineApiKey)
     this.starts.set(workspaceId, start)
     try { return await start } finally { this.starts.delete(workspaceId) }
   }
@@ -116,7 +116,7 @@ export class WorkspaceSupervisor {
     return null
   }
 
-  private async start(workspaceId: string, workspaceKey: string, storeSlug: string, userId: string): Promise<WorkspaceRuntime> {
+  private async start(workspaceId: string, workspaceKey: string, storeSlug: string, userId: string, engineApiKey: string): Promise<WorkspaceRuntime> {
     if (this.runtimes.size >= this.options.maxActive) {
       throw Object.assign(new Error('Builder capacity is full. Try again shortly.'), { code: 'WORKSPACE_CAPACITY', status: 429 })
     }
@@ -134,7 +134,7 @@ export class WorkspaceSupervisor {
     const creditIdentityPayload = Buffer.from(JSON.stringify({ userId, tenantId: workspaceId, expiresAt: Date.now() + 24 * 60 * 60 * 1000 })).toString('base64url')
     const creditIdentitySignature = createHmac('sha256', identitySecret).update(creditIdentityPayload).digest('base64url')
     const runtimeEnv = { ...this.options.env }
-    for (const key of ['CORE_TOKEN_SECRET', 'CORE_SERVICE_SECRET', 'NEST_INTERNAL_URL', 'MODEL_API_KEY', 'MODEL_ACCOUNT_ID', 'DATABASE_URL', 'FIGMA_ACCESS_TOKEN']) delete runtimeEnv[key]
+    for (const key of ['CORE_TOKEN_SECRET', 'CORE_SERVICE_SECRET', 'NEST_INTERNAL_URL', 'MODEL_API_KEY', 'MODEL_ACCOUNT_ID', 'DATABASE_URL', 'FIGMA_ACCESS_TOKEN', 'SELTRA_ENGINE_API_KEY', 'DYAD_PRO_API_KEY']) delete runtimeEnv[key]
     const child = spawn(process.execPath, [
       '--require', path.join(this.options.root, 'scripts/web/native-require-hook.cjs'),
       path.join(this.options.root, 'dist/runtime/runtime_main.js'),
@@ -154,6 +154,7 @@ export class WorkspaceSupervisor {
         RUNTIME_RPC_SECRET: rpcSecret,
         RUNTIME_SECRETS_KEY: secretsKey,
         WORKSPACE_MODEL_TOKEN: modelToken,
+        SELTRA_ENGINE_API_KEY: engineApiKey,
         SELTRA_ENGINE_CREDIT_IDENTITY: `${creditIdentityPayload}.${creditIdentitySignature}`,
         MODEL_GATEWAY_URL: `http://127.0.0.1:${this.options.env.GATEWAY_PORT}/v1`,
         VITE_SELTRA_API_URL: this.options.publicApiUrl.replace(/\/$/, ''),
