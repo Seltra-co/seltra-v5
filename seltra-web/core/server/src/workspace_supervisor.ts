@@ -3,6 +3,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
+import { filterChildEnvironment } from './security.js'
 
 export type WorkspaceRuntime = {
   workspaceId: string
@@ -133,7 +134,7 @@ export class WorkspaceSupervisor {
     if (!identitySecret) throw new Error('CORE_SERVICE_SECRET is required to bind Engine usage to the authenticated user.')
     const creditIdentityPayload = Buffer.from(JSON.stringify({ userId, tenantId: workspaceId, expiresAt: Date.now() + 24 * 60 * 60 * 1000 })).toString('base64url')
     const creditIdentitySignature = createHmac('sha256', identitySecret).update(creditIdentityPayload).digest('base64url')
-    const runtimeEnv = { ...this.options.env }
+    const runtimeEnv = filterChildEnvironment(this.options.env)
     for (const key of ['CORE_TOKEN_SECRET', 'CORE_SERVICE_SECRET', 'NEST_INTERNAL_URL', 'MODEL_API_KEY', 'MODEL_ACCOUNT_ID', 'DATABASE_URL', 'FIGMA_ACCESS_TOKEN', 'SELTRA_ENGINE_API_KEY', 'DYAD_PRO_API_KEY']) delete runtimeEnv[key]
     const child = spawn(process.execPath, [
       '--require', path.join(this.options.root, 'scripts/web/native-require-hook.cjs'),

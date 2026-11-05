@@ -378,7 +378,6 @@ export class MoolreService {
     }
 
     console.log('[Moolre] validateReceiverName request:', JSON.stringify(body), 'headers:', Object.keys(this.privateHeaders()))
-    console.log('[Moolre] apiKey debug:', JSON.stringify(this.apiKey), 'length:', this.apiKey.length)
 
     const res = await fetch(`${MOOLRE_BASE}/open/transact/validate`, {
       method: 'POST',

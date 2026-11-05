@@ -15,6 +15,7 @@ import httpProxy from "http-proxy";
 import { SignJWT, jwtVerify } from "jose";
 import { GatewayModule } from "./app.module.js";
 import { loadConfig, type GatewayConfig } from "./config.js";
+import { redactSensitiveText } from "./security.js";
 import {
   FileControlStore,
   type ControlStore,
@@ -396,10 +397,7 @@ function providerErrorDetails(body: string): {
     ...(typeof code === "string" || typeof code === "number" ? { code } : {}),
     ...(typeof message === "string"
       ? {
-          message: message
-            .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
-            .replace(/(token|secret|key)=\S+/gi, "$1=[redacted]")
-            .slice(0, 300),
+          message: redactSensitiveText(message).slice(0, 300),
         }
       : {}),
   };
