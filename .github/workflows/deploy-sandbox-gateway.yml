@@ -6,6 +6,14 @@ on:
       - "publish/**"
     paths:
       - "seltra-web/edge/sandbox-gateway/**"
+      - "seltra-web/core/src/db/**"
+      - "seltra-web/core/src/web/**"
+      - "seltra-web/core/src/pro/main/ipc/handlers/local_agent/tools/run_build.ts"
+      - "seltra-web/core/src/pro/main/ipc/handlers/local_agent/tools/repair_app.ts"
+      - "seltra-web/core/scripts/build-runtime.mjs"
+      - "seltra-web/core/runtime/native/**"
+      - "seltra-web/core/package.json"
+      - "seltra-web/core/package-lock.json"
       - ".github/workflows/deploy-sandbox-gateway.yml"
   workflow_dispatch:
     inputs:
@@ -45,15 +53,18 @@ jobs:
         run: |
           cd seltra-web/core
           npm ci
+          node scripts/build-runtime.mjs
+          npm prune --omit=dev --no-audit --no-fund
           npm ci --prefix runtime/native --no-audit --no-fund
           npm rebuild --prefix runtime/native --no-audit --no-fund
           cp -a runtime/native/node_modules/. node_modules/
-          node scripts/build-runtime.mjs
+          node ../edge/sandbox-gateway/scripts/prune-runtime-image.mjs node_modules
           image=../edge/sandbox-gateway/image
           mkdir -p "$image/dist/runtime"
           cp package.json package-lock.json "$image/"
           cp -a node_modules drizzle "$image/"
           cp dist/runtime/runtime_main.js "$image/dist/runtime/runtime_main.js"
+          du -sh "$image"
       - name: Build and smoke test Linux amd64 image
         working-directory: seltra-web/edge/sandbox-gateway/image
         shell: bash
@@ -67,7 +78,12 @@ jobs:
             -e DYAD_WORKSPACE_ID=0123456789abcdef -e DYAD_WEB_RUNTIME_ENTRY=1 \
             seltra-sandbox-runtime:ci
           ready=0
-          for attempt in $(seq 1 180); do
+          for attempt in $(seq 1 90); do
+            phase=$(curl --fail --silent http://127.0.0.1:8788/__boot-status | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).phase))" 2>/dev/null || true)
+            if [ "$phase" = "runtime-failed" ]; then
+              curl --fail --silent http://127.0.0.1:8788/__boot-status
+              exit 1
+            fi
             if curl --fail --silent http://127.0.0.1:8788/__ready >/dev/null; then ready=1; break; fi
             if ! docker inspect -f '{{.State.Running}}' seltra-sandbox-runtime-ci | grep -q true; then break; fi
             sleep 1
@@ -77,7 +93,8 @@ jobs:
             docker logs seltra-sandbox-runtime-ci 2>&1 | tail -n 160
             exit 1
           fi
-          curl --fail --silent http://127.0.0.1:8788/__boot-status | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s);if(!x.runtimeHealthy||x.platform!=='linux'||x.arch!=='x64'||!x.glibc||x.envNamesMissing.length)process.exit(1);console.log(JSON.stringify({runtimeHealthy:x.runtimeHealthy,node:x.node,platform:x.platform,arch:x.arch,libc:x.glibc,missingEnvNames:x.envNamesMissing.length,logLines:x.logTail.length}))})"
+          curl --fail --silent http://127.0.0.1:8788/__boot-status | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s);if(!x.runtimeHealthy||x.platform!=='linux'||x.arch!=='x64'||!x.glibc||x.envNamesMissing.length||x.files.runtimeBundle!=='present'||x.files.migrationJournal!=='present')process.exit(1);console.log(JSON.stringify({runtimeHealthy:x.runtimeHealthy,node:x.node,platform:x.platform,arch:x.arch,libc:x.glibc,files:x.files,missingEnvNames:x.envNamesMissing.length,logLines:x.logTail.length}))})"
+          docker image ls seltra-sandbox-runtime:ci --format 'image={{.Repository}} size={{.Size}}'
           docker exec seltra-sandbox-runtime-ci node -e "process.stdout.write('runtime-exec-ok')" | grep -q runtime-exec-ok
           docker exec -d seltra-sandbox-runtime-ci node -e "require('node:http').createServer((q,s)=>{s.end('preview-smoke-ok')}).listen(4173,'0.0.0.0')"
           for attempt in $(seq 1 20); do curl --fail --silent http://127.0.0.1:4173/ | grep -q preview-smoke-ok && break; sleep 1; done
@@ -129,10 +146,12 @@ jobs:
         run: |
           cd seltra-web/core
           npm ci
+          node scripts/build-runtime.mjs
+          npm prune --omit=dev --no-audit --no-fund
           npm ci --prefix runtime/native --no-audit --no-fund
           npm rebuild --prefix runtime/native --no-audit --no-fund
           cp -a runtime/native/node_modules/. node_modules/
-          node scripts/build-runtime.mjs
+          node ../edge/sandbox-gateway/scripts/prune-runtime-image.mjs node_modules
           image=../edge/sandbox-gateway/image
           mkdir -p "$image/dist/runtime"
           cp package.json package-lock.json "$image/"

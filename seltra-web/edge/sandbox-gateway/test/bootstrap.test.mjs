@@ -19,12 +19,12 @@ async function freePort() {
   return port;
 }
 
-async function launch(fixture) {
+async function launch(fixture, drizzleDir = path.resolve(here, "../../../core/drizzle")) {
   const port = await freePort();
   const rpcPort = await freePort();
   const child = spawn(process.execPath, [path.join(root, "image/bootstrap.mjs")], {
     cwd: root,
-    env: { ...process.env, PORT: String(port), RUNTIME_RPC_PORT: String(rpcPort), SANDBOX_RUNTIME_ENTRY: path.join(here, "fixtures", fixture), RUNTIME_RPC_SECRET: "test-only-secret", RUNTIME_SECRETS_KEY: "test-only-key" },
+    env: { ...process.env, PORT: String(port), RUNTIME_RPC_PORT: String(rpcPort), SANDBOX_RUNTIME_ENTRY: path.join(here, "fixtures", fixture), SANDBOX_DRIZZLE_DIR: drizzleDir, RUNTIME_RPC_SECRET: "test-only-secret", RUNTIME_SECRETS_KEY: "test-only-key" },
     stdio: "ignore",
   });
   children.add(child);
@@ -46,9 +46,19 @@ test("bootstrap waits for the real runtime RPC listener and reports names only",
   const status = await (await fetch(`${base}/__boot-status`)).json();
   assert.equal(status.phase, "ready");
   assert.equal(status.runtimeHealthy, true);
+  assert.deepEqual(status.files, { runtimeBundle: "present", migrationJournal: "present" });
   assert.ok(status.logTail.some((line) => line.includes("fixture runtime started")));
   assert.ok(!JSON.stringify(status).includes("test-only-secret"));
   assert.ok(Array.isArray(status.envNamesMissing));
+});
+
+test("bootstrap fails before runtime spawn when the migration journal is missing", async () => {
+  const { base } = await launch("runtime-ok.mjs", path.join(here, "fixtures", "missing-drizzle"));
+  const status = await (await fetch(`${base}/__boot-status`)).json();
+  assert.equal(status.phase, "runtime-failed");
+  assert.deepEqual(status.files, { runtimeBundle: "present", migrationJournal: "missing" });
+  assert.match(status.lastError, /migrationJournal/);
+  assert.equal((await fetch(`${base}/__ready`)).status, 503);
 });
 
 test("bootstrap stays available and reports a runtime crash", async () => {
@@ -59,7 +69,7 @@ test("bootstrap stays available and reports a runtime crash", async () => {
     if (status.exitCode !== null) break;
     await delay(20);
   }
-  assert.equal(status.phase, "runtime-exited");
+  assert.equal(status.phase, "runtime-failed");
   assert.equal(status.exitCode, 17);
   assert.equal((await fetch(`${base}/__ready`)).status, 503);
   assert.ok(status.logTail.some((line) => line.includes("fixture runtime failed")));

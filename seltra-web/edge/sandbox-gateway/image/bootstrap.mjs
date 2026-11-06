@@ -1,8 +1,12 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 
 const runtimePort = Number(process.env.RUNTIME_RPC_PORT || 8787);
-const runtimeEntry = process.env.SANDBOX_RUNTIME_ENTRY || "/opt/dyad/runtime_main.js";
+const runtimeEntry = path.resolve(process.env.SANDBOX_RUNTIME_ENTRY || "/opt/dyad/dist/runtime/runtime_main.js");
+const drizzleDir = path.resolve(process.env.SANDBOX_DRIZZLE_DIR || path.join(path.dirname(runtimeEntry), "..", "..", "drizzle"));
+const files = { runtimeBundle: "missing", migrationJournal: "missing" };
 const bootStartedAt = new Date().toISOString();
 const logs = [];
 let phase = "starting-runtime";
@@ -24,13 +28,14 @@ function record(chunk) {
     if (!line) continue;
     logs.push(safeLine(line));
     if (logs.length > 160) logs.shift();
+    if (/failed to initialize/i.test(line)) phase = "runtime-failed";
     if (/error|fatal|failed|exception/i.test(line)) lastError = safeLine(line);
   }
 }
 function status() {
   const report = process.report?.getReport?.();
   return {
-    phase, bootStartedAt, uptimeSeconds: Math.floor(process.uptime()),
+    phase, bootStartedAt, uptimeSeconds: Math.floor(process.uptime()), files,
     childPid: child?.pid ?? null, exitCode, exitSignal, lastError,
     runtimePort, runtimeHealthy: phase === "ready",
     node: process.version, platform: process.platform, arch: process.arch,
@@ -48,9 +53,9 @@ const server = http.createServer(async (request, response) => {
     return;
   }
   if (request.url === "/__ready") {
-    if (!child || child.exitCode !== null || child.signalCode !== null) {
+    if (phase === "runtime-failed" || !child || child.exitCode !== null || child.signalCode !== null) {
       response.writeHead(503, { "content-type": "application/json" });
-      response.end(JSON.stringify({ ready: false, code: "RUNTIME_EXITED" }));
+      response.end(JSON.stringify({ ready: false, phase, code: phase.toUpperCase().replaceAll("-", "_") }));
       return;
     }
     try {
@@ -71,9 +76,23 @@ const server = http.createServer(async (request, response) => {
   response.writeHead(404); response.end();
 });
 server.listen(Number(process.env.PORT || 8788), "0.0.0.0", () => {
+  files.runtimeBundle = fs.existsSync(runtimeEntry) ? "present" : "missing";
+  files.migrationJournal = fs.existsSync(path.join(drizzleDir, "meta", "_journal.json")) ? "present" : "missing";
+  const missing = Object.entries(files).filter(([, value]) => value !== "present").map(([name]) => name);
+  if (missing.length) {
+    phase = "runtime-failed";
+    lastError = `Required runtime file missing: ${missing.join(",")}`;
+    return;
+  }
+  phase = "starting-runtime";
   child = spawn("node", [runtimeEntry], { cwd: process.cwd(), env: process.env, stdio: ["ignore", "pipe", "pipe"] });
   child.stdout.on("data", record);
   child.stderr.on("data", record);
   child.on("error", (error) => { phase = "spawn-error"; lastError = safeLine(error.message); });
-  child.on("exit", (code, signal) => { exitCode = code; exitSignal = signal; phase = "runtime-exited"; });
+  child.on("exit", (code, signal) => {
+    exitCode = code;
+    exitSignal = signal;
+    phase = "runtime-failed";
+    lastError ??= `Runtime process exited (code ${code ?? "null"}, signal ${signal ?? "none"})`;
+  });
 });

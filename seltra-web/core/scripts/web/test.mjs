@@ -24,6 +24,7 @@ const vitest = path.join(root, "node_modules/vitest/vitest.mjs");
 const files = [
   "src/web/workspace_path.test.ts",
   "src/web/app_process_env.test.ts",
+  "src/web/playwright_health.test.ts",
   "src/web/figma_reference.test.ts",
   "src/web/client/figma_import.test.ts",
   "src/web/rpc_server.test.ts",

@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ripgrep ca-
 COPY package.json package-lock.json ./
 COPY node_modules ./node_modules
 COPY bootstrap.mjs ./bootstrap.mjs
-COPY dist/runtime/runtime_main.js ./runtime_main.js
+COPY dist/runtime/runtime_main.js ./dist/runtime/runtime_main.js
 COPY drizzle ./drizzle
 USER dyad:dyad
 ENV RUNTIME_RPC_HOST=127.0.0.1

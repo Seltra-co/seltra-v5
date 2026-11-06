@@ -42,6 +42,10 @@ export function isPlaywrightAvailable(): boolean {
 
 export async function verifyPlaywrightBrowser(): Promise<void> {
   playwrightAvailable = false;
+  if (process.env.DYAD_WEB_RUNTIME === "1") {
+    logger.info("Playwright Chromium startup check skipped in the isolated web runtime; repair_app screenshots and post-build browser QA are unavailable.");
+    return;
+  }
   let executablePath = "unresolved";
   let browser: Browser | undefined;
 

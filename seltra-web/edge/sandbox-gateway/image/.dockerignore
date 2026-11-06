@@ -1,0 +1,10 @@
+.git
+.github
+*.log
+*.map
+*.tsbuildinfo
+**/.cache
+**/test
+**/tests
+**/__tests__
+**/__fixtures__
