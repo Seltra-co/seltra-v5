@@ -22,6 +22,7 @@ bin-release/
 !**/.env.web.example
 seltra-web/core/.web-dev/
 seltra-web/core/out/
+seltra-web/core/.sandbox-gateway-secrets/
 
 # Root-level planning and reference documents stay local; nested Markdown is unaffected.
 /*.md
