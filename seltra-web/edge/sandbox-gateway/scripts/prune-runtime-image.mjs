@@ -3,7 +3,7 @@ import path from "node:path";
 
 const root = path.resolve(process.argv[2] || "node_modules");
 const removableDirs = new Set([".cache", "test", "tests", "__tests__", "__fixtures__"]);
-const incompatiblePlatform = /^(?:win32|darwin|android|freebsd|openbsd|sunos|linux-(?:arm64|arm|ia32|ppc64|s390x|riscv64|x64-musl)|.*-(?:win32|darwin|linux-(?:arm64|arm|ia32|ppc64|s390x|riscv64|x64-musl))(?:-|$))/;
+const incompatiblePlatform = /^(?:win32|darwin|android|freebsd|openbsd|sunos|linux-(?:arm64|arm|ia32|ppc64|s390x|riscv64|x64-musl)|.*-(?:win32|darwin|linux-(?:arm64|arm|ia32|ppc64|s390x|riscv64|x64-musl)|linuxmusl-x64))(?:-|$)/;
 let removedBytes = 0;
 let removedFiles = 0;
 

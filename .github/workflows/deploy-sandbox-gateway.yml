@@ -11,6 +11,7 @@ on:
       - "seltra-web/core/src/pro/main/ipc/handlers/local_agent/tools/run_build.ts"
       - "seltra-web/core/src/pro/main/ipc/handlers/local_agent/tools/repair_app.ts"
       - "seltra-web/core/scripts/build-runtime.mjs"
+      - "seltra-web/core/scripts/audit-runtime-dependencies.mjs"
       - "seltra-web/core/runtime/native/**"
       - "seltra-web/core/package.json"
       - "seltra-web/core/package-lock.json"
@@ -55,6 +56,7 @@ jobs:
           npm ci
           node scripts/build-runtime.mjs
           npm prune --omit=dev --no-audit --no-fund
+          node scripts/audit-runtime-dependencies.mjs
           npm ci --prefix runtime/native --no-audit --no-fund
           npm rebuild --prefix runtime/native --no-audit --no-fund
           cp -a runtime/native/node_modules/. node_modules/
@@ -71,6 +73,7 @@ jobs:
         run: |
           set -euo pipefail
           docker build --platform linux/amd64 -t seltra-sandbox-runtime:ci .
+          docker image ls seltra-sandbox-runtime:ci --format 'image={{.Repository}} size={{.Size}}'
           docker run --rm --platform linux/amd64 --entrypoint node seltra-sandbox-runtime:ci -e "console.log(process.platform, process.arch); for (const m of ['better-sqlite3','node-pty','ssh2','@vscode/ripgrep','dugite']) { require(m); console.log('native-module-ok',m) }"
           docker run -d --name seltra-sandbox-runtime-ci --platform linux/amd64 \
             -p 8788:8788 -p 4173:4173 -e RUNTIME_RPC_SECRET=ci-runtime-secret \
@@ -94,7 +97,6 @@ jobs:
             exit 1
           fi
           curl --fail --silent http://127.0.0.1:8788/__boot-status | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s);if(!x.runtimeHealthy||x.platform!=='linux'||x.arch!=='x64'||!x.glibc||x.envNamesMissing.length||x.files.runtimeBundle!=='present'||x.files.migrationJournal!=='present')process.exit(1);console.log(JSON.stringify({runtimeHealthy:x.runtimeHealthy,node:x.node,platform:x.platform,arch:x.arch,libc:x.glibc,files:x.files,missingEnvNames:x.envNamesMissing.length,logLines:x.logTail.length}))})"
-          docker image ls seltra-sandbox-runtime:ci --format 'image={{.Repository}} size={{.Size}}'
           docker exec seltra-sandbox-runtime-ci node -e "process.stdout.write('runtime-exec-ok')" | grep -q runtime-exec-ok
           docker exec -d seltra-sandbox-runtime-ci node -e "require('node:http').createServer((q,s)=>{s.end('preview-smoke-ok')}).listen(4173,'0.0.0.0')"
           for attempt in $(seq 1 20); do curl --fail --silent http://127.0.0.1:4173/ | grep -q preview-smoke-ok && break; sleep 1; done
@@ -148,6 +150,7 @@ jobs:
           npm ci
           node scripts/build-runtime.mjs
           npm prune --omit=dev --no-audit --no-fund
+          node scripts/audit-runtime-dependencies.mjs
           npm ci --prefix runtime/native --no-audit --no-fund
           npm rebuild --prefix runtime/native --no-audit --no-fund
           cp -a runtime/native/node_modules/. node_modules/
