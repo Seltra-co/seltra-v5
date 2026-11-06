@@ -1,8 +1,11 @@
 import type { NextConfig } from 'next'
 
+const projectRoot = process.cwd()
+
 const nextConfig: NextConfig = {
+  outputFileTracingRoot: projectRoot,
   turbopack: {
-    root: __dirname,
+    root: projectRoot,
   },
   images: {
     remotePatterns: [
