@@ -31,6 +31,7 @@ import { CoreEvents } from '@/lib/core/events'
 import { takePendingBuild } from '@/lib/builder/pending'
 import { fetchWithSeltraAuth } from '@/lib/auth-session'
 import { CorePreviewAnnotator } from '@/components/dashboard/CorePreviewAnnotator'
+import { PublishPanel } from '@/components/dashboard/PublishPanel'
 import { CoreAgentMessage, CoreTodoProgress, type CoreBlueprint, type CoreQuestionnaire, type CoreTodo } from '@/components/dashboard/CoreAgentMessage'
 import { CURRENT_ANNOUNCEMENT_VERSION, WHATS_NEW } from './config/whats-new'
 import { getGreeting } from '@/lib/greetings'
@@ -42,6 +43,7 @@ import { playCompletionTone, unlockCompletionTone } from '@/lib/completion-tone'
 const API_BASE = ''
 const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? 'seltra.co'
 const CORE_RUNTIME_CONNECTION_TIMEOUT_MS = 10 * 60_000
+const FF_PUBLISH = process.env.NEXT_PUBLIC_FF_PUBLISH === 'true'
 const NEW_USER_PLACEHOLDERS = [
   'Ask Seltra to build a skincare brand…',
   'Ask Seltra to build a bakery storefront…',
@@ -1230,6 +1232,12 @@ export default function DashboardPage() {
 
   const publishedProjectUrl = activeStore?.dashboardApp?.publishedUrl
   const projectIsPublished = Boolean(publishedProjectUrl || ['published', 'deployed'].includes(activeStore?.dashboardApp?.status?.toLowerCase() ?? ''))
+  const getPublishCoreSession = useCallback(async (): Promise<CoreSession> => {
+    if (!activeStore?.id) throw new Error('Select an app before publishing.')
+    const result = await apiFetch<CoreSession>('/api/v5/builder/session', { method: 'POST', body: JSON.stringify({ tenantId: activeStore.id }) })
+    if (!result.data) throw new Error(result.error || 'Could not connect to Seltra Core.')
+    return result.data
+  }, [activeStore?.id])
 
   const [user, setUser] = useState<{ id?: string; email: string; name: string; avatar: string; joinedAt?: string; plan?: 'free' | 'premium' } | null>(null)
   const corePreviewDisplayUrl = useMemo(() => {
@@ -3510,7 +3518,13 @@ const handleAgentAttach = async (f: File) => {
                           {(corePreviewError || coreConnectionError) && <div role="alert" className="absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 bg-red-950/95 px-3 py-2 text-xs text-red-100"><span className="min-w-0 break-words">{corePreviewError || coreConnectionError}</span><button type="button" className="shrink-0 rounded p-1 hover:bg-white/10" aria-label="Dismiss preview error" onClick={() => { setCorePreviewError(''); setCoreConnectionError('') }}><X size={14} /></button></div>}
                           {corePreviewConsoleOpen && <section aria-label="Core preview console" className="absolute inset-x-0 bottom-0 z-10 flex h-[38%] min-h-28 flex-col border-t border-white/15 bg-[#111312]/95 text-[11px] text-white backdrop-blur"><div className="flex items-center justify-between border-b border-white/10 px-3 py-2"><span>Core preview console</span><button type="button" onClick={() => setCorePreviewConsole([])} className="text-white/55 hover:text-white">Clear</button></div><div className="min-h-0 flex-1 overflow-y-auto p-2 font-mono">{corePreviewConsole.length ? corePreviewConsole.map((entry, index) => <p key={`${entry.timestamp}-${index}`} className={cn('whitespace-pre-wrap break-words py-0.5', entry.level === 'error' ? 'text-red-300' : entry.level === 'warn' ? 'text-amber-200' : 'text-white/70')}><span className="mr-2 text-white/35">{new Date(entry.timestamp).toLocaleTimeString()}</span>{entry.message || `[${entry.level}]`}</p>) : <p className="p-2 text-white/40">No console messages yet.</p>}</div></section>}
                           {corePreviewScreenshot && <CorePreviewAnnotator screenshot={corePreviewScreenshot} onCancel={() => setCorePreviewScreenshot('')} onAttach={(file) => { setCoreFiles((current) => [...current, file]); setCorePreviewScreenshot(''); toast.success('Annotated Core preview attached to your next message.') }} />}
-                          {publishPanelOpen && <div className="absolute inset-0 z-30 flex items-start justify-end bg-slate-950/10 p-3 backdrop-blur-[1px] sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setPublishPanelOpen(false) }}>
+                          {publishPanelOpen && FF_PUBLISH && activeStore && <div className="absolute inset-0 z-30 flex items-start justify-end bg-slate-950/10 p-3 backdrop-blur-[1px] sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setPublishPanelOpen(false) }}>
+                            <PublishPanel open store={activeStore} isAgentBusy={sending} getCoreSession={getPublishCoreSession} onClose={() => setPublishPanelOpen(false)} onFixWithSeltra={(logTail) => {
+                              void runCorePrompt(`Fix the failed production deployment. Build log tail:\n${logTail}`, 'build', activeStore)
+                              setPublishPanelOpen(false)
+                            }} />
+                          </div>}
+                          {publishPanelOpen && !FF_PUBLISH && <div className="absolute inset-0 z-30 flex items-start justify-end bg-slate-950/10 p-3 backdrop-blur-[1px] sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setPublishPanelOpen(false) }}>
                             <section role="dialog" aria-modal="true" aria-label="Publish app" className="publish-panel-motion w-full max-w-[390px] origin-top-right rounded-[26px] border border-slate-200 bg-[#fbfcfb] p-5 text-slate-900 shadow-[0_24px_70px_rgba(16,24,20,.22)] sm:p-6">
                               <div className="flex items-start justify-between gap-4">
                                 <div><div className="flex items-center gap-2"><span className={cn('h-2.5 w-2.5 rounded-full', projectIsPublished ? 'bg-emerald-500' : 'bg-slate-300')} /><p className="text-sm font-semibold">{projectIsPublished ? 'Published' : 'Ready when you are'}</p></div><p className="mt-1 text-sm text-slate-500">{projectIsPublished ? 'Your website is up to date.' : 'Your app is still in preview.'}</p></div>

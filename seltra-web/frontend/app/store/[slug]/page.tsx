@@ -87,7 +87,7 @@ export default async function StorefrontPage({ params }: StoreRouteProps) {
   if (v5App?.publishedUrl) {
     try {
       const destination = new URL(v5App.publishedUrl)
-      if (destination.protocol === 'https:' || destination.protocol === 'http:') publishedDestination = destination.toString()
+        if ((destination.protocol === 'https:' || destination.protocol === 'http:') && destination.hostname !== `${slug}.${process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? 'seltra.co'}`) publishedDestination = destination.toString()
     } catch {
       // Ignore an invalid deployment URL and show the unpublished state below.
     }
