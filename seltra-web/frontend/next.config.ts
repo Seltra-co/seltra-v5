@@ -1,6 +1,7 @@
 import type { NextConfig } from 'next'
+import path from 'node:path'
 
-const projectRoot = process.cwd()
+const projectRoot = path.join(__dirname, '../..')
 
 const nextConfig: NextConfig = {
   outputFileTracingRoot: projectRoot,
