@@ -45,7 +45,7 @@ jobs:
         run: |
           cd seltra-web/core
           npm ci
-          npm run build-runtime
+          node scripts/build-runtime.mjs
           image=../edge/sandbox-gateway/image
           mkdir -p "$image/dist/runtime"
           cp package.json package-lock.json "$image/"
@@ -85,7 +85,7 @@ jobs:
         run: |
           cd seltra-web/core
           npm ci
-          npm run build-runtime
+          node scripts/build-runtime.mjs
           image=../edge/sandbox-gateway/image
           mkdir -p "$image/dist/runtime"
           cp package.json package-lock.json "$image/"

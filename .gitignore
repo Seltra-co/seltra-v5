@@ -30,3 +30,4 @@ seltra-web/core/.sandbox-gateway-secrets/
 # Local integration planning documents (kept explicit for clarity).
 /SELTRA-CORE-INTEGRATION-FINAL.md
 /AI-CORE-INTEGRATION-ARCHITECTURE.md
+/deploy-fail.log
