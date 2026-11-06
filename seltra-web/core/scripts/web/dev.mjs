@@ -421,6 +421,7 @@ try {
     GATEWAY_PUBLIC_HOSTS: gatewayPublicHosts,
     GATEWAY_PORT: String(gatewayPort),
     GATEWAY_ALLOWED_ORIGINS: config.GATEWAY_ALLOWED_ORIGINS || gatewayOrigin,
+    EXECUTION_PROVIDER: config.EXECUTION_PROVIDER || "cloudflare",
     CORE_TOKEN_SECRET: config.CORE_TOKEN_SECRET,
     CORE_SERVICE_SECRET: config.CORE_SERVICE_SECRET,
     NEST_INTERNAL_URL: config.NEST_INTERNAL_URL,
@@ -480,6 +481,13 @@ try {
     MODEL_MAX_CONCURRENT_REQUESTS: config.MODEL_MAX_CONCURRENT_REQUESTS || "4",
     CONTROL_DIR: path.join(stateDir, "control"),
   };
+  for (const name of [
+    "SANDBOX_GATEWAY_URL",
+    "SANDBOX_GATEWAY_SIGNING_SECRET",
+    "CORE_PUBLIC_URL",
+  ]) {
+    if (config[name]?.trim()) gatewayEnv[name] = config[name].trim();
+  }
   if (config.FIGMA_ACCESS_TOKEN?.trim())
     gatewayEnv.FIGMA_ACCESS_TOKEN = config.FIGMA_ACCESS_TOKEN;
   if (config.DATABASE_URL) gatewayEnv.DATABASE_URL = config.DATABASE_URL;

@@ -244,4 +244,16 @@ describe("web RPC server", () => {
     socket.close();
     await rpc.close();
   });
+
+  it("allows an all-interface bind only inside the isolated web runtime", async () => {
+    const previous = process.env.DYAD_WEB_RUNTIME;
+    delete process.env.DYAD_WEB_RUNTIME;
+    expect(() => createRpcServer({ secret: "secret", host: "0.0.0.0" })).toThrow(/loopback/);
+    process.env.DYAD_WEB_RUNTIME = "1";
+    const rpc = createRpcServer({ secret: "secret", host: "0.0.0.0", port: 0 });
+    await new Promise<void>((resolve) => rpc.server.once("listening", resolve));
+    await rpc.close();
+    if (previous === undefined) delete process.env.DYAD_WEB_RUNTIME;
+    else process.env.DYAD_WEB_RUNTIME = previous;
+  });
 });

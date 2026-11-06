@@ -4,6 +4,8 @@ import { sandboxId, verifyRequest } from "../auth.mjs";
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 const MAX_CONTROL_BODY = 24 * 1024 * 1024;
 const MAX_COMMAND_OUTPUT = 256 * 1024;
+const PORT_READY_TIMEOUT_MS = 180_000;
+const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
 const ALLOWED_RUNTIME_ENV = new Set([
   "NODE_ENV", "DYAD_WEB_RUNTIME", "DYAD_WEB_RUNTIME_ENTRY", "DYAD_WORKSPACE_ID",
   "DYAD_USER_DATA", "DYAD_APPS_DIR", "DYAD_TMP_DIR", "RUNTIME_RPC_HOST",
@@ -20,22 +22,53 @@ function validateWorkspaceKey(value) {
   return typeof value === "string" && /^[a-f0-9]{12,128}$/i.test(value);
 }
 
-async function waitForPort(container, port, timeoutMs = 120_000) {
+async function waitForPort(container, port, timeoutMs = PORT_READY_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
-  let error;
+  let delay = 250;
   while (Date.now() < deadline) {
     try {
-      const response = await container.getTcpPort(port).fetch("http://container/healthz", { signal: AbortSignal.timeout(1500) });
+      const response = await container.getTcpPort(port).fetch("http://container/__ready", { signal: AbortSignal.timeout(1500) });
       if (response.ok) return;
       await response.body?.cancel();
-      error = new Error("Runtime health check failed.");
-    } catch (cause) { error = cause; }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay = Math.min(2000, Math.ceil(delay * 1.5));
   }
-  throw new Error("Runtime did not become ready.", { cause: error });
+  throw new Error("Runtime bootstrap did not report ready within 180 seconds.");
 }
 
 export class WorkspaceSandbox extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.monitoring = undefined;
+    if (ctx.container?.running) {
+      void ctx.blockConcurrencyWhile(async () => {
+        await ctx.container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS);
+        this.observeContainer();
+      });
+    }
+  }
+
+  onStart(instance) { console.info(JSON.stringify({ event: "sandbox_container_started", instance })); }
+  async onStop(exitCode, reason) {
+    console.info(JSON.stringify({ event: "sandbox_container_stopped", exitCode, reason }));
+    await this.ctx.storage.put("lastExit", { exitCode, reason, at: new Date().toISOString() });
+  }
+  async onError(code) {
+    console.error(JSON.stringify({ event: "sandbox_container_error", code }));
+    await this.ctx.storage.put("lastErrorCode", code);
+  }
+
+  observeContainer() {
+    const container = this.ctx.container;
+    if (!container || this.monitoring) return;
+    this.monitoring = container.monitor().then(() => this.onStop(0, "exit")).catch((error) => {
+      const exitCode = Number.isInteger(error?.exitCode) ? error.exitCode : null;
+      this.onStop(exitCode, "error");
+    }).finally(() => { this.monitoring = undefined; });
+    this.ctx.waitUntil(this.monitoring);
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     const container = this.ctx.container;
@@ -64,17 +97,56 @@ export class WorkspaceSandbox extends DurableObject {
       await this.ctx.storage.put("workspaceKey", input.workspaceKey);
       await this.ctx.storage.put("runtimeEnv", env);
       if (!container.running) {
-        container.start({ image: container.images.base, entrypoint: ["node", "/opt/dyad/runtime_main.js"], env, enableInternet: true, instance: "standard-2" });
-        await container.setInactivityTimeout(30 * 60 * 1000);
+        try {
+          container.start({ image: container.images.base, env, enableInternet: true, instance: "standard-2" });
+          this.onStart("standard-2");
+          this.observeContainer();
+          await container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS);
+          await this.ctx.storage.delete("lastExit");
+          await this.ctx.storage.delete("lastErrorCode");
+        } catch {
+          await this.onError("CONTAINER_NOT_STARTED");
+          await this.ctx.storage.deleteAll();
+          return json({ code: "CONTAINER_NOT_STARTED" }, 503);
+        }
       }
-      await waitForPort(container, 8787);
+      try {
+        await waitForPort(container, 8788);
+      } catch {
+        let status = null;
+        try {
+          const diagnostic = await container.getTcpPort(8788).fetch("http://container/__boot-status", { signal: AbortSignal.timeout(2500) });
+          if (diagnostic.ok) status = await diagnostic.json();
+        } catch {}
+        const reason = !container.running ? "CONTAINER_EXITED" : status?.exitCode !== null && status?.exitCode !== undefined ? "RUNTIME_CRASHED" : status ? "RUNTIME_TIMEOUT" : "PORT_NOT_LISTENING";
+        await this.onError(reason);
+        console.error(JSON.stringify({ event: "sandbox_runtime_start_failed", code: reason, timeoutMs: PORT_READY_TIMEOUT_MS, instance: "standard-2", sleepAfterMs: INACTIVITY_TIMEOUT_MS, bootStatus: status }));
+        await container.destroy().catch(() => {});
+        await this.monitoring?.catch(() => {});
+        await this.ctx.storage.deleteAll();
+        return json({ code: reason, diagnostics: status }, 503);
+      }
       return json({ sandboxId: sandboxId(input.workspaceKey), ready: true });
     }
 
     if (url.pathname === "/__destroy" && request.method === "POST") {
       await container.destroy();
+      await this.monitoring?.catch(() => {});
       await this.ctx.storage.deleteAll();
       return json({ destroyed: true });
+    }
+
+    if (url.pathname === "/__diag" && request.method === "GET") {
+      let bootStatus = null;
+      let diagnosticCode = "CONTAINER_NOT_STARTED";
+      if (container.running) {
+        try {
+          const response = await container.getTcpPort(8788).fetch("http://container/__boot-status", { signal: AbortSignal.timeout(3000) });
+          if (response.ok) { bootStatus = await response.json(); diagnosticCode = bootStatus.runtimeHealthy ? "READY" : "RUNTIME_NOT_READY"; }
+          else diagnosticCode = "BOOT_STATUS_HTTP_ERROR";
+        } catch { diagnosticCode = "BOOT_STATUS_UNAVAILABLE"; }
+      }
+      return json({ code: diagnosticCode, running: Boolean(container.running), lastExit: await this.ctx.storage.get("lastExit") ?? null, lastErrorCode: await this.ctx.storage.get("lastErrorCode") ?? null, bootStatus });
     }
 
     if (url.pathname === "/__exec" && request.method === "POST") {
@@ -131,16 +203,6 @@ export class WorkspaceSandbox extends DurableObject {
       return new Response(output.stdout, { headers: JSON_HEADERS });
     }
 
-    if (url.pathname === "/__self-test" && request.method === "POST") {
-      if (!container.running) {
-        container.start({ image: container.images.base, entrypoint: ["sleep", "infinity"], enableInternet: false, instance: "lite" });
-        await container.setInactivityTimeout(60_000);
-      }
-      const proc = await container.exec(["node", "-e", "process.stdout.write('sandbox-ok')"], { stdout: "pipe" });
-      const output = await proc.output();
-      return json({ ok: output.exitCode === 0 && new TextDecoder().decode(output.stdout) === "sandbox-ok" });
-    }
-
     if (url.pathname.startsWith("/__runtime/") && container.running) {
       const runtimePath = url.pathname.slice("/__runtime".length) + url.search;
       return container.getTcpPort(8787).fetch(new Request(`http://container${runtimePath}`, request));
@@ -172,14 +234,35 @@ export default {
       if (!replay.ok) return replay.response;
       const testId = env.SANDBOXES.idFromName("seltra-gateway-self-test");
       const stub = env.SANDBOXES.get(testId);
+      const random = (size) => {
+        const bytes = crypto.getRandomValues(new Uint8Array(size));
+        return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      };
+      const workspaceKey = random(16);
+      const keyBytes = crypto.getRandomValues(new Uint8Array(32));
+      const runtimeEnv = {
+        NODE_ENV: "production", DYAD_WEB_RUNTIME: "1", DYAD_WEB_RUNTIME_ENTRY: "1",
+        DYAD_WORKSPACE_ID: workspaceKey, DYAD_USER_DATA: "/workspace/userData",
+        DYAD_APPS_DIR: "/workspace/apps", DYAD_TMP_DIR: "/workspace/tmp",
+        RUNTIME_RPC_HOST: "0.0.0.0", RUNTIME_RPC_PORT: "8787",
+        RUNTIME_RPC_SECRET: random(32), RUNTIME_SECRETS_KEY: btoa(String.fromCharCode(...keyBytes)),
+      };
+      let created = false;
       try {
-        return await stub.fetch("https://sandbox/__self-test", { method: "POST" });
+        const create = await stub.fetch("https://sandbox/__create", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspaceKey, env: runtimeEnv }) });
+        if (!create.ok) return json({ ok: false, phase: "create", code: (await create.json().catch(() => ({}))).code ?? "CREATE_FAILED" }, 503);
+        created = true;
+        const exec = await stub.fetch("https://sandbox/__exec", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ argv: ["node", "-e", "process.stdout.write('sandbox-ok')"], cwd: "/workspace" }) });
+        const result = await exec.json().catch(() => ({}));
+        const ok = exec.ok && result.exitCode === 0 && result.stdout === "sandbox-ok";
+        return json({ ok, phase: "exec", code: ok ? "SELF_TEST_PASSED" : "SELF_TEST_EXEC_FAILED" }, ok ? 200 : 503);
       } finally {
-        await stub.fetch("https://sandbox/__destroy", { method: "POST" }).catch(() => {});
+        if (created) await stub.fetch("https://sandbox/__destroy", { method: "POST" }).catch(() => {});
       }
     }
     const match = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/(create|exec|files|destroy|runtime|preview)(?:\/(.*))?$/i);
-    if (!match) return json({ code: "NOT_FOUND" }, 404);
+    const diagnostic = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/diag$/i);
+    if (!match && !diagnostic) return json({ code: "NOT_FOUND" }, 404);
     const length = Number(request.headers.get("content-length") ?? 0);
     if (length > MAX_CONTROL_BODY) return json({ code: "BODY_TOO_LARGE" }, 413);
     const body = new Uint8Array(await request.arrayBuffer());
@@ -188,11 +271,11 @@ export default {
     if (!auth.ok) return json({ code: "AUTH_INVALID" }, 401);
     const replay = await consumeNonce(env, auth.nonce, Number(request.headers.get("x-sandbox-timestamp")));
     if (!replay.ok) return replay.response;
-    const workspaceKey = match[1];
-    const operation = match[2];
+    const workspaceKey = match?.[1] ?? diagnostic[1];
+    const operation = match?.[2] ?? "diag";
     const doId = env.SANDBOXES.idFromName(await sandboxId(workspaceKey));
     const stub = env.SANDBOXES.get(doId);
-    const internalPath = operation === "create" ? "/__create" : operation === "exec" ? "/__exec" : operation === "files" ? "/__files" : operation === "destroy" ? "/__destroy" : operation === "runtime" ? `/__runtime/${match[3] ?? ""}` : `/__preview/${match[3] ?? ""}`;
+    const internalPath = operation === "create" ? "/__create" : operation === "exec" ? "/__exec" : operation === "files" ? "/__files" : operation === "destroy" ? "/__destroy" : operation === "runtime" ? `/__runtime/${match[3] ?? ""}` : operation === "preview" ? `/__preview/${match[3] ?? ""}` : "/__diag";
     const internal = new Request(`https://sandbox${internalPath}${url.search}`, { method: request.method, headers: request.headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : body });
     return stub.fetch(internal);
   },

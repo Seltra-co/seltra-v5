@@ -68,7 +68,7 @@ export class CloudflareSandboxProvider implements WorkspaceExecutionProvider {
     if (!health.ok) throw new Error('Cloudflare sandbox gateway health check failed.')
     const testPath = '/v1/self-test'
     try {
-      const response = await this.send(testPath, 'POST', '{}', 120_000)
+      const response = await this.send(testPath, 'POST', '{}', 210_000)
       const result = await response.json().catch(() => ({})) as { ok?: boolean }
       if (!response.ok || result.ok !== true) throw new Error('Self-test returned failure.')
       console.info(JSON.stringify({ event: 'sandbox_gateway_startup_self_test', status: 'passed' }))

@@ -453,7 +453,13 @@ export function createRpcServer(
   });
 
   const host = options.host ?? "127.0.0.1";
-  if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
+  const isolatedWebRuntime = process.env.DYAD_WEB_RUNTIME === "1";
+  if (
+    host !== "127.0.0.1" &&
+    host !== "::1" &&
+    host !== "localhost" &&
+    !(isolatedWebRuntime && host === "0.0.0.0")
+  ) {
     throw new Error("RPC server may bind only to loopback");
   }
   server.listen(options.port ?? 0, host);
