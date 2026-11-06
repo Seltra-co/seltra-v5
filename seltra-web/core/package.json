@@ -143,6 +143,7 @@
     "monaco-editor": "^0.52.2",
     "mustardscript": "^0.3.0",
     "node-pty": "^1.1.0",
+    "node-fetch": "2.7.0",
     "perfect-freehand": "^1.2.2",
     "pg-schema-classifier": "file:packages/pg-schema-classifier",
     "playwright": "^1.58.2",
