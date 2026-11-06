@@ -2,7 +2,7 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { app, safeStorage } from "electron";
-import log from "electron-log";
+import log from "electron-log/main";
 import { BackupManager } from "../backup_manager";
 import { db, getDatabasePath, initializeDatabase } from "../db";
 import { getSettingsFilePath, readEffectiveSettings } from "../main/settings";
