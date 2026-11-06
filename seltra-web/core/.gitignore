@@ -110,6 +110,7 @@ userData/
 .web-dev/
 dist-web/
 .idea/
+.sandbox-gateway-secrets/
 
 # Claude Code
 .claude/settings.local.json

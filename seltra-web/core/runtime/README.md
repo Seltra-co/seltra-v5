@@ -1,41 +1,18 @@
-# Workspace runtime image
+﻿# Ephemeral workspace runtime image
 
-Build the image only after `node scripts/build-runtime.mjs` has produced
-`dist/runtime/runtime_main.js`. The image installs the Playwright Chromium
-bundle, including headless shell, at `/ms-playwright`. Runtime startup launches
-Chromium and captures a PNG. Set `REQUIRE_PLAYWRIGHT=1` to make startup fail
-when the browser or its required system libraries are unavailable. The
-container expects its persistent volume at `/workspace`; mount it read-write
-and keep the container root filesystem read-only.
+`server/src/execution_provider.ts` runs one container per workspace using this image. Build after the Core build produces `dist/runtime/runtime_main.js`:
 
-## Native Render deployment
+```powershell
+npm.cmd run build-runtime
 
-Render's native Node build does not run as root, so do not use Playwright's
-`--with-deps` there. The `render:build` script installs only Chromium's
-headless shell with `PLAYWRIGHT_BROWSERS_PATH=0`, which keeps it under
-`node_modules` and available in both build and runtime. Set the Render
-environment variable `PLAYWRIGHT_BROWSERS_PATH=0` as well; runtime defaults it
-for web mode when unset. `--with-deps` is reserved for the Docker image, where
-the image build can install operating-system packages.
+docker build -f runtime/Dockerfile -t seltra-workspace-runtime:<immutable-build-id> .
+docker image inspect seltra-workspace-runtime:<immutable-build-id> --format '{{.Id}}'
+```
 
-Do not install the browser on Render's persistent disk. Keep that disk for
-`DYAD_USER_DATA` and `DYAD_APPS_DIR`; the browser is part of the deploy artifact.
-Set `REQUIRE_PLAYWRIGHT=1` on Render after confirming Chromium works in the
-deployed environment.
+Set Core's `WORKSPACE_EXECUTION_MODE=docker`, `WORKSPACE_RUNTIME_IMAGE` to the built image reference, `WORKSPACE_DOCKER_NETWORK` to a pre-created Docker network whose `Internal` property is `true`, and `WORKSPACE_DOCKER_HOST_GATEWAY` to the gateway address reachable from that network. Production Core refuses the host-process provider and startup fails if Docker, the image or the internal network is unavailable.
 
-The image deliberately does not configure a Docker socket, capabilities,
-network policy, CPU/memory/pid limits, or disk quota. Those are deployment
-properties and must be supplied by the container orchestrator. Required policy:
+Each runtime uses a private per-workspace bind mount at `/workspace`. The image root is read-only, the container runs as a non-root UID, drops all Linux capabilities, enables `no-new-privileges`, has memory/CPU/PID limits, and has no host source, secrets, sibling workspace or Docker socket mount. The only published port binds to host loopback. The container's network is internal to deny direct Internet egress.
 
-- non-root UID/GID 10001; `cap_drop: [ALL]`; default seccomp; no privileged mode
-- read-only root, with only `/workspace` and `/tmp` writable
-- per-workspace CPU, memory, pid and volume quota
-- deny metadata and private/link-local network ranges; allow only package
-  registries and the model gateway (GitHub is a later publishing exception)
-- no Docker socket or host mounts beyond that workspace's volume
-- publish runtime RPC on loopback/private networking only and set a unique
-  `RUNTIME_RPC_SECRET` and `RUNTIME_SECRETS_KEY` per workspace
+This is not deployable safely until the worker host additionally applies host firewall rules that expose only the model/RPC gateway to this internal network and provides an allowlisted package-registry proxy for dependency installation. Package registry access must never enable arbitrary egress. The current Render service configuration is not represented in this repository and has not been verified to provide a Docker daemon, internal network, firewall controls or that proxy. Until that infrastructure exists and the D22 isolation tests pass, production workspace startup must remain disabled; do not choose host mode as a fallback.
 
-Docker itself cannot enforce a portable disk quota for an ordinary bind mount.
-Use a quota-capable volume driver or filesystem project quota. A runtime must
-not be considered isolated until the deployment supplies and tests these rules.
+Docker bind mounts need host/container UID compatibility. The provider runs with the Core process UID/GID where available; verify that the deployed worker can write its own workspace and no other tenant's workspace. Apply a quota-capable volume/filesystem project quota before production use; ordinary Docker bind mounts have no portable disk quota.

@@ -22,6 +22,10 @@ export type RpcServerOptions = {
   port?: number;
   defaultTimeoutMs?: number;
   channelTimeouts?: Record<string, number>;
+  publishHandlers?: {
+    snapshotUserData: () => Promise<unknown>;
+    commitWorkingTree: (input: unknown) => Promise<unknown>;
+  };
 };
 
 export type RunningRpcServer = {
@@ -126,6 +130,23 @@ export function createRpcServer(
         ok: false,
         error: { code: "UNAUTHORIZED", message: "Unauthorized" },
       });
+      return;
+    }
+    const internalPublishPath = request.url;
+    const internalPublishAction = internalPublishPath === "/internal/publish/snapshot-user-data" ? "snapshot"
+      : internalPublishPath === "/internal/publish/commit-working-tree" ? "commit" : undefined;
+    if (request.method === "POST" && options.publishHandlers && internalPublishAction) {
+      try {
+        const body = await readBody(request) as unknown;
+        const result = internalPublishAction === "snapshot"
+          ? await options.publishHandlers.snapshotUserData()
+          : await options.publishHandlers.commitWorkingTree(body);
+        sendJson(response, 200, { ok: true, result });
+      } catch (error) {
+        const code = (error as { code?: string })?.code || "PUBLISH_RPC_FAILED";
+        const status = code === "APP_NOT_FOUND" ? 404 : code.endsWith("FORBIDDEN") ? 403 : 500;
+        sendJson(response, status, { ok: false, error: { code, message: status === 500 ? "Workspace durability RPC failed." : (error as Error).message } });
+      }
       return;
     }
     const previewTarget = request.url?.match(

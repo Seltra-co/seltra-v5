@@ -19,6 +19,7 @@ import { configureTrustedRenderer } from "../ipc/utils/renderer_security";
 import { createRpcServer } from "./rpc_server";
 import { seedSeltraModels } from "./seed_seltra_models";
 import { verifyPlaywrightBrowser } from "./playwright_health";
+import { commitWorkingTree, snapshotUserData } from "../seltra_publish/workspace_rpc";
 
 const logger = log.scope("web-runtime");
 
@@ -90,6 +91,7 @@ export async function startRuntime(): Promise<void> {
     // the preview server can restart. Keep that lifecycle RPC alive for the
     // duration of the install instead of returning a misleading 120s timeout.
     channelTimeouts: { "restart-app": 15 * 60_000 },
+    publishHandlers: { snapshotUserData, commitWorkingTree: (input) => commitWorkingTree(input as Parameters<typeof commitWorkingTree>[0]) },
   });
   await new Promise<void>((resolve, reject) => {
     if (rpc.server.listening) resolve();

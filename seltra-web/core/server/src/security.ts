@@ -1,8 +1,10 @@
-const CHILD_SECRET_PREFIX = /^(?:R2_|GITHUB_|VERCEL_|WORKSPACE_MASTER|ALERT_|PUBLISH_)/i
+const CHILD_SECRET_PREFIX = /^(?:CORE_|R2_|GITHUB_|VERCEL_|WORKSPACE_|ALERT_|PUBLISH_|DEPLOY_MODE$|ALLOW_HOBBY_MODE_IN_PRODUCTION$|CLOUDINARY_|PAYSTACK_|MOOLRE_|CF_)/i
+const CHILD_SECRET_NAME = /^(?:DATABASE_URL|DIRECT_URL|JWT_SECRET)$/i
+const CHILD_SECRET_SUFFIX = /_(?:SECRET|KEY|TOKEN)$/i
 
 export function filterChildEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return Object.fromEntries(
-    Object.entries(env).filter(([name]) => !CHILD_SECRET_PREFIX.test(name)),
+    Object.entries(env).filter(([name]) => !CHILD_SECRET_PREFIX.test(name) && !CHILD_SECRET_NAME.test(name) && !CHILD_SECRET_SUFFIX.test(name)),
   )
 }
 

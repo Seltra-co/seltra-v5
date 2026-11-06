@@ -26,7 +26,7 @@ const internal = createServer((request, response) => {
   }
   if (request.method === 'GET' && request.url === `/api/v5/internal/core/entitlement/${tenantId}`) {
     response.writeHead(200, { 'content-type': 'application/json' })
-    response.end(JSON.stringify({ active: true, tenantId, userId, coreWorkspaceKey: workspaceKey, storeSlug: 'merchant-test', email: 'merchant@example.test', plan: 'free' }))
+    response.end(JSON.stringify({ active: true, tenantId, userId, coreWorkspaceKey: workspaceKey, storeSlug: 'merchant-test', email: 'merchant@example.test', plan: 'free', engineApiKey: `sk_seltra_${'a'.repeat(40)}` }))
     return
   }
   response.writeHead(404).end()
@@ -44,6 +44,7 @@ try {
     env: {
       ...process.env,
       NODE_ENV: 'test', GATEWAY_HOST: '127.0.0.1', GATEWAY_PORT: String(gatewayPort),
+      EXECUTION_PROVIDER: 'host',
       GATEWAY_ALLOWED_ORIGINS: 'http://localhost:3000', GATEWAY_PUBLIC_HOSTS: 'localhost,127.0.0.1',
       CORE_TOKEN_SECRET: tokenSecret, CORE_SERVICE_SECRET: serviceSecret,
       NEST_INTERNAL_URL: `http://127.0.0.1:${internalPort}`,

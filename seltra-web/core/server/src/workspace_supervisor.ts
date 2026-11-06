@@ -1,9 +1,10 @@
 import { createHmac, randomBytes } from 'node:crypto'
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { spawnSync, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
 import { filterChildEnvironment } from './security.js'
+import { createWorkspaceExecutionProvider, type WorkspaceExecutionProvider } from './execution_provider.js'
 
 export type WorkspaceRuntime = {
   workspaceId: string
@@ -12,12 +13,26 @@ export type WorkspaceRuntime = {
   userId: string
   baseUrl: string
   rpcSecret: string
+  runtimeSecretsKey: string
   modelToken: string
+  signGatewayRequest?: (method: string, path: string) => Record<string, string>
+  syncFromExecution?: () => Promise<void>
   child: ChildProcess
+  executionName: string
   touchedAt: number
 }
 
-type Options = { root: string; dataRoot: string; maxActive: number; idleMs: number; publicApiUrl: string; env: NodeJS.ProcessEnv }
+type Options = {
+  root: string
+  dataRoot: string
+  maxActive: number
+  idleMs: number
+  publicApiUrl: string
+  env: NodeJS.ProcessEnv
+  executionProvider?: WorkspaceExecutionProvider
+  restoreBeforeStart?: (workspaceKey: string, workspaceRoot: string) => Promise<string | undefined>
+  persistBeforeIdleStop?: (runtime: WorkspaceRuntime) => Promise<boolean>
+}
 
 const RUNTIME_STARTUP_TIMEOUT_MS = 120_000
 
@@ -70,12 +85,18 @@ async function waitForRuntime(port: number, child: ChildProcess) {
   }
 }
 
-async function getOrCreateSecretsKey(root: string) {
-  const filename = path.join(root, 'runtime-secrets.key')
+async function getOrCreateSecretsKey(filename: string, restoredKey?: string) {
+  if (restoredKey && !/^[a-f0-9]{64}$/i.test(restoredKey)) throw new Error('Restored workspace secret key has an invalid format.')
+  if (restoredKey) {
+    await fs.mkdir(path.dirname(filename), { recursive: true, mode: 0o700 })
+    await fs.writeFile(filename, restoredKey, { mode: 0o600 })
+    return restoredKey
+  }
   try { return (await fs.readFile(filename, 'utf8')).trim() } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
   const key = randomBytes(32).toString('hex')
+  await fs.mkdir(path.dirname(filename), { recursive: true, mode: 0o700 })
   await fs.writeFile(filename, key, { flag: 'wx', mode: 0o600 }).catch(async (error) => {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
   })
@@ -86,8 +107,10 @@ export class WorkspaceSupervisor {
   private readonly runtimes = new Map<string, WorkspaceRuntime>()
   private readonly starts = new Map<string, Promise<WorkspaceRuntime>>()
   private readonly timer: NodeJS.Timeout
+  private readonly executionProvider: WorkspaceExecutionProvider
 
   constructor(private readonly options: Options) {
+    this.executionProvider = options.executionProvider ?? createWorkspaceExecutionProvider(options.env)
     this.timer = setInterval(() => void this.collectIdle(), 60_000)
     this.timer.unref()
   }
@@ -117,7 +140,17 @@ export class WorkspaceSupervisor {
     return null
   }
 
+  async assertExecutionReady(): Promise<void> { await this.executionProvider.assertReady() }
+  get executionMode(): 'host' | 'docker' | 'cloudflare' { return this.executionProvider.mode }
+  async executionHealth() {
+    const provider = this.executionProvider as WorkspaceExecutionProvider & { health?: () => Promise<{ reachable: boolean; configured: boolean }> }
+    return provider.health ? provider.health() : { reachable: true, configured: true }
+  }
+
+  listRuntimes(): WorkspaceRuntime[] { return [...this.runtimes.values()] }
+
   private async start(workspaceId: string, workspaceKey: string, storeSlug: string, userId: string, engineApiKey: string): Promise<WorkspaceRuntime> {
+    await this.executionProvider.assertReady()
     if (this.runtimes.size >= this.options.maxActive) {
       throw Object.assign(new Error('Builder capacity is full. Try again shortly.'), { code: 'WORKSPACE_CAPACITY', status: 429 })
     }
@@ -127,22 +160,19 @@ export class WorkspaceSupervisor {
     const apps = path.join(root, 'apps')
     const temp = path.join(root, 'tmp')
     await Promise.all([userData, apps, temp, path.join(root, 'logs')].map((dir) => fs.mkdir(dir, { recursive: true })))
-    const secretsKey = await getOrCreateSecretsKey(root)
+    const restoredSecretsKey = await this.options.restoreBeforeStart?.(workspaceKey, root)
+    const secretsKey = await getOrCreateSecretsKey(path.join(this.options.dataRoot, '.control', `${workspaceKey}.secrets-key`), restoredSecretsKey)
     const rpcSecret = randomBytes(32).toString('hex')
     const modelToken = randomBytes(32).toString('hex')
     const identitySecret = this.options.env.CORE_SERVICE_SECRET
     if (!identitySecret) throw new Error('CORE_SERVICE_SECRET is required to bind Engine usage to the authenticated user.')
     const creditIdentityPayload = Buffer.from(JSON.stringify({ userId, tenantId: workspaceId, expiresAt: Date.now() + 24 * 60 * 60 * 1000 })).toString('base64url')
     const creditIdentitySignature = createHmac('sha256', identitySecret).update(creditIdentityPayload).digest('base64url')
-    const runtimeEnv = filterChildEnvironment(this.options.env)
-    for (const key of ['CORE_TOKEN_SECRET', 'CORE_SERVICE_SECRET', 'NEST_INTERNAL_URL', 'MODEL_API_KEY', 'MODEL_ACCOUNT_ID', 'DATABASE_URL', 'FIGMA_ACCESS_TOKEN', 'SELTRA_ENGINE_API_KEY', 'DYAD_PRO_API_KEY']) delete runtimeEnv[key]
-    const child = spawn(process.execPath, [
-      '--require', path.join(this.options.root, 'scripts/web/native-require-hook.cjs'),
-      path.join(this.options.root, 'dist/runtime/runtime_main.js'),
-    ], {
-      cwd: this.options.root,
-      env: {
-        ...runtimeEnv,
+    const filteredRuntimeEnv = filterChildEnvironment(this.options.env)
+    for (const key of ['CORE_TOKEN_SECRET', 'CORE_SERVICE_SECRET', 'NEST_INTERNAL_URL', 'MODEL_API_KEY', 'MODEL_ACCOUNT_ID', 'DATABASE_URL', 'FIGMA_ACCESS_TOKEN', 'SELTRA_ENGINE_API_KEY', 'DYAD_PRO_API_KEY']) delete filteredRuntimeEnv[key]
+    const executionName = `seltra-ws-${workspaceKey.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48)}`
+    const runtimeEnv: NodeJS.ProcessEnv = {
+        ...filteredRuntimeEnv,
         NODE_ENV: 'production',
         DYAD_WEB_RUNTIME: '1',
         DYAD_WEB_RUNTIME_ENTRY: '1',
@@ -150,30 +180,35 @@ export class WorkspaceSupervisor {
         DYAD_USER_DATA: userData,
         DYAD_APPS_DIR: apps,
         DYAD_TMP_DIR: temp,
-        RUNTIME_RPC_HOST: '127.0.0.1',
-        RUNTIME_RPC_PORT: String(port),
+        RUNTIME_RPC_HOST: this.executionProvider.mode === 'docker' ? '0.0.0.0' : '127.0.0.1',
+        RUNTIME_RPC_PORT: String(this.executionProvider.runtimePort ?? port),
         RUNTIME_RPC_SECRET: rpcSecret,
         RUNTIME_SECRETS_KEY: secretsKey,
         WORKSPACE_MODEL_TOKEN: modelToken,
         SELTRA_ENGINE_API_KEY: engineApiKey,
         SELTRA_ENGINE_CREDIT_IDENTITY: `${creditIdentityPayload}.${creditIdentitySignature}`,
-        MODEL_GATEWAY_URL: `http://127.0.0.1:${this.options.env.GATEWAY_PORT}/v1`,
+        MODEL_GATEWAY_URL: this.executionProvider.mode === 'cloudflare'
+          ? `${(this.options.env.CORE_PUBLIC_URL || '').replace(/\/$/, '')}/v1`
+          : this.executionProvider.mode === 'docker'
+          ? `http://host.docker.internal:${this.options.env.GATEWAY_PORT}/v1`
+          : `http://127.0.0.1:${this.options.env.GATEWAY_PORT}/v1`,
         VITE_SELTRA_API_URL: this.options.publicApiUrl.replace(/\/$/, ''),
         VITE_SELTRA_STORE_SLUG: storeSlug,
-      },
-      stdio: ['ignore', 'ignore', 'ignore'],
-      windowsHide: true,
-      detached: process.platform !== 'win32',
-    })
-    const runtime = { workspaceId, workspaceKey, storeSlug, userId, baseUrl: `http://127.0.0.1:${port}`, rpcSecret, modelToken, child, touchedAt: Date.now() }
+      }
+    const request = { name: executionName, workspaceRoot: root, hostPort: port, runtimeEnv,
+      runtimeEntry: path.join(this.options.root, 'dist/runtime/runtime_main.js'),
+      nativeHook: path.join(this.options.root, 'scripts/web/native-require-hook.cjs'), runtimeRoot: this.options.root }
+    const remote = this.executionProvider.startRemote ? await this.executionProvider.startRemote(request) : undefined
+    const child = remote?.child ?? this.executionProvider.spawn(request)
+    const runtime = { workspaceId, workspaceKey, storeSlug, userId, baseUrl: remote?.baseUrl ?? `http://127.0.0.1:${port}`, rpcSecret, runtimeSecretsKey: secretsKey, modelToken, signGatewayRequest: remote?.signRequest, syncFromExecution: remote?.syncFromExecution, child, executionName, touchedAt: Date.now() }
     this.runtimes.set(workspaceId, runtime)
     child.once('exit', () => { if (this.runtimes.get(workspaceId) === runtime) this.runtimes.delete(workspaceId) })
-    try { await waitForRuntime(port, child) } catch (error) {
+    try { if (!remote) await waitForRuntime(port, child) } catch (error) {
       console.error(JSON.stringify({
         event: 'workspace_runtime_start_failed',
         error: error instanceof Error ? error.message : String(error),
       }))
-      terminateTree(child)
+      await this.executionProvider.stop(executionName, child)
       this.runtimes.delete(workspaceId)
       throw error
     }
@@ -184,16 +219,23 @@ export class WorkspaceSupervisor {
     const cutoff = Date.now() - this.options.idleMs
     for (const [id, runtime] of this.runtimes) {
       if (runtime.touchedAt < cutoff && !this.starts.has(id)) {
+        if (this.options.persistBeforeIdleStop) {
+          const saved = await this.options.persistBeforeIdleStop(runtime).catch(() => false)
+          if (!saved) {
+            runtime.touchedAt = Date.now()
+            continue
+          }
+        }
         this.runtimes.delete(id)
-        terminateTree(runtime.child)
+        await this.executionProvider.stop(runtime.executionName, runtime.child)
       }
     }
   }
 
   async close() {
     clearInterval(this.timer)
-    const children = [...this.runtimes.values()].map(({ child }) => child)
+    const runtimes = [...this.runtimes.values()]
     this.runtimes.clear()
-    for (const child of children) terminateTree(child)
+    await Promise.all(runtimes.map((runtime) => this.executionProvider.stop(runtime.executionName, runtime.child)))
   }
 }

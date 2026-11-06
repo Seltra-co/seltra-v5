@@ -33,6 +33,12 @@ import {
   retrieveFigmaReference,
 } from "../../src/web/figma_reference.js";
 import { logError } from "./logger.js";
+import { GithubPublisher } from "./publish/github.js";
+import { R2ObjectStore } from "./publish/r2.js";
+import { WorkspaceDurability } from "./publish/snapshot.js";
+import { EditLeaseClient } from "./publish/edit_lease.js";
+import { VercelPublisher } from "./publish/vercel.js";
+import { PublishOrchestrator } from "./publish/orchestrator.js";
 
 const encoder = new TextEncoder();
 // Chat attachments are sent as base64 in the distributed-machine intent.
@@ -243,6 +249,12 @@ function sendJson(
     "content-type": "application/json; charset=utf-8",
   });
   response.end(JSON.stringify(value));
+}
+
+function sendSse(response: ServerResponse, event: string, data: unknown, id?: number): void {
+  if (response.destroyed || response.writableEnded) return;
+  if (id !== undefined) response.write(`id: ${id}\n`);
+  response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 async function readBody(
@@ -515,6 +527,47 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  if (config.EXECUTION_PROVIDER === "cloudflare") {
+    const missing = [
+      ...(!config.SANDBOX_GATEWAY_URL ? ["SANDBOX_GATEWAY_URL"] : []),
+      ...(!config.SANDBOX_GATEWAY_SIGNING_SECRET?.trim() ? ["SANDBOX_GATEWAY_SIGNING_SECRET"] : []),
+      ...(!config.CORE_PUBLIC_URL ? ["CORE_PUBLIC_URL"] : []),
+    ];
+    if (missing.length) {
+      console.error(JSON.stringify({ event: "execution_provider_startup_refused", code: "CONFIG_MISSING", variables: missing }));
+      process.exitCode = 1;
+      return;
+    }
+  }
+  if (!process.env.DEPLOY_MODE?.trim() || !["hobby", "team"].includes(process.env.DEPLOY_MODE.trim().toLowerCase())) {
+    console.warn(JSON.stringify({ event: "deploy_mode_defaulted", variable: "DEPLOY_MODE", mode: "team" }));
+  }
+  console.info(JSON.stringify({ event: "publish_config_validation", enabled: config.publish.enabled, passed: !config.publish.configurationErrors.length, missing: config.publish.configurationErrors }));
+  if ((config.publish.enabled || config.publish.persistenceEnabled || config.publish.restoreEnabled) && config.publish.configurationErrors.length) {
+    console.error(JSON.stringify({ event: "publish_startup_refused", code: "CONFIG_MISSING", variables: config.publish.configurationErrors }));
+    process.exitCode = 1;
+    return;
+  }
+  const workspaceRoot = path.resolve(config.WORKSPACE_ROOT);
+  const legacyDataRoot = path.resolve(config.DATA_ROOT);
+  const workspaceInsideLegacy = path.relative(legacyDataRoot, workspaceRoot);
+  const legacyInsideWorkspace = path.relative(workspaceRoot, legacyDataRoot);
+  if (!workspaceInsideLegacy.startsWith("..") && !path.isAbsolute(workspaceInsideLegacy) || !legacyInsideWorkspace.startsWith("..") && !path.isAbsolute(legacyInsideWorkspace)) {
+    console.error(JSON.stringify({ event: "workspace_root_not_ephemeral", code: "CONFIG_INVALID", variables: ["WORKSPACE_ROOT", "DATA_ROOT"] }));
+    process.exitCode = 1;
+    return;
+  }
+  if ((config.NODE_ENV === "production" || config.RENDER !== undefined) && (!config.publish.persistenceEnabled || !config.publish.restoreEnabled)) {
+    console.error(JSON.stringify({ event: "workspace_durability_startup_refused", code: "CONFIG_MISSING", variables: [
+      ...(!config.publish.persistenceEnabled ? ["WORKSPACE_PERSISTENCE_ENABLED"] : []),
+      ...(!config.publish.restoreEnabled ? ["WORKSPACE_RESTORE_ENABLED"] : []),
+    ] }));
+    process.exitCode = 1;
+    return;
+  }
+  if ((config.publish.enabled || config.publish.persistenceEnabled || config.publish.restoreEnabled) && config.publish.routesBucket === config.publish.workspacesBucket) {
+    console.info(JSON.stringify({ event: "r2_single_bucket_mode", message: "single-bucket mode; split before production" }));
+  }
   const engineUrl = process.env.SELTRA_ENGINE_URL ?? process.env.DYAD_ENGINE_URL;
   console.info(
     `Seltra Engine configured: ${engineUrl ?? "<not configured>"} (key present: ${Boolean(process.env.SELTRA_ENGINE_API_KEY ?? process.env.DYAD_PRO_API_KEY) ? "yes" : "no"})`,
@@ -553,14 +606,48 @@ async function main(): Promise<void> {
     frameAncestors: frameAncestors(config),
   }));
   const runtimeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const durabilityEnabled = config.publish.persistenceEnabled || config.publish.restoreEnabled;
+  const github = (config.publish.enabled || durabilityEnabled) ? new GithubPublisher({
+    org: config.publish.githubOrg!, appId: config.publish.githubAppId!, installationId: config.publish.githubInstallationId!,
+    privateKeyPem: config.publish.githubPrivateKeyPem!, mode: config.publish.deployMode, repoPrefix: config.publish.repoPrefix,
+  }) : undefined;
+  const objectStore = (config.publish.enabled || durabilityEnabled) ? new R2ObjectStore({
+    endpoint: config.publish.r2Endpoint!, accountId: config.publish.r2AccountId!, accessKeyId: config.publish.r2AccessKeyId!, secretAccessKey: config.publish.r2SecretAccessKey!,
+  }) : undefined;
+  const durability = new WorkspaceDurability(config.publish, objectStore, github, config.NEST_INTERNAL_URL, config.CORE_SERVICE_SECRET, fetch, config.WORKSPACE_ROOT);
+  const editLeases = new EditLeaseClient(config.NEST_INTERNAL_URL, config.CORE_SERVICE_SECRET);
+  const vercel = config.publish.enabled ? new VercelPublisher({ vercelToken: config.publish.vercelToken, vercelTeamId: config.publish.vercelTeamId }) : undefined;
+  const publishOrchestrator = new PublishOrchestrator(config.publish, objectStore, github, vercel, durability, config.NEST_INTERNAL_URL, config.CORE_SERVICE_SECRET);
+  const publishBackend = async <T = Record<string, unknown>>(route: string, payload: Record<string, unknown>): Promise<T> => {
+    const result = await fetch(`${config.NEST_INTERNAL_URL.replace(/\/+$/, "")}/api/v5/internal/core/${route}`, {
+      method: "POST", headers: { "content-type": "application/json", "x-core-service-secret": config.CORE_SERVICE_SECRET },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(15_000),
+    });
+    const body = await result.json().catch(() => ({})) as Record<string, unknown>;
+    if (!result.ok) throw new HttpError(result.status, typeof body.code === "string" ? body.code : "BACKEND_REJECTED", typeof body.message === "string" ? body.message : "Backend rejected the request.");
+    return body as T;
+  };
   const supervisor = new WorkspaceSupervisor({
     root: runtimeRoot,
-    dataRoot: path.resolve(config.DATA_ROOT),
+    dataRoot: path.resolve(config.WORKSPACE_ROOT),
     maxActive: config.MAX_ACTIVE_WORKSPACES,
     idleMs: config.WORKSPACE_IDLE_TTL_SECONDS * 1000,
-    publicApiUrl: config.SELTRA_PUBLIC_API_URL,
+    publicApiUrl: config.publish.publicApiUrl ?? config.SELTRA_PUBLIC_API_URL,
     env: process.env,
+    ...(config.publish.restoreEnabled ? {
+      restoreBeforeStart: (workspaceKey: string, workspaceRoot: string) => durability.restoreBeforeStart(workspaceKey, workspaceRoot),
+    } : {}),
+    ...(config.publish.persistenceEnabled ? {
+      persistBeforeIdleStop: async (runtime: WorkspaceRuntime) => { await durability.persist(runtime, "idle"); return true; },
+    } : {}),
   });
+  await supervisor.assertExecutionReady();
+  const devOnlyHostExecution = supervisor.executionMode === "host";
+  console.info(JSON.stringify({ event: "execution_provider_ready", provider: supervisor.executionMode, isolated: !devOnlyHostExecution }));
+  if (devOnlyHostExecution) {
+    console.warn("NOT ISOLATED - DEV ONLY: workspace code runs as a host process.");
+  }
+  durability.start(() => supervisor.listRuntimes());
   const entitlementCache = new Map<string, { expiresAt: number; active: boolean; reason?: string; engineApiKey: string }>();
   const sessionOwners = new Map<string, SessionClaims>();
   const modelTokens = new Map<string, SessionClaims>();
@@ -581,6 +668,7 @@ async function main(): Promise<void> {
     timeout: 120_000,
   });
   const previewCookieRefreshes = new WeakMap<IncomingMessage, string>();
+  const previewRuntimes = new WeakMap<IncomingMessage, WorkspaceRuntime>();
   const nest = await NestFactory.create(GatewayModule, { logger: false });
   traceStartup("nest_created");
   nest.use((request: IncomingMessage, response: ServerResponse) => {
@@ -778,6 +866,16 @@ async function main(): Promise<void> {
     proxyRequest.removeHeader("authorization");
     proxyRequest.removeHeader("x-runtime-session");
   });
+  previewProxy.on("proxyReq", (proxyRequest, request) => {
+    const runtime = previewRuntimes.get(request);
+    if (!runtime?.signGatewayRequest) return;
+    for (const [name, value] of Object.entries(runtime.signGatewayRequest(request.method ?? "GET", proxyRequest.path ?? "/"))) proxyRequest.setHeader(name, value);
+  });
+  previewProxy.on("proxyReqWs", (proxyRequest, request) => {
+    const runtime = previewRuntimes.get(request);
+    if (!runtime?.signGatewayRequest) return;
+    for (const [name, value] of Object.entries(runtime.signGatewayRequest("GET", proxyRequest.path ?? "/"))) proxyRequest.setHeader(name, value);
+  });
   previewProxy.on("proxyRes", (proxyResponse, request, response) => {
     proxyResponse.headers["x-content-type-options"] = "nosniff";
     proxyResponse.headers["referrer-policy"] = "same-origin";
@@ -896,6 +994,15 @@ async function main(): Promise<void> {
     modelTokens.set(runtime.modelToken, claims);
     return runtime;
   }
+
+  publishOrchestrator.startQueueWorker((identity) => runtimeFor({
+    sub: identity.userId,
+    email: identity.email,
+    plan: identity.plan,
+    workspaceId: identity.workspaceId,
+    coreWorkspaceKey: identity.workspaceKey,
+    storeSlug: identity.storeSlug,
+  }));
 
   function checkOrigin(request: IncomingMessage): void {
     const origin = request.headers.origin;
@@ -1020,14 +1127,16 @@ async function main(): Promise<void> {
     return (await visit(rewritten)) as T;
   }
 
-  async function resolvePreviewPort(label: string, claims: Pick<SessionClaims, "sub" | "email" | "plan" | "workspaceId" | "coreWorkspaceKey" | "storeSlug">): Promise<number> {
+  async function resolvePreviewPort(label: string, claims: Pick<SessionClaims, "sub" | "email" | "plan" | "workspaceId" | "coreWorkspaceKey" | "storeSlug">): Promise<number | string> {
     const match = label.match(/^ws-([a-f0-9]{12})-app-([1-9]\d{0,14})$/);
     if (!match || match[1] !== claims.coreWorkspaceKey)
       throw new HttpError(404, "PREVIEW_NOT_FOUND", "Preview not found.");
     const appId = Number(match[2]);
     const runtime = await runtimeFor(claims);
+    if (runtime.signGatewayRequest) return runtime.baseUrl.replace(/\/runtime$/, `/preview/${appId}`);
+    const targetUrl = runtime.baseUrl + "/internal/preview-target/" + appId;
     const response = await fetch(
-      runtime.baseUrl + "/internal/preview-target/" + appId,
+      targetUrl,
       {
         headers: { authorization: "Bearer " + runtime.rpcSecret },
         signal: AbortSignal.timeout(3_000),
@@ -1871,7 +1980,13 @@ async function main(): Promise<void> {
       return;
     }
     if (request.method === "GET" && url.pathname === "/healthz") {
-      sendJson(response, 200, { ok: true });
+      const executionHealth = await supervisor.executionHealth();
+      sendJson(response, 200, {
+        ok: true,
+        execution: devOnlyHostExecution ? "NOT ISOLATED - DEV ONLY" : supervisor.executionMode,
+        isolated: !devOnlyHostExecution,
+        gatewayReachable: executionHealth.reachable,
+      });
       return;
     }
     if (!primaryHost(request, config)) {
@@ -1890,21 +2005,29 @@ async function main(): Promise<void> {
         );
       }
       const port = await resolvePreviewPort(label, previewClaims);
-      const internalPreviewHost = `app-${label.match(/-app-(\d+)$/)?.[1]}.localhost:${port}`;
+      const remoteRuntime = typeof port === "string" ? await runtimeFor(previewClaims) : undefined;
+      const internalPreviewHost = remoteRuntime ? undefined : `app-${label.match(/-app-(\d+)$/)?.[1]}.localhost:${port}`;
       // previewProxy.web(request, response, {
       //   target: "http://127.0.0.1:" + port,
       //   headers: { host: `${label}.${config.PREVIEW_BASE_DOMAIN}:${port}` },
       //   proxyTimeout: 120_000,
       // });
+      if (remoteRuntime) previewRuntimes.set(request, remoteRuntime);
       previewProxy.web(request, response, {
-        target: "http://127.0.0.1:" + port,
-        headers: { host: internalPreviewHost },
+        target: remoteRuntime ? port as string : "http://127.0.0.1:" + port,
+        ...(internalPreviewHost ? { headers: { host: internalPreviewHost } } : {}),
         proxyTimeout: 120_000,
       });
       return;
     }
     if (request.method === "GET" && url.pathname === "/healthz") {
-      sendJson(response, 200, { ok: true });
+      const executionHealth = await supervisor.executionHealth();
+      sendJson(response, 200, {
+        ok: true,
+        execution: devOnlyHostExecution ? "NOT ISOLATED - DEV ONLY" : supervisor.executionMode,
+        isolated: !devOnlyHostExecution,
+        gatewayReachable: executionHealth.reachable,
+      });
       return;
     }
     if (request.method === "POST" && url.pathname === "/images/generations") {
@@ -1942,6 +2065,117 @@ async function main(): Promise<void> {
       }
       if (request.method !== "GET" && request.method !== "HEAD")
         checkOrigin(request);
+      if (request.method === "POST" && url.pathname === "/api/workspace/save-point") {
+        if (!config.publish.persistenceEnabled) throw new HttpError(404, "NOT_FOUND", "Not found.");
+        let body: { turnId?: unknown };
+        try { body = JSON.parse((await readBody(request, 8 * 1024)).toString("utf8")) as { turnId?: unknown }; }
+        catch { throw new HttpError(400, "INVALID_REQUEST", "A valid save point request is required."); }
+        const turnId = typeof body.turnId === "string" ? body.turnId.slice(0, 128) : "manual";
+        const runtime = await runtimeFor(claims);
+        try { await durability.persist(runtime, "manual", turnId); }
+        catch (error) { throw new HttpError(503, String((error as { code?: string }).code || "SOURCE_NOT_SAVED"), "Workspace changes could not be saved; the workspace was retained."); }
+        sendJson(response, 200, { ok: true });
+        return;
+      }
+      const leaseRoute = url.pathname.match(/^\/api\/workspace\/edit-lease\/(acquire|renew|release)$/);
+      if (request.method === "POST" && leaseRoute) {
+        if (!config.publish.enabled) throw new HttpError(404, "NOT_FOUND", "Not found.");
+        let body: { coreAppId?: unknown; holderSessionId?: unknown; ttlSeconds?: unknown };
+        try { body = JSON.parse((await readBody(request, 8 * 1024)).toString("utf8")) as typeof body; }
+        catch { throw new HttpError(400, "INVALID_REQUEST", "A valid edit lease request is required."); }
+        if (!Number.isSafeInteger(body.coreAppId) || Number(body.coreAppId) < 1) throw new HttpError(400, "INVALID_REQUEST", "coreAppId must be a positive integer.");
+        const leaseInput = { userId: claims.sub, workspaceKey: claims.coreWorkspaceKey, coreAppId: Number(body.coreAppId), ...(typeof body.holderSessionId === "string" ? { holderSessionId: body.holderSessionId } : {}), ...(Number.isSafeInteger(body.ttlSeconds) ? { ttlSeconds: Number(body.ttlSeconds) } : {}) };
+        try {
+          const result = leaseRoute[1] === "acquire"
+            ? await editLeases.acquire(leaseInput)
+            : leaseRoute[1] === "renew"
+              ? await editLeases.renew({ ...leaseInput, holderSessionId: String(body.holderSessionId || "") })
+              : await editLeases.release({ ...leaseInput, holderSessionId: String(body.holderSessionId || "") });
+          sendJson(response, 200, result);
+        } catch (error) {
+          const code = String((error as { code?: string }).code || "EDIT_LEASE_UNAVAILABLE");
+          throw new HttpError(code === "EDIT_LOCKED" ? 409 : 503, code, (error as Error).message);
+        }
+        return;
+      }
+      if (url.pathname === "/api/publish/start" && request.method === "POST") {
+        if (!config.publish.enabled) throw new HttpError(404, "NOT_FOUND", "Not found.");
+        let body: { appId?: unknown; idempotencyKey?: unknown; confirmReplaceLegacy?: unknown };
+        try { body = JSON.parse((await readBody(request, 8 * 1024)).toString("utf8")) as typeof body; }
+        catch { throw new HttpError(400, "INVALID_REQUEST", "A valid publish request is required."); }
+        if (!Number.isSafeInteger(body.appId) || Number(body.appId) < 1 || typeof body.idempotencyKey !== "string") throw new HttpError(400, "INVALID_REQUEST", "appId and idempotencyKey are required.");
+        const runtime = await runtimeFor(claims);
+        const result = await publishOrchestrator.start(claims, Number(body.appId), body.idempotencyKey, runtime, body.confirmReplaceLegacy === true);
+        sendJson(response, 202, result);
+        return;
+      }
+      if (url.pathname === "/api/publish/rollback" && request.method === "POST") {
+        if (!config.publish.enabled) throw new HttpError(404, "NOT_FOUND", "Not found.");
+        let body: { appId?: unknown; deploymentId?: unknown; idempotencyKey?: unknown };
+        try { body = JSON.parse((await readBody(request, 8 * 1024)).toString("utf8")) as typeof body; }
+        catch { throw new HttpError(400, "INVALID_REQUEST", "A valid rollback request is required."); }
+        if (!Number.isSafeInteger(body.appId) || Number(body.appId) < 1 || typeof body.deploymentId !== "string" || typeof body.idempotencyKey !== "string") throw new HttpError(400, "INVALID_REQUEST", "appId, deploymentId and idempotencyKey are required.");
+        const runtime = await runtimeFor(claims);
+        sendJson(response, 202, await publishOrchestrator.rollback(claims, Number(body.appId), body.deploymentId, body.idempotencyKey, runtime));
+        return;
+      }
+      if (url.pathname === "/api/publish/unpublish" && request.method === "POST") {
+        if (!config.publish.enabled) throw new HttpError(404, "NOT_FOUND", "Not found.");
+        let body: { appId?: unknown; idempotencyKey?: unknown };
+        try { body = JSON.parse((await readBody(request, 8 * 1024)).toString("utf8")) as typeof body; }
+        catch { throw new HttpError(400, "INVALID_REQUEST", "A valid unpublish request is required."); }
+        if (!Number.isSafeInteger(body.appId) || Number(body.appId) < 1 || typeof body.idempotencyKey !== "string") throw new HttpError(400, "INVALID_REQUEST", "appId and idempotencyKey are required.");
+        await publishOrchestrator.unpublish(claims, Number(body.appId), body.idempotencyKey);
+        sendJson(response, 200, { publicationStatus: "UNPUBLISHED" });
+        return;
+      }
+      if (url.pathname === "/api/publish/status" && request.method === "GET") {
+        if (!config.publish.enabled) throw new HttpError(404, "NOT_FOUND", "Not found.");
+        const appId = url.searchParams.get("appId");
+        if (!appId) throw new HttpError(400, "INVALID_REQUEST", "appId is required.");
+        sendJson(response, 200, await publishBackend("publish/status", { userId: claims.sub, appId }));
+        return;
+      }
+      if (url.pathname === "/api/publish/deployments" && request.method === "GET") {
+        if (!config.publish.enabled) throw new HttpError(404, "NOT_FOUND", "Not found.");
+        const appId = url.searchParams.get("appId");
+        if (!appId) throw new HttpError(400, "INVALID_REQUEST", "appId is required.");
+        const limit = Number(url.searchParams.get("limit") || 10);
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new HttpError(400, "INVALID_REQUEST", "limit must be between 1 and 50.");
+        sendJson(response, 200, await publishBackend("publish/history", { userId: claims.sub, appId, limit, ...(url.searchParams.get("cursor") ? { cursor: url.searchParams.get("cursor") } : {}) }));
+        return;
+      }
+      const publishEvents = url.pathname.match(/^\/api\/publish\/([^/]+)\/events$/);
+      if (publishEvents && request.method === "GET") {
+        if (!config.publish.enabled) throw new HttpError(404, "NOT_FOUND", "Not found.");
+        const deploymentId = decodeURIComponent(publishEvents[1]);
+        const headerCursor = Number(request.headers["last-event-id"] || 0);
+        let cursor = Number.isSafeInteger(headerCursor) && headerCursor > 0 ? headerCursor : Math.max(0, Number(url.searchParams.get("sinceSeq") || 0));
+        if (!Number.isSafeInteger(cursor)) cursor = 0;
+        response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache, no-transform", connection: "keep-alive", "x-accel-buffering": "no" });
+        response.flushHeaders?.();
+        let closed = false;
+        let lastHeartbeat = Date.now();
+        response.once("close", () => { closed = true; });
+        while (!closed && !response.writableEnded) {
+          let snapshot: { status: string; events?: Array<{ seq: number; status: string; message?: string | null; createdAt?: string }> };
+          try { snapshot = await publishBackend("publish/deployment", { userId: claims.sub, deploymentId, sinceSeq: cursor }); }
+          catch (error) { sendSse(response, "error", { code: error instanceof HttpError ? error.code : "BACKEND_REJECTED", message: "Deployment progress is temporarily unavailable." }); response.end(); return; }
+          for (const event of snapshot.events || []) {
+            if (event.seq <= cursor) continue;
+            cursor = event.seq;
+            sendSse(response, "stage", { seq: event.seq, status: event.status, message: event.message, ts: event.createdAt }, event.seq);
+          }
+          if (["LIVE", "FAILED", "SUPERSEDED", "DISABLED"].includes(snapshot.status)) {
+            sendSse(response, "done", { outcome: snapshot.status, errorCode: snapshot.status === "FAILED" ? "PUBLISH_FAILED" : undefined }, cursor || undefined);
+            response.end();
+            return;
+          }
+          if (Date.now() - lastHeartbeat >= 15_000) { response.write(": heartbeat\n\n"); lastHeartbeat = Date.now(); }
+          await new Promise((resolve) => setTimeout(resolve, 2_000));
+        }
+        return;
+      }
       if (url.pathname === "/api/figma/import" && request.method === "POST") {
         if (!config.FIGMA_ACCESS_TOKEN?.trim())
           throw new HttpError(
@@ -2031,14 +2265,16 @@ async function main(): Promise<void> {
           if (!response.writableEnded) abort.abort();
         });
         const workspaceRuntime = await runtimeFor(claims);
+        const rpcUrl = workspaceRuntime.baseUrl + "/rpc/" + encodeURIComponent(channel);
         const upstream = await fetch(
-          workspaceRuntime.baseUrl + "/rpc/" + encodeURIComponent(channel),
+          rpcUrl,
           {
             method: "POST",
             headers: {
               authorization: "Bearer " + workspaceRuntime.rpcSecret,
               "content-type": "application/json",
               "x-runtime-session": runtimeSessionId,
+              ...(workspaceRuntime.signGatewayRequest?.("POST", new URL(rpcUrl).pathname + new URL(rpcUrl).search) ?? {}),
             },
             body: new Uint8Array(body),
             signal: abort.signal,
@@ -2172,14 +2408,13 @@ async function main(): Promise<void> {
             request.url = url.pathname + url.search;
           }
           const port = await resolvePreviewPort(label, claims);
-          const internalPreviewHost = `app-${label.match(/-app-(\d+)$/)?.[1]}.localhost:${port}`;
-          const internalPreviewOrigin = "http://" + internalPreviewHost;
+          const remoteRuntime = typeof port === "string" ? await runtimeFor(claims) : undefined;
+          const internalPreviewHost = remoteRuntime ? undefined : `app-${label.match(/-app-(\d+)$/)?.[1]}.localhost:${port}`;
+          const internalPreviewOrigin = internalPreviewHost ? "http://" + internalPreviewHost : undefined;
+          if (remoteRuntime) previewRuntimes.set(request, remoteRuntime);
           previewProxy.ws(request, socket, head, {
-            target: "http://127.0.0.1:" + port,
-            headers: {
-              host: internalPreviewHost,
-              origin: internalPreviewOrigin,
-            },
+            target: remoteRuntime ? port as string : "http://127.0.0.1:" + port,
+            ...(internalPreviewHost && internalPreviewOrigin ? { headers: { host: internalPreviewHost, origin: internalPreviewOrigin } } : {}),
           });
           return;
         }
@@ -2209,7 +2444,10 @@ async function main(): Promise<void> {
           const eventsUrl = new URL(workspaceRuntime.baseUrl + "/events");
           eventsUrl.protocol = eventsUrl.protocol === "https:" ? "wss:" : "ws:";
           const runtime = new WebSocket(eventsUrl, {
-            headers: { authorization: "Bearer " + workspaceRuntime.rpcSecret },
+            headers: {
+              authorization: "Bearer " + workspaceRuntime.rpcSecret,
+              ...(workspaceRuntime.signGatewayRequest?.("GET", eventsUrl.pathname + eventsUrl.search) ?? {}),
+            },
           });
           const pair: EventSession = { userId: claims.sub, workspaceId: claims.workspaceId, browser, runtime };
           eventSessions.add(pair);
@@ -2230,7 +2468,7 @@ async function main(): Promise<void> {
           const syncWorkspaceFiles = async () => {
             if (workspaceSyncInFlight) return;
             workspaceSyncInFlight = true;
-            const appsRoot = path.resolve(config.DATA_ROOT, "ws", claims.coreWorkspaceKey, "apps");
+            const appsRoot = path.resolve(config.WORKSPACE_ROOT, "ws", claims.coreWorkspaceKey, "apps");
             const files: Array<{ path: string; content: string }> = [];
             const walk = async (directory: string, relative = ""): Promise<void> => {
               let entries: Array<import("node:fs").Dirent>;
@@ -2354,7 +2592,7 @@ async function main(): Promise<void> {
                     try {
                       const frame = JSON.parse(data.toString()) as {
                         channel?: string;
-                        payload?: { id?: unknown };
+                        payload?: { id?: unknown; chatId?: unknown; intentId?: unknown };
                       };
                       if (
                         frame.channel === "web:session" &&
@@ -2363,6 +2601,10 @@ async function main(): Promise<void> {
                         runtimeSessionId = frame.payload.id;
                         clearTimeout(sessionReadyTimer);
                         sessionOwners.set(runtimeSessionId, claims);
+                      }
+                      if (frame.channel === "chat:response:end" || frame.channel === "chat:response:error") {
+                        const turnId = typeof frame.payload?.intentId === "string" ? frame.payload.intentId : typeof frame.payload?.chatId === "string" ? frame.payload.chatId : "turn-end";
+                        await durability.persist(workspaceRuntime, "turn_end", turnId);
                       }
                       outgoing = JSON.stringify(
                         await rewriteWithPreviewTokens(frame, claims),
@@ -2431,15 +2673,32 @@ async function main(): Promise<void> {
     })();
   });
 
-  function onShutdown(): void {
+  let shuttingDown = false;
+  async function onShutdown(): Promise<void> {
+    if (shuttingDown) return;
+    shuttingDown = true;
     for (const pair of eventSessions) {
       pair.browser.close(1001, "Gateway shutting down");
       pair.runtime.close(1001, "Gateway shutting down");
     }
     previewProxy.close();
-    void supervisor.close();
-    void prismaClient?.$disconnect();
-    void nest.close();
+    let shutdownTimer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        durability.persistAll(supervisor.listRuntimes(), "shutdown"),
+        new Promise<never>((_resolve, reject) => { shutdownTimer = setTimeout(() => reject(Object.assign(new Error("Shutdown persistence deadline elapsed."), { code: "SOURCE_NOT_SAVED" })), config.publish.shutdownPersistSeconds * 1000); }),
+      ]);
+    } catch (error) {
+      console.error(JSON.stringify({ event: "shutdown_persistence_blocked", code: (error as { code?: string }).code || "SOURCE_NOT_SAVED" }));
+      if (shutdownTimer) clearTimeout(shutdownTimer);
+      return;
+    }
+    if (shutdownTimer) clearTimeout(shutdownTimer);
+    durability.close();
+    await supervisor.close();
+    await prismaClient?.$disconnect();
+    await nest.close();
+    server.close();
   }
   process.once("SIGINT", onShutdown);
   process.once("SIGTERM", onShutdown);
