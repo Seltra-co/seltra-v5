@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   deploy-dev:
-    if: github.event_name == 'push' || inputs.environment == 'dev'
+    if: github.event_name == 'push' || inputs.environment == 'dev' || inputs.environment == 'prod'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -45,12 +45,49 @@ jobs:
         run: |
           cd seltra-web/core
           npm ci
+          npm ci --prefix runtime/native --no-audit --no-fund
+          npm rebuild --prefix runtime/native --no-audit --no-fund
+          cp -a runtime/native/node_modules/. node_modules/
           node scripts/build-runtime.mjs
           image=../edge/sandbox-gateway/image
           mkdir -p "$image/dist/runtime"
           cp package.json package-lock.json "$image/"
           cp -a node_modules drizzle "$image/"
           cp dist/runtime/runtime_main.js "$image/dist/runtime/runtime_main.js"
+      - name: Build and smoke test Linux amd64 image
+        working-directory: seltra-web/edge/sandbox-gateway/image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 -t seltra-sandbox-runtime:ci .
+          docker run --rm --platform linux/amd64 --entrypoint node seltra-sandbox-runtime:ci -e "console.log(process.platform, process.arch); for (const m of ['better-sqlite3','node-pty','ssh2','@vscode/ripgrep','dugite']) { require(m); console.log('native-module-ok',m) }"
+          docker run -d --name seltra-sandbox-runtime-ci --platform linux/amd64 \
+            -p 8788:8788 -p 4173:4173 -e RUNTIME_RPC_SECRET=ci-runtime-secret \
+            -e RUNTIME_SECRETS_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
+            -e DYAD_WORKSPACE_ID=0123456789abcdef -e DYAD_WEB_RUNTIME_ENTRY=1 \
+            seltra-sandbox-runtime:ci
+          ready=0
+          for attempt in $(seq 1 180); do
+            if curl --fail --silent http://127.0.0.1:8788/__ready >/dev/null; then ready=1; break; fi
+            if ! docker inspect -f '{{.State.Running}}' seltra-sandbox-runtime-ci | grep -q true; then break; fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then
+            docker exec seltra-sandbox-runtime-ci node -e "fetch('http://127.0.0.1:8788/__boot-status').then(r=>r.text()).then(console.log).catch(()=>{})" || true
+            docker logs seltra-sandbox-runtime-ci 2>&1 | tail -n 160
+            exit 1
+          fi
+          curl --fail --silent http://127.0.0.1:8788/__boot-status | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s);if(!x.runtimeHealthy||x.platform!=='linux'||x.arch!=='x64'||!x.glibc||x.envNamesMissing.length)process.exit(1);console.log(JSON.stringify({runtimeHealthy:x.runtimeHealthy,node:x.node,platform:x.platform,arch:x.arch,libc:x.glibc,missingEnvNames:x.envNamesMissing.length,logLines:x.logTail.length}))})"
+          docker exec seltra-sandbox-runtime-ci node -e "process.stdout.write('runtime-exec-ok')" | grep -q runtime-exec-ok
+          docker exec -d seltra-sandbox-runtime-ci node -e "require('node:http').createServer((q,s)=>{s.end('preview-smoke-ok')}).listen(4173,'0.0.0.0')"
+          for attempt in $(seq 1 20); do curl --fail --silent http://127.0.0.1:4173/ | grep -q preview-smoke-ok && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:4173/ | grep -q preview-smoke-ok
+      - name: Validate Worker bundle and Wrangler configuration
+        working-directory: seltra-web/edge/sandbox-gateway
+        run: npx --yes wrangler@4 deploy --dry-run --config wrangler.jsonc --name "$WORKER_NAME"
+      - name: Stop smoke container
+        if: always()
+        run: docker rm -f seltra-sandbox-runtime-ci >/dev/null 2>&1 || true
       - name: Deploy Worker and container image
         working-directory: seltra-web/edge/sandbox-gateway
         run: npx --yes wrangler@4 deploy --config wrangler.jsonc --name "$WORKER_NAME"
@@ -58,9 +95,16 @@ jobs:
         working-directory: seltra-web/edge/sandbox-gateway
         shell: bash
         run: printf '%s' "$SIGNING_SECRET" | npx --yes wrangler@4 secret put SANDBOX_GATEWAY_SIGNING_SECRET --config wrangler.jsonc --name "$WORKER_NAME"
+      - name: Signed dev create, execute, diagnostics, empty preview route, and destroy smoke
+        if: github.event_name == 'push' || inputs.environment == 'dev' || inputs.environment == 'prod'
+        working-directory: seltra-web/edge/sandbox-gateway
+        env:
+          SIGNING_SECRET: ${{ secrets.SANDBOX_GATEWAY_SIGNING_SECRET_DEV }}
+        run: node scripts/dev-smoke.mjs
 
   deploy-prod:
-    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'prod' && github.ref == 'refs/heads/main'
+    needs: deploy-dev
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'prod' && github.ref == 'refs/heads/main' && needs.deploy-dev.result == 'success'
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 45
@@ -85,6 +129,9 @@ jobs:
         run: |
           cd seltra-web/core
           npm ci
+          npm ci --prefix runtime/native --no-audit --no-fund
+          npm rebuild --prefix runtime/native --no-audit --no-fund
+          cp -a runtime/native/node_modules/. node_modules/
           node scripts/build-runtime.mjs
           image=../edge/sandbox-gateway/image
           mkdir -p "$image/dist/runtime"
