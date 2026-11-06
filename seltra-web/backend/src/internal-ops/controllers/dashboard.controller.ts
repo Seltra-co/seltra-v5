@@ -19,6 +19,7 @@ import {
 import { OpsExceptionFilter } from '../filters/ops-exception.filter'
 import { OpsApiKeyGuard } from '../guards/ops-api-key.guard'
 import { DashboardService } from '../services/dashboard.service'
+import { prisma } from '../../db'
 
 const pipe = new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true })
 
@@ -40,6 +41,15 @@ export class DashboardController {
   @ApiOkResponse({ description: 'Internal ops API is reachable.', type: HealthResponseDto })
   health() {
     return { ok: true, service: 'seltra-merchant-backend', time: new Date().toISOString() }
+  }
+
+  @Get('publish/public-repos')
+  publicPublishRepos() {
+    return prisma.tenantApp.findMany({
+      where: { githubRepoVisibility: 'public' },
+      select: { id: true, tenantId: true, name: true, githubRepoFullName: true, githubRepoVisibility: true, updatedAt: true },
+      orderBy: { updatedAt: 'desc' },
+    })
   }
 
   //Dashboard overview endpoint for the internal ops API

@@ -22,6 +22,7 @@ import { BuilderModule } from './builder/builder.module'
 import { CoreInternalModule } from './core-internal/core-internal.module'
 import { StorefrontModule } from './storefront/storefront.module'
 import { SeltraEngineModule } from './engine/engine.module'
+import { PublishModule } from './publish/publish.module'
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { SeltraEngineModule } from './engine/engine.module'
     HealthModule,
     KeepAliveModule,
     SeltraEngineModule,
+    PublishModule,
   ],
   controllers: [AppController],
   providers: [AppService, ResendService],

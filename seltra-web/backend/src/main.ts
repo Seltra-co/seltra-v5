@@ -108,38 +108,41 @@ async function bootstrap() {
   const MERCHANT_VERCEL_ORIGIN_REGEX =
     /^https:\/\/([a-z0-9-]+\.)*(seltra|seltra-merchant|seltra-v5|seltra-v5-merchant)([a-z0-9-]*)?\.vercel\.app$/i
 
-  app.enableCors({
-    origin: (origin, callback) => {
-      // Requests with no Origin header (server-to-server, curl, Postman, webhooks) — allow
-      if (!origin) return callback(null, true)
+  app.enableCors((req, callback) => {
+    const isPublicStorefrontRoute = req.path.startsWith('/api/v5/storefront/')
+    callback(null, {
+      origin: (origin, originCallback) => {
+        // Requests with no Origin header (server-to-server, curl, Postman, webhooks) — allow
+        if (!origin) return originCallback(null, true)
 
-      const isAllowed =
-        STATIC_ALLOWED_ORIGINS.has(origin) ||
-        TENANT_SUBDOMAIN_REGEX.test(origin) ||
-        OPS_ORIGIN_REGEX.test(origin) ||
-        LOCAL_LAN_ORIGIN_REGEX.test(origin) ||
-        MERCHANT_VERCEL_ORIGIN_REGEX.test(origin)
+        const isAllowed =
+          STATIC_ALLOWED_ORIGINS.has(origin) ||
+          (isPublicStorefrontRoute && TENANT_SUBDOMAIN_REGEX.test(origin)) ||
+          OPS_ORIGIN_REGEX.test(origin) ||
+          LOCAL_LAN_ORIGIN_REGEX.test(origin) ||
+          MERCHANT_VERCEL_ORIGIN_REGEX.test(origin)
 
-      if (isAllowed) {
-        return callback(null, true)
-      }
+        if (isAllowed) {
+          return originCallback(null, true)
+        }
 
-      logger.warn(`Blocked CORS request from origin: ${origin}`)
-      // Do not throw — Nest maps Error callbacks to HTTP 500; false is enough to deny.
-      return callback(null, false)
-    },
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'x-internal-api-key',
-      'x-ops-actor',
-      'Idempotency-Key',
-      'Last-Event-ID',
-      'X-Request-ID',
-      'X-Dyad-Request-Id',
-    ],
-    credentials: true,
+        logger.warn(`Blocked CORS request from origin: ${origin}`)
+        // Do not throw — Nest maps Error callbacks to HTTP 500; false is enough to deny.
+        return originCallback(null, false)
+      },
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'x-internal-api-key',
+        'x-ops-actor',
+        'Idempotency-Key',
+        'Last-Event-ID',
+        'X-Request-ID',
+        'X-Dyad-Request-Id',
+      ],
+      credentials: !isPublicStorefrontRoute,
+    })
   })
 
   app.setGlobalPrefix('api/v5', {

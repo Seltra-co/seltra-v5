@@ -9,6 +9,69 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+enum DeploymentStatus {
+  QUEUED
+  PREPARING_WORKSPACE
+  SAVING_SOURCE
+  BUILDING
+  VERIFYING
+  ACTIVATING
+  LIVE
+  FAILED
+  SUPERSEDED
+  DISABLED
+}
+
+enum DeploymentKind {
+  PUBLISH
+  ROLLBACK
+}
+
+enum PublishDeployMode {
+  hobby
+  team
+}
+
+enum PublishRepoVisibility {
+  public
+  private
+}
+
+enum PublishSourceState {
+  COMPLETE
+  INTERRUPTED
+}
+
+enum PublishPersistenceStatus {
+  OK
+  PENDING
+  DEGRADED
+}
+
+enum WorkspacePersistenceOperationStatus {
+  PERSISTING
+  SOURCE_VERIFIED
+  SNAPSHOT_VERIFIED
+  SAFE_TO_DESTROY
+  DEGRADED
+}
+
+enum PublishWorkspaceStatus {
+  ACTIVE
+  IDLE
+  PERSISTING
+  SAFE_TO_DESTROY
+  EVICTED
+  RESTORING
+  FAILED
+}
+
+enum PublishPublicationStatus {
+  UNPUBLISHED
+  PUBLISHED
+  UNPUBLISHING
+}
+
 model User {
   id           String  @id @default(uuid())
   email        String  @unique
@@ -43,65 +106,66 @@ model RefreshToken {
 }
 
 model Tenant {
-  id                    String                @id @default(uuid())
-  coreWorkspaceKey      String?               @unique
-  creditWorkspaceId     String?
-  creditWorkspace       WorkspaceCredit?      @relation(fields: [creditWorkspaceId], references: [workspaceId], onDelete: Restrict)
-  ownerId               String?
-  owner                 User?                 @relation(fields: [ownerId], references: [id])
-  name                  String
-  slug                  String                @unique
-  businessType          String?
-  city                  String?
-  country               String?
-  targetAudience        String?
-  platform              String                @default("Seltra")
-  status                String                @default("active")
-  canonical             Json
-  storeUrl              String?
-  storefrontCode        String?
-  storefrontVersion     Int                   @default(0)
-  storefrontGeneratedAt DateTime?
-  manifest              Json?
-  heroSource            String?
-  heroGeneratedAt       DateTime?
-  heroSnapshotUrl       String?
-  heroSnapshotUpdatedAt DateTime?
-  navSource             String?
-  navGeneratedAt        DateTime?
-  storeDNA              Json?
-  merchantContext       Json? // stores MerchantContext object
-  merchantMemory        Json?
-  brandVoice            Json?
-  preferences           Json?
-  payoutMethod          String?
-  payoutProvider        String?
-  payoutProviderCode    String?
-  payoutAccount         String?
-  payoutAccountName     String?
-  payoutValidatedAt     DateTime?
-  agentSettings         Json?
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
-  categories            Category[]
-  customers             Customer[]
-  ledger                MerchantLedger?
-  orders                Order[]
-  paymentProviders      PaymentProvider[]
-  products              Product[]
-  shippingZones         ShippingZone[]
-  events                TenantEvent[]
-  notifications         UserNotification[]
-  invoices              Invoice[]
-  agentEvents           AgentEvent[]
-  pendingAgentAction    AgentPendingAction?
-  manifestPatchLogs     ManifestPatchLog[]
-  knowledgeChunks       StoreKnowledgeChunk[]
-  disbursements         Disbursement[]
-  marketingMessages     MarketingMessage[]
-  marketingTemplates    MarketingTemplate[]
-  apps                  TenantApp[]
-  seltraEngineApiKeys   SeltraEngineApiKey[]
+  id                             String                          @id @default(uuid())
+  coreWorkspaceKey               String?                         @unique
+  creditWorkspaceId              String?
+  creditWorkspace                WorkspaceCredit?                @relation(fields: [creditWorkspaceId], references: [workspaceId], onDelete: Restrict)
+  ownerId                        String?
+  owner                          User?                           @relation(fields: [ownerId], references: [id])
+  name                           String
+  slug                           String                          @unique
+  businessType                   String?
+  city                           String?
+  country                        String?
+  targetAudience                 String?
+  platform                       String                          @default("Seltra")
+  status                         String                          @default("active")
+  canonical                      Json
+  storeUrl                       String?
+  storefrontCode                 String?
+  storefrontVersion              Int                             @default(0)
+  storefrontGeneratedAt          DateTime?
+  manifest                       Json?
+  heroSource                     String?
+  heroGeneratedAt                DateTime?
+  heroSnapshotUrl                String?
+  heroSnapshotUpdatedAt          DateTime?
+  navSource                      String?
+  navGeneratedAt                 DateTime?
+  storeDNA                       Json?
+  merchantContext                Json? // stores MerchantContext object
+  merchantMemory                 Json?
+  brandVoice                     Json?
+  preferences                    Json?
+  payoutMethod                   String?
+  payoutProvider                 String?
+  payoutProviderCode             String?
+  payoutAccount                  String?
+  payoutAccountName              String?
+  payoutValidatedAt              DateTime?
+  agentSettings                  Json?
+  createdAt                      DateTime                        @default(now())
+  updatedAt                      DateTime                        @updatedAt
+  categories                     Category[]
+  customers                      Customer[]
+  ledger                         MerchantLedger?
+  orders                         Order[]
+  paymentProviders               PaymentProvider[]
+  products                       Product[]
+  shippingZones                  ShippingZone[]
+  events                         TenantEvent[]
+  notifications                  UserNotification[]
+  invoices                       Invoice[]
+  agentEvents                    AgentEvent[]
+  pendingAgentAction             AgentPendingAction?
+  manifestPatchLogs              ManifestPatchLog[]
+  knowledgeChunks                StoreKnowledgeChunk[]
+  disbursements                  Disbursement[]
+  marketingMessages              MarketingMessage[]
+  marketingTemplates             MarketingTemplate[]
+  apps                           TenantApp[]
+  seltraEngineApiKeys            SeltraEngineApiKey[]
+  workspacePersistenceOperations WorkspacePersistenceOperation[]
 
   aiCreditsUsed        Int      @default(0)
   aiCreditsWindowStart DateTime @default(now())
@@ -120,27 +184,147 @@ model Tenant {
 }
 
 model TenantApp {
-  id                    String    @id @default(uuid())
-  tenantId              String
-  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  coreAppId             Int
-  corePath              String?
-  name                  String
-  status                String    @default("draft")
-  previewUrl            String?
-  publishedUrl          String?
-  lastCommitSha         String?
-  version               Int       @default(0)
-  blueprint             Json?
-  appManifest           Json?
-  heroSnapshotUrl       String?
-  heroSnapshotUpdatedAt DateTime?
-  blueprintApprovedAt   DateTime?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  id                        String                   @id @default(uuid())
+  tenantId                  String
+  tenant                    Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  coreAppId                 Int
+  corePath                  String?
+  name                      String
+  status                    String                   @default("draft")
+  previewUrl                String?
+  publishedUrl              String?
+  lastCommitSha             String?
+  githubRepoId              String?
+  githubRepoFullName        String?
+  githubRepoVisibility      PublishRepoVisibility?
+  githubDefaultBranch       String                   @default("main")
+  lastPushedSha             String?
+  lastPushedAt              DateTime?
+  lastPushError             String?
+  sourceState               PublishSourceState?
+  persistenceStatus         PublishPersistenceStatus @default(OK)
+  vercelProjectId           String?
+  vercelProjectName         String?
+  publicationStatus         PublishPublicationStatus @default(UNPUBLISHED)
+  liveDeploymentId          String?
+  lastKnownGoodDeploymentId String?
+  activePublishId           String?                  @unique
+  editLeaseHolderSessionId  String?
+  editLeaseExpiresAt        DateTime?
+  workspaceStatus           PublishWorkspaceStatus   @default(ACTIVE)
+  lastSnapshotAt            DateTime?
+  version                   Int                      @default(0)
+  blueprint                 Json?
+  appManifest               Json?
+  heroSnapshotUrl           String?
+  heroSnapshotUpdatedAt     DateTime?
+  blueprintApprovedAt       DateTime?
+  deployments               Deployment[]
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
 
   @@unique([tenantId, coreAppId])
   @@index([tenantId])
+}
+
+model WorkspacePersistenceOperation {
+  id              String                              @id @default(cuid())
+  tenantId        String
+  tenant          Tenant                              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  workspaceKey    String
+  operationId     String
+  reason          String
+  status          WorkspacePersistenceOperationStatus @default(PERSISTING)
+  githubRevisions Json?
+  snapshotVersion String?
+  manifestKey     String?
+  bundleKey       String?
+  bundleSha256    String?
+  errorCode       String?
+  completedAt     DateTime?
+  createdAt       DateTime                            @default(now())
+  updatedAt       DateTime                            @updatedAt
+
+  @@unique([tenantId, operationId])
+  @@index([workspaceKey, status, updatedAt])
+  @@index([tenantId, createdAt])
+}
+
+model Deployment {
+  id                   String                 @id @default(cuid())
+  tenantId             String
+  tenantAppId          String
+  tenantApp            TenantApp              @relation(fields: [tenantAppId], references: [id], onDelete: Cascade)
+  slug                 String
+  kind                 DeploymentKind         @default(PUBLISH)
+  status               DeploymentStatus       @default(QUEUED)
+  idempotencyKey       String?
+  triggeredByUserId    String
+  sourceCommitSha      String?
+  vercelProjectId      String?
+  vercelDeploymentId   String?
+  vercelOrigin         String?
+  healthStatus         String?
+  healthCheckedAt      DateTime?
+  verifiedAt           DateTime?
+  publicVerifiedAt     DateTime?
+  rollbackSourceId     String?
+  previousDeploymentId String?
+  errorCode            String?
+  errorMessage         String?
+  buildLogTail         String?
+  lastEventSeq         Int                    @default(0)
+  queueLeaseOwner      String?
+  queueLeaseToken      String?
+  queueLeaseExpiresAt  DateTime?
+  attemptCount         Int                    @default(0)
+  vercelRequestedAt    DateTime?
+  timings              Json?
+  deployMode           PublishDeployMode      @default(team)
+  repoVisibility       PublishRepoVisibility?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  liveAt               DateTime?
+  finishedAt           DateTime?
+  events               PublishEvent[]
+
+  @@unique([tenantAppId, idempotencyKey])
+  @@index([tenantAppId, createdAt])
+  @@index([slug, status])
+  @@index([tenantId, createdAt])
+  @@index([status, queueLeaseExpiresAt, createdAt])
+  @@index([vercelRequestedAt])
+}
+
+model PublishEvent {
+  id           String           @id @default(cuid())
+  deploymentId String
+  deployment   Deployment       @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  seq          Int
+  status       DeploymentStatus
+  message      String?
+  data         Json?
+  createdAt    DateTime         @default(now())
+
+  @@unique([deploymentId, seq])
+  @@index([deploymentId, createdAt])
+}
+
+model PublishProviderEvent {
+  id                   String   @id @default(cuid())
+  provider             String
+  projectId            String
+  deploymentId         String
+  eventType            String
+  reconciliationStatus String   @default("DETECTED")
+  readyState           String?
+  url                  String?
+  sourceSha            String?
+  firstSeenAt          DateTime @default(now())
+  lastSeenAt           DateTime @updatedAt
+
+  @@unique([provider, deploymentId])
+  @@index([projectId, firstSeenAt])
 }
 
 model ScheduledEmail {
