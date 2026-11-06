@@ -17,7 +17,9 @@ await build({
   target: "node24",
   sourcemap: true,
   tsconfig: "tsconfig.app.json",
-  alias: { electron: shim },
+  // The headless Web runtime must use electron-log's Node transport even for
+  // shared modules that import the desktop main entry.
+  alias: { electron: shim, "electron-log/main": "electron-log/node" },
   loader: { ".md": "text", ".txt": "text" },
   external: [
     "better-sqlite3",
@@ -50,5 +52,10 @@ await build({
 });
 
 fsSync.rmSync(path.join(root, "dist/runtime/package.json"), { force: true });
+
+const runtimeBundle = fsSync.readFileSync(path.join(root, "dist/runtime/runtime_main.js"), "utf8");
+if (runtimeBundle.includes('require("electron-log/main")')) {
+  throw new Error("Headless runtime bundle still references the Electron-only electron-log/main entry");
+}
 
 console.log("Built dist/runtime/runtime_main.js");
