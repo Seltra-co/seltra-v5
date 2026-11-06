@@ -14,3 +14,9 @@ The host process provider is a local-only troubleshooting opt-in: `EXECUTION_PRO
 4. Start Backend, Core, and Frontend using [PUBLISH-LOCAL-DEV.md](PUBLISH-LOCAL-DEV.md). Core must fail fast and list only missing variable names if configuration is incomplete. At startup it checks gateway reachability and runs a signed create, command, and destroy self-test.
 
 No local preview, build, publish, or browser test may silently fall back to host execution.
+
+## Container boot diagnostics
+
+The dev image starts a dependency-free bootstrap listener on port 8788 before it spawns the runtime on RPC port 8787. `GET /__ready` returns success only after the authenticated RPC listener responds; `GET /__boot-status` reports phase, process exit, Node/platform/architecture/libc, memory, required environment variable names present or missing, and a redacted runtime log tail. It never returns environment values. A signed `GET /v1/workspaces/<workspaceKey>/diag` returns the same status plus container state and last exit/error code.
+
+Create failures use `CONTAINER_NOT_STARTED`, `CONTAINER_EXITED`, `PORT_NOT_LISTENING`, `RUNTIME_CRASHED`, or `RUNTIME_TIMEOUT`. The Worker logs the instance (`standard-2`), 180-second port-ready budget with exponential backoff, and 30-minute inactivity timeout. Failed creates collect boot status and destroy the container. GitHub Actions builds and boots the Linux/amd64 image, verifies glibc and native modules, runs a command and static HTTP smoke, then runs a signed dev create/exec/diagnostics/cleanup check. The empty-project preview probe expects 404; it does not stand in for a generated-app preview test.

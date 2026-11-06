@@ -11,6 +11,8 @@ This is a local service startup reference, not a readiness signal. Do not connec
 
 Core startup must validate required/invalid configuration and report variable names only. The Cloudflare gateway must pass its signed startup self-test. The explicit host opt-in is marked `NOT ISOLATED - DEV ONLY` in its startup banner and `/healthz`, and is prohibited in production; it is not a browser-test fallback.
 
+When a container fails to start, the signed gateway route `/v1/workspaces/<workspaceKey>/diag` reports its container state, error code, boot phase, process exit, Linux architecture/libc, missing environment variable names, and redacted log tail. The bootstrap reserves port 8788 for readiness and status; runtime RPC stays on 8787. The standard-2 container gets up to 180 seconds to become ready. Do not interpret the Actions static-server check or an empty-project preview 404 as a successful generated-project preview.
+
 ## Local startup order
 
 Use three terminals from the repository root. Confirm the Backend database target before starting it.

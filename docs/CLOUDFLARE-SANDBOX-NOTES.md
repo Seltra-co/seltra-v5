@@ -10,6 +10,10 @@ Each workspace uses a separately keyed Durable Object/container instance. Cloudf
 
 ## One-time Willy checklist
 
+The runtime bootstrap listens on port 8788 first, then starts the web runtime on port 8787. Core's isolated web runtime binds RPC to `0.0.0.0` inside the container; the gateway's Durable Object TCP proxy is the only route to it. Standard-2 is used to avoid the constrained `lite` allocation. The bootstrap readiness budget is 180 seconds with bounded backoff, and inactivity cleanup is set to 30 minutes. `/__boot-status` and the signed workspace `/diag` endpoint show redacted boot state and log tail. Error codes distinguish container-start failure, container exit, unopened port, runtime crash, and runtime timeout.
+
+The Actions workflow smoke-tests the linux/amd64/glibc image before deploy, including native module loads, runtime readiness, a command, and a static HTTP response. The signed post-deploy check creates a real runtime, executes a command, checks diagnostic readiness, probes the empty project's preview route, and destroys it. Generated-project preview, cross-project isolation, and inactivity cleanup still require the local browser acceptance run; a 404 on an empty workspace is not a preview pass.
+
 Do this once in the platform GitHub repository and Render Core service:
 
 1. In Cloudflare, create an account API token scoped to this account with **Workers Scripts: Admin** (the workflow creates the dev and prod Workers) and **Containers: Edit**. Do not add zone/DNS permissions; this workflow uses `workers.dev`. Do not reuse the Workers AI token. Cloudflare documents the separate Worker creation/deploy and Container permissions in its [Workers role guidance](https://developers.cloudflare.com/workers/authorization/) and [API token permission list](https://developers.cloudflare.com/fundamentals/api/reference/permissions/).
@@ -25,13 +29,13 @@ Do this once in the platform GitHub repository and Render Core service:
 
 ## GitHub CLI
 
-Once `.github/workflows/deploy-sandbox-gateway.yml` exists and the four platform-repository secrets are configured, trigger the dev deployment from the platform repository root with:
+Once `.github/workflows/deploy-sandbox-gateway.yml` exists and the four platform-repository secrets are configured, trigger the dev deployment from the feature branch with:
 
 ```sh
-gh workflow run deploy-sandbox-gateway.yml --ref main -f environment=dev
+gh workflow run deploy-sandbox-gateway.yml --ref publish/p0-safety -f environment=dev
 ```
 
-Production must be triggered manually with `environment=prod` from `main`; GitHub's protected `production` Environment approval is required.
+Production must be triggered manually with `environment=prod` from `main`; the workflow first deploys and self-tests the dev gateway from that same commit, then requires GitHub's protected `production` Environment approval before production deployment.
 
 ## Credentials and fail-closed behavior
 
