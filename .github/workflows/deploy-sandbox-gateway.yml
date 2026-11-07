@@ -114,7 +114,7 @@ jobs:
         working-directory: seltra-web/edge/sandbox-gateway
         shell: bash
         run: printf '%s' "$SIGNING_SECRET" | npx --yes wrangler@4 secret put SANDBOX_GATEWAY_SIGNING_SECRET --config wrangler.jsonc --name "$WORKER_NAME"
-      - name: Signed dev create, execute, diagnostics, empty preview route, and destroy smoke
+      - name: Signed dev create, runtime RPC body, execute, diagnostics, empty preview route, and destroy smoke
         if: github.event_name == 'push' || inputs.environment == 'dev' || inputs.environment == 'prod'
         working-directory: seltra-web/edge/sandbox-gateway
         env:

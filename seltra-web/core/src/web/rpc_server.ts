@@ -132,6 +132,33 @@ export function createRpcServer(
       });
       return;
     }
+    if (
+      request.method === "POST" &&
+      request.url === "/rpc/__gateway-self-test" &&
+      process.env.SELTRA_GATEWAY_SELF_TEST === "1"
+    ) {
+      try {
+        const body = await readBody(request) as { args?: unknown };
+        if (!Array.isArray(body?.args)) {
+          sendJson(response, 400, {
+            ok: false,
+            error: { code: "INVALID_REQUEST", message: "A JSON args array is required." },
+          });
+          return;
+        }
+        sendJson(response, 200, { ok: true, result: { echo: body } });
+      } catch (error) {
+        const tooLarge = (error as { code?: string }).code === "BODY_TOO_LARGE";
+        sendJson(response, tooLarge ? 413 : 400, {
+          ok: false,
+          error: {
+            code: tooLarge ? "BODY_TOO_LARGE" : "INVALID_REQUEST",
+            message: tooLarge ? "Request body exceeds the allowed size." : "Request body must be valid JSON.",
+          },
+        });
+      }
+      return;
+    }
     const internalPublishPath = request.url;
     const internalPublishAction = internalPublishPath === "/internal/publish/snapshot-user-data" ? "snapshot"
       : internalPublishPath === "/internal/publish/commit-working-tree" ? "commit" : undefined;

@@ -2266,31 +2266,65 @@ async function main(): Promise<void> {
         });
         const workspaceRuntime = await runtimeFor(claims);
         const rpcUrl = workspaceRuntime.baseUrl + "/rpc/" + encodeURIComponent(channel);
-        const upstream = await fetch(
-          rpcUrl,
-          {
-            method: "POST",
-            headers: {
-              authorization: "Bearer " + workspaceRuntime.rpcSecret,
-              "content-type": "application/json",
-              "x-runtime-session": runtimeSessionId,
-              ...(workspaceRuntime.signGatewayRequest?.("POST", new URL(rpcUrl).pathname + new URL(rpcUrl).search) ?? {}),
-            },
-            body: new Uint8Array(body),
-            signal: abort.signal,
-          },
-        );
-        let result: unknown;
+        let upstream: Response;
         try {
-          result = JSON.parse(await upstream.text());
+          upstream = await fetch(
+            rpcUrl,
+            {
+              method: "POST",
+              headers: {
+                authorization: "Bearer " + workspaceRuntime.rpcSecret,
+                "content-type": "application/json",
+                "x-runtime-session": runtimeSessionId,
+                ...(workspaceRuntime.signGatewayRequest?.("POST", new URL(rpcUrl).pathname + new URL(rpcUrl).search) ?? {}),
+              },
+              body: new Uint8Array(body),
+              signal: abort.signal,
+            },
+          );
         } catch {
+          const requestId = randomUUID();
+          console.error(JSON.stringify({ event: "runtime_rpc_upstream_failed", requestId, channel }));
+          response.setHeader("x-request-id", requestId);
+          sendJson(response, 502, {
+            ok: false,
+            error: { code: "RUNTIME_UPSTREAM_ERROR", message: "Runtime request failed.", requestId },
+          });
+          return;
+        }
+        let result: unknown;
+        let resultStatus = upstream.status;
+        if (upstream.status >= 500) {
+          await upstream.body?.cancel().catch(() => undefined);
+          const requestId = randomUUID();
+          console.error(JSON.stringify({ event: "runtime_rpc_upstream_failed", requestId, channel, status: upstream.status }));
+          response.setHeader("x-request-id", requestId);
+          resultStatus = 502;
           result = {
             ok: false,
             error: {
-              code: "RUNTIME_INVALID_RESPONSE",
-              message: "Runtime returned an invalid response.",
+              code: "RUNTIME_UPSTREAM_ERROR",
+              message: "Runtime request failed.",
+              requestId,
             },
           };
+        } else {
+          try {
+            result = JSON.parse(await upstream.text());
+          } catch {
+            const requestId = randomUUID();
+            console.error(JSON.stringify({ event: "runtime_rpc_invalid_response", requestId, channel, status: upstream.status }));
+            response.setHeader("x-request-id", requestId);
+            resultStatus = 502;
+            result = {
+              ok: false,
+              error: {
+                code: "RUNTIME_INVALID_RESPONSE",
+                message: "Runtime response was not valid JSON.",
+                requestId,
+              },
+            };
+          }
         }
         if ((channel === "create-app" || channel === "list-apps") && result && typeof result === "object") {
           const rpcResponse = result as { ok?: boolean; result?: unknown };
@@ -2359,7 +2393,7 @@ async function main(): Promise<void> {
           }
         }
         const rewritten = await rewriteWithPreviewTokens(result, claims);
-        sendJson(response, upstream.status, rewritten);
+        sendJson(response, resultStatus, rewritten);
         return;
       }
       if (url.pathname === "/api/auth/me")

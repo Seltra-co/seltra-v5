@@ -1,8 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
-import { sandboxId, verifyRequest } from "../auth.mjs";
+import { sandboxId, signRequest, verifyRequest } from "../auth.mjs";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
-const MAX_CONTROL_BODY = 24 * 1024 * 1024;
+export const MAX_CONTROL_BODY = 24 * 1024 * 1024;
 const MAX_COMMAND_OUTPUT = 256 * 1024;
 const PORT_READY_TIMEOUT_MS = 180_000;
 const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
@@ -12,10 +12,74 @@ const ALLOWED_RUNTIME_ENV = new Set([
   "RUNTIME_RPC_PORT", "RUNTIME_RPC_SECRET", "RUNTIME_SECRETS_KEY",
   "WORKSPACE_MODEL_TOKEN", "SELTRA_ENGINE_API_KEY", "SELTRA_ENGINE_CREDIT_IDENTITY",
   "MODEL_GATEWAY_URL", "VITE_SELTRA_API_URL", "VITE_SELTRA_STORE_SLUG",
+  "SELTRA_GATEWAY_SELF_TEST",
 ]);
 
 function json(value, status = 200) {
   return Response.json(value, { status, headers: JSON_HEADERS });
+}
+
+async function readBodyLimited(request, limit = MAX_CONTROL_BODY) {
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > limit) {
+    await request.body?.cancel().catch(() => undefined);
+    return null;
+  }
+
+  // Clone before reading so proxy requests, including streaming response and
+  // WebSocket routes, never depend on a disturbed incoming Request body.
+  const bodyRequest = request.clone();
+  if (!bodyRequest.body) return new Uint8Array();
+  const reader = bodyRequest.body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) {
+        await Promise.all([
+          reader.cancel().catch(() => undefined),
+          request.body?.cancel().catch(() => undefined),
+        ]);
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  await request.body?.cancel().catch(() => undefined);
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+function proxyHeaders(source, { runtime = false } = {}) {
+  const headers = new Headers(source);
+  for (const name of [
+    "x-sandbox-signature", "x-sandbox-timestamp", "x-sandbox-nonce",
+    "content-length", "host", "cf-connecting-ip", "cf-ray", "cf-visitor",
+  ]) headers.delete(name);
+  if (!runtime) {
+    headers.delete("authorization");
+    headers.delete("x-runtime-session");
+  }
+  return headers;
+}
+
+function proxyRequest(target, source, body, options) {
+  const method = source.method.toUpperCase();
+  return new Request(target, {
+    method,
+    headers: proxyHeaders(source.headers, options),
+    ...(["GET", "HEAD"].includes(method) ? {} : { body }),
+  });
 }
 
 function validateWorkspaceKey(value) {
@@ -73,7 +137,8 @@ export class WorkspaceSandbox extends DurableObject {
     const url = new URL(request.url);
     const container = this.ctx.container;
     if (!container) return json({ code: "CONTAINER_UNAVAILABLE" }, 503);
-    const bytes = new Uint8Array(await request.arrayBuffer());
+    const bytes = await readBodyLimited(request);
+    if (!bytes) return json({ code: "BODY_TOO_LARGE" }, 413);
 
     if (url.pathname === "/__nonce" && request.method === "POST") {
       const { nonce, timestamp } = JSON.parse(new TextDecoder().decode(bytes));
@@ -205,7 +270,7 @@ export class WorkspaceSandbox extends DurableObject {
 
     if (url.pathname.startsWith("/__runtime/") && container.running) {
       const runtimePath = url.pathname.slice("/__runtime".length) + url.search;
-      return container.getTcpPort(8787).fetch(new Request(`http://container${runtimePath}`, request));
+      return container.getTcpPort(8787).fetch(proxyRequest(`http://container${runtimePath}`, request, bytes, { runtime: true }));
     }
     if (url.pathname.startsWith("/__preview/") && container.running) {
       const rest = url.pathname.slice("/__preview/".length);
@@ -217,7 +282,7 @@ export class WorkspaceSandbox extends DurableObject {
       const target = await targetResponse.json();
       if (target.appId !== Number(appId) || target.host !== "127.0.0.1" || !Number.isInteger(target.port) || target.port < 1024 || target.port > 65535) return json({ code: "PREVIEW_INVALID" }, 502);
       const previewPath = "/" + suffix.join("/") + new URL(request.url).search;
-      return container.getTcpPort(target.port).fetch(new Request(`http://container${previewPath}`, request));
+      return container.getTcpPort(target.port).fetch(proxyRequest(`http://container${previewPath}`, request, bytes));
     }
     return json({ code: "NOT_FOUND" }, 404);
   }
@@ -232,13 +297,13 @@ export default {
       if (!auth.ok) return json({ code: "AUTH_INVALID" }, 401);
       const replay = await consumeNonce(env, auth.nonce, Number(request.headers.get("x-sandbox-timestamp")));
       if (!replay.ok) return replay.response;
-      const testId = env.SANDBOXES.idFromName("seltra-gateway-self-test");
-      const stub = env.SANDBOXES.get(testId);
       const random = (size) => {
         const bytes = crypto.getRandomValues(new Uint8Array(size));
         return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
       };
       const workspaceKey = random(16);
+      const testId = env.SANDBOXES.idFromName(await sandboxId(workspaceKey));
+      const stub = env.SANDBOXES.get(testId);
       const keyBytes = crypto.getRandomValues(new Uint8Array(32));
       const runtimeEnv = {
         NODE_ENV: "production", DYAD_WEB_RUNTIME: "1", DYAD_WEB_RUNTIME_ENTRY: "1",
@@ -246,6 +311,7 @@ export default {
         DYAD_APPS_DIR: "/workspace/apps", DYAD_TMP_DIR: "/workspace/tmp",
         RUNTIME_RPC_HOST: "0.0.0.0", RUNTIME_RPC_PORT: "8787",
         RUNTIME_RPC_SECRET: random(32), RUNTIME_SECRETS_KEY: btoa(String.fromCharCode(...keyBytes)),
+        SELTRA_GATEWAY_SELF_TEST: "1",
       };
       let created = false;
       try {
@@ -254,8 +320,29 @@ export default {
         created = true;
         const exec = await stub.fetch("https://sandbox/__exec", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ argv: ["node", "-e", "process.stdout.write('sandbox-ok')"], cwd: "/workspace" }) });
         const result = await exec.json().catch(() => ({}));
-        const ok = exec.ok && result.exitCode === 0 && result.stdout === "sandbox-ok";
-        return json({ ok, phase: "exec", code: ok ? "SELF_TEST_PASSED" : "SELF_TEST_EXEC_FAILED" }, ok ? 200 : 503);
+        if (!exec.ok || result.exitCode !== 0 || result.stdout !== "sandbox-ok")
+          return json({ ok: false, phase: "exec", code: "SELF_TEST_EXEC_FAILED" }, 503);
+
+        const rpcPath = `/v1/workspaces/${workspaceKey}/runtime/rpc/__gateway-self-test`;
+        const timestamp = String(Date.now());
+        const nonce = random(18);
+        const signature = await signRequest(env.SANDBOX_GATEWAY_SIGNING_SECRET, "POST", rpcPath, timestamp, nonce);
+        const probe = { args: [{ probe: "gateway-runtime-rpc", nonce: random(8) }] };
+        const rpcRequest = new Request(new URL(rpcPath, url.origin), {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${runtimeEnv.RUNTIME_RPC_SECRET}`,
+            "content-type": "application/json",
+            "x-sandbox-timestamp": timestamp,
+            "x-sandbox-nonce": nonce,
+            "x-sandbox-signature": signature,
+          },
+          body: JSON.stringify(probe),
+        });
+        const rpcResponse = await handleSignedWorkspaceRequest(rpcRequest, env, new URL(rpcRequest.url));
+        const rpcResult = await rpcResponse.json().catch(() => null);
+        const ok = rpcResponse.status === 200 && rpcResult?.ok === true && rpcResult?.result?.echo?.args?.[0]?.probe === "gateway-runtime-rpc";
+        return json({ ok, phase: "runtime-rpc", code: ok ? "SELF_TEST_PASSED" : "SELF_TEST_RPC_FAILED" }, ok ? 200 : 503);
       } finally {
         if (created) await stub.fetch("https://sandbox/__destroy", { method: "POST" }).catch(() => {});
       }
@@ -263,23 +350,31 @@ export default {
     const match = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/(create|exec|files|destroy|runtime|preview)(?:\/(.*))?$/i);
     const diagnostic = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/diag$/i);
     if (!match && !diagnostic) return json({ code: "NOT_FOUND" }, 404);
-    const length = Number(request.headers.get("content-length") ?? 0);
-    if (length > MAX_CONTROL_BODY) return json({ code: "BODY_TOO_LARGE" }, 413);
-    const body = new Uint8Array(await request.arrayBuffer());
-    if (body.byteLength > MAX_CONTROL_BODY) return json({ code: "BODY_TOO_LARGE" }, 413);
-    const auth = await authenticate(request, env, body);
-    if (!auth.ok) return json({ code: "AUTH_INVALID" }, 401);
-    const replay = await consumeNonce(env, auth.nonce, Number(request.headers.get("x-sandbox-timestamp")));
-    if (!replay.ok) return replay.response;
-    const workspaceKey = match?.[1] ?? diagnostic[1];
-    const operation = match?.[2] ?? "diag";
-    const doId = env.SANDBOXES.idFromName(await sandboxId(workspaceKey));
-    const stub = env.SANDBOXES.get(doId);
-    const internalPath = operation === "create" ? "/__create" : operation === "exec" ? "/__exec" : operation === "files" ? "/__files" : operation === "destroy" ? "/__destroy" : operation === "runtime" ? `/__runtime/${match[3] ?? ""}` : operation === "preview" ? `/__preview/${match[3] ?? ""}` : "/__diag";
-    const internal = new Request(`https://sandbox${internalPath}${url.search}`, { method: request.method, headers: request.headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : body });
-    return stub.fetch(internal);
+    return handleSignedWorkspaceRequest(request, env, url, match, diagnostic);
   },
 };
+
+async function handleSignedWorkspaceRequest(request, env, url, match = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/(create|exec|files|destroy|runtime|preview)(?:\/(.*))?$/i), diagnostic = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/diag$/i)) {
+  const body = await readBodyLimited(request);
+  if (!body) return json({ code: "BODY_TOO_LARGE" }, 413);
+  const auth = await authenticate(request, env, body);
+  if (!auth.ok) return json({ code: "AUTH_INVALID" }, 401);
+  const replay = await consumeNonce(env, auth.nonce, Number(request.headers.get("x-sandbox-timestamp")));
+  if (!replay.ok) return replay.response;
+  const workspaceKey = match?.[1] ?? diagnostic?.[1];
+  if (!workspaceKey) return json({ code: "NOT_FOUND" }, 404);
+  const operation = match?.[2] ?? "diag";
+  const doId = env.SANDBOXES.idFromName(await sandboxId(workspaceKey));
+  const stub = env.SANDBOXES.get(doId);
+  const internalPath = operation === "create" ? "/__create" : operation === "exec" ? "/__exec" : operation === "files" ? "/__files" : operation === "destroy" ? "/__destroy" : operation === "runtime" ? `/__runtime/${match[3] ?? ""}` : operation === "preview" ? `/__preview/${match[3] ?? ""}` : "/__diag";
+  const headers = proxyHeaders(request.headers, { runtime: operation === "runtime" });
+  const internal = new Request(`https://sandbox${internalPath}${url.search}`, {
+    method: request.method,
+    headers,
+    ...(["GET", "HEAD"].includes(request.method.toUpperCase()) ? {} : { body }),
+  });
+  return stub.fetch(internal);
+}
 
 async function authenticate(request, env, body) {
   if (!env.SANDBOX_GATEWAY_SIGNING_SECRET) return { ok: false };

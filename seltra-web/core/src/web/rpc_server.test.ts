@@ -43,6 +43,32 @@ function post(url: string, headers: Record<string, string>, body: string) {
 }
 
 describe("web RPC server", () => {
+  it("echoes a JSON gateway self-test body only when the runtime self-test flag is set", async () => {
+    const previous = process.env.SELTRA_GATEWAY_SELF_TEST;
+    process.env.SELTRA_GATEWAY_SELF_TEST = "1";
+    const rpc = createRpcServer({ secret: "gateway-self-test-secret", port: 0 });
+    try {
+      await new Promise<void>((resolve) => rpc.server.once("listening", resolve));
+      const address = rpc.address();
+      if (!address || typeof address === "string") throw new Error("No TCP address");
+      const payload = { args: [{ probe: "gateway-runtime-rpc" }] };
+      const response = await post(
+        `http://127.0.0.1:${address.port}/rpc/__gateway-self-test`,
+        {
+          authorization: "Bearer gateway-self-test-secret",
+          "content-type": "application/json",
+        },
+        JSON.stringify(payload),
+      );
+      expect(response.status).toBe(200);
+      expect(response.json).toEqual({ ok: true, result: { echo: payload } });
+    } finally {
+      await rpc.close();
+      if (previous === undefined) delete process.env.SELTRA_GATEWAY_SELF_TEST;
+      else process.env.SELTRA_GATEWAY_SELF_TEST = previous;
+    }
+  });
+
   it("allows only renderer-used local distributed machine channels", () => {
     for (const channel of [
       "distributed-machine:subscribe",
