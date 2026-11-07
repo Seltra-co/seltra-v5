@@ -250,6 +250,19 @@ model WorkspacePersistenceOperation {
   @@index([tenantId, createdAt])
 }
 
+model WorkspaceCleanup {
+  id             String   @id @default(cuid())
+  projectId      String
+  workspaceKey   String   @unique
+  attempts       Int      @default(0)
+  nextAttemptAt  DateTime @default(now())
+  lastErrorCode  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([nextAttemptAt])
+}
+
 model Deployment {
   id                   String                 @id @default(cuid())
   tenantId             String

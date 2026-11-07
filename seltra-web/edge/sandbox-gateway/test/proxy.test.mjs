@@ -32,6 +32,7 @@ async function createHarness() {
   const upstreamRequests = [];
   const container = {
     running: false,
+    async destroy() { this.running = false; },
     getTcpPort(port) {
       assert.equal(port, 8787);
       return {
@@ -50,12 +51,24 @@ async function createHarness() {
   };
   const context = {
     container,
-    storage: {},
+    storage: { async get() { return undefined; }, async deleteAll() {}, async delete() {} },
   };
   const sandbox = new worker.WorkspaceSandbox(context, {});
   container.running = true;
   const replayNamespace = {
     async fetch() {
+      return Response.json({ ok: true });
+    },
+  };
+  const workspaceRecords = new Map();
+  const registryNamespace = {
+    async fetch(input, init) {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      if (url.pathname === '/__list') return Response.json({ workspaces: [...workspaceRecords].map(([workspaceKey, value]) => ({ workspaceKey, ...value })) });
+      const { workspaceKey } = await request.json();
+      if (url.pathname === '/__remove') workspaceRecords.delete(workspaceKey);
+      else workspaceRecords.set(workspaceKey, { ...(workspaceRecords.get(workspaceKey) ?? { createdAt: Date.now() }), lastSeenAt: Date.now() });
       return Response.json({ ok: true });
     },
   };
@@ -65,8 +78,9 @@ async function createHarness() {
       idFromName(name) { return name; },
       get(id) { return id === "seltra-gateway-auth-replay" ? replayNamespace : sandbox; },
     },
+    REGISTRY: { idFromName(name) { return name; }, get() { return registryNamespace; } },
   };
-  return { worker, env, upstreamRequests };
+  return { worker, env, upstreamRequests, container, workspaceRecords };
 }
 
 async function signedRequest(pathname, { body, signingSecret = secret, headers = {}, method = "POST" } = {}) {
@@ -157,6 +171,22 @@ test("bad signatures return 401 without calling the runtime", async () => {
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { code: "AUTH_INVALID" });
   assert.equal(upstreamRequests.length, 0);
+});
+
+test("signed workspace destroy is idempotent and diag reports stopped", async () => {
+  const { worker, env, container, workspaceRecords } = await createHarness();
+  workspaceRecords.set(workspaceKey, { createdAt: Date.now(), lastSeenAt: Date.now() });
+  container.running = true;
+
+  for (let i = 0; i < 2; i++) {
+    const destroy = await signedRequest(`/v1/workspaces/${workspaceKey}/destroy`, { body: "{}" });
+    assert.equal((await worker.default.fetch(destroy, env)).status, 200);
+  }
+  const diag = await signedRequest(`/v1/workspaces/${workspaceKey}/diag`, { method: "GET" });
+  const diagnostic = await worker.default.fetch(diag, env);
+  assert.equal(diagnostic.status, 200);
+  assert.equal((await diagnostic.json()).running, false);
+  assert.equal(workspaceRecords.has(workspaceKey), false);
 });
 
 test("oversized streamed bodies return BODY_TOO_LARGE without reaching runtime", async () => {

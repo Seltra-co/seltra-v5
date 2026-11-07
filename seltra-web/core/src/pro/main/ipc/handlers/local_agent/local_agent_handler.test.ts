@@ -1624,6 +1624,32 @@ describe("handleLocalAgentStream", () => {
       ]);
       expect(streamText).toHaveBeenCalledOnce();
     });
+
+    it("keeps provider URLs and raw transport details out of chat errors", async () => {
+      const { event, getMessagesByChannel } = createFakeEvent();
+      mockSettings = buildTestSettings({ enableDyadPro: true });
+      mockChatData = buildTestChat();
+      mockStreamTextImpl = () => ({
+        ...createFakeStream([]),
+        fullStream: (async function* () {
+          throw Object.assign(new Error("getaddrinfo ENOTFOUND internal.example.test"), {
+            url: "https://internal.example.test/v1/chat/completions",
+          });
+        })(),
+      });
+
+      await handleLocalAgentStream(
+        event,
+        { chatId: 1, prompt: "test" },
+        new AbortController(),
+        { placeholderMessageId: 10, systemPrompt: "You are helpful", dyadRequestId },
+      );
+
+      const payload = getMessagesByChannel("chat:response:error")[0].args[0] as { error: string };
+      expect(payload.error).toBe("Seltra could not reach the model provider. Check the Core connection and retry.");
+      expect(payload.error).not.toContain("internal.example.test");
+      expect(payload.error).not.toContain("ENOTFOUND");
+    });
   });
 
   describe("Pro status validation", () => {

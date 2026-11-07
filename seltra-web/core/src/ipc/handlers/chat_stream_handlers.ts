@@ -2485,6 +2485,10 @@ ${componentSnippet}
           systemPrompt = SUMMARIZE_CHAT_SYSTEM_PROMPT;
         }
 
+        if (willUseLocalAgentStream && selectedChatMode === "build") {
+          systemPrompt += `\n\n# Streamed build narration\nFor every new build request, your first visible assistant output must be exactly one concise, plain-language sentence stating your actual understanding of the requested app (for example, “I’m planning a services storefront for WorkBench in Accra.”). Emit that sentence as text before any tool call. Do not claim work has started or completed before it has. Continue with the normal plan and tool use after that sentence.`;
+        }
+
         if (attachmentDeliveryConfig.addSystemCopyInstructions) {
           systemPrompt += `
 

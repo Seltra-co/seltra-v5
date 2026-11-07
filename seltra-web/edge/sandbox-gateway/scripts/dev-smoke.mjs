@@ -21,6 +21,7 @@ let lastError;
 for (let attempt = 1; Date.now() < deadline; attempt++) {
 const workspaceKey = randomBytes(16).toString("hex");
 const route = (suffix) => `/v1/workspaces/${workspaceKey}/${suffix}`;
+let appSmokeReached = false;
 try {
   const env = {
     NODE_ENV: "production", DYAD_WEB_RUNTIME: "1", DYAD_WEB_RUNTIME_ENTRY: "1",
@@ -64,23 +65,42 @@ try {
   const createAppBody = await createApp.json().catch(() => null);
   if (!createApp.ok || createAppBody?.ok !== true || !Number.isInteger(createAppBody?.result?.appId) || !Number.isInteger(createAppBody?.result?.chatId) || !Number.isInteger(createAppBody?.result?.scaffoldEntryCount) || createAppBody.result.scaffoldEntryCount < 1)
     throw new Error(`runtime create-app probe failed (${createApp.status}, ${createAppBody?.error?.code ?? "unknown"})`);
+  appSmokeReached = true;
+  const appId = createAppBody.result.appId;
+  const runApp = await request(route("runtime/rpc/run-app"), "POST", {
+    args: [{ appId }],
+  }, {
+    authorization: `Bearer ${env.RUNTIME_RPC_SECRET}`,
+    "x-runtime-session": "ci-gateway-preview-smoke",
+  });
+  const runAppBody = await runApp.json().catch(() => null);
+  if (!runApp.ok || runAppBody?.ok !== true)
+    throw new Error(`runtime run-app probe failed (${runApp.status}, ${runAppBody?.error?.code ?? "unknown"})`);
   const diagPath = route("diag");
   const diag = await request(diagPath, "GET");
   const diagBody = await diag.json().catch(() => ({}));
   if (!diag.ok || diagBody.code !== "READY" || diagBody.bootStatus?.arch !== "x64") throw new Error(`diagnostic readiness failed (${diag.status}, ${diagBody.code ?? "unknown"})`);
-  // The newly created workspace has no generated app registered yet. This confirms
-  // signed preview routing reaches the live sandbox and returns the expected 404.
-  const previewPath = route("preview/1/");
-  const preview = await request(previewPath, "GET");
-  if (preview.status !== 404) throw new Error(`empty-project preview probe returned ${preview.status}, expected 404`);
-  console.log(JSON.stringify({ attempt, create: "passed", scaffold: "present", scaffoldEntryCount: scaffoldResult.entryCount, exec: "passed", runtimeRpcBody: "passed", createApp: "passed", diagnostics: "passed", previewRoute: "reachable-empty-project-404", destroy: "pending" }));
+  const previewPath = route(`preview/${appId}/`);
+  const previewDeadline = Date.now() + 45_000;
+  let previewStatus = 0;
+  while (Date.now() < previewDeadline) {
+    const preview = await request(previewPath, "GET");
+    previewStatus = preview.status;
+    if (preview.status === 200) break;
+    if (![404, 502, 503].includes(preview.status))
+      throw new Error(`preview route returned unexpected status ${preview.status}`);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  if (previewStatus !== 200) throw new Error(`app preview did not become ready (last status ${previewStatus})`);
+  console.log(JSON.stringify({ attempt, create: "passed", scaffold: "present", scaffoldEntryCount: scaffoldResult.entryCount, exec: "passed", runtimeRpcBody: "passed", createApp: "passed", appProcess: "started", previewRoute: "200", diagnostics: "passed", destroy: "pending" }));
   lastError = undefined;
   break;
 } catch (error) {
   lastError = error;
   try {
     const diagnostic = await request(route("diag"), "GET");
-    console.error(JSON.stringify({ diagnosticStatus: diagnostic.status, diagnostic: await diagnostic.json() }));
+    const diagnosticBody = await diagnostic.json().catch(() => ({}));
+    console.error(JSON.stringify({ diagnosticStatus: diagnostic.status, diagnosticCode: diagnosticBody.code ?? "unknown" }));
   } catch {
     console.error(JSON.stringify({ diagnosticStatus: "unavailable" }));
   }
@@ -90,6 +110,7 @@ try {
   console.log(JSON.stringify({ attempt, destroy: "passed" }));
 }
 if (lastError) {
+  if (appSmokeReached) break;
   if (Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, Math.min(10_000, deadline - Date.now())));
 }
 }

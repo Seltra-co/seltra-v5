@@ -13,7 +13,7 @@ import { createTypedHandler } from "./base";
 import { templateContracts } from "../types/templates";
 import { getDyadAppPath } from "../../paths/paths";
 import { appOperationCoordinator } from "../services/app_operation_coordinator";
-import { runningApps, stopAppByInfo } from "../utils/process_manager";
+import { runningApps } from "../utils/process_manager";
 import { createFromTemplate } from "./createFromTemplate";
 import { ensureDyadGitignored } from "./gitignoreUtils";
 import { slugifyAppFolderName } from "@/shared/app_names";
@@ -23,7 +23,7 @@ import { gitService } from "../services/git_service";
 
 const logger = log.scope("template_handlers");
 
-const PRESERVED_TEMPLATE_PATHS = new Set([".git", ".dyad"]);
+const PRESERVED_TEMPLATE_PATHS = new Set([".git", ".dyad", "node_modules"]);
 
 function shouldPreservePath(name: string): boolean {
   return PRESERVED_TEMPLATE_PATHS.has(name) || name.startsWith(".env");
@@ -95,25 +95,18 @@ async function applyTemplateInPlace({
   appId: number;
   appPath: string;
   templateId: string;
-}): Promise<{ appWasStopped: boolean }> {
+}): Promise<void> {
   const tempRoot = await fsPromises.mkdtemp(
     path.join(os.tmpdir(), "dyad-template-"),
   );
   const stagedTemplatePath = path.join(tempRoot, "app");
 
-  let appWasStopped = false;
   try {
     try {
       await createFromTemplate({
         fullAppPath: stagedTemplatePath,
         templateId,
       });
-
-      const appInfo = runningApps.get(appId);
-      if (appInfo) {
-        await stopAppByInfo(appId, appInfo);
-        appWasStopped = true;
-      }
 
       await clearAppDirectoryForTemplateSwap(appPath);
       await fsPromises.cp(stagedTemplatePath, appPath, {
@@ -139,14 +132,6 @@ async function applyTemplateInPlace({
         `Failed to stage template ${templateId} for app ${appId} at ${appPath}:`,
         error,
       );
-      if (appWasStopped) {
-        throw new DyadError(
-          `Failed to apply template "${templateId}". The dev server was stopped before the failure and will need to be started manually. (${
-            error instanceof Error ? error.message : String(error)
-          })`,
-          DyadErrorKind.Unknown,
-        );
-      }
       throw error;
     }
   } finally {
@@ -156,7 +141,6 @@ async function applyTemplateInPlace({
     });
   }
 
-  return { appWasStopped };
 }
 
 export function registerTemplateHandlers() {
@@ -205,7 +189,9 @@ export function registerTemplateHandlers() {
 
         // For imported (absolute path) apps, fall back to the in-place flow —
         // the user picked that folder location intentionally.
-        const useInPlace = path.isAbsolute(appRecord.path);
+        // A running preview watches this project directory. Keep its cwd and
+        // process stable so the file replacement is picked up by hot reload.
+        const useInPlace = path.isAbsolute(appRecord.path) || runningApps.has(appId);
 
         let workingPath = oldAbsPath;
         let newSlug: string | null = null;
@@ -223,8 +209,6 @@ export function registerTemplateHandlers() {
             didPathSwap = true;
           }
         }
-
-        let appWasStopped = false;
 
         if (didPathSwap && newAbsPath && newSlug) {
           // Path-swap branch: build the template at a new directory, migrate
@@ -245,12 +229,6 @@ export function registerTemplateHandlers() {
               fullAppPath: stagedTemplatePath,
               templateId,
             });
-
-            const appInfo = runningApps.get(appId);
-            if (appInfo) {
-              await stopAppByInfo(appId, appInfo);
-              appWasStopped = true;
-            }
 
             await fsPromises.mkdir(path.dirname(newAbsPath), {
               recursive: true,
@@ -284,7 +262,7 @@ export function registerTemplateHandlers() {
               );
               noOpAbort = true;
               await fsPromises.rm(newAbsPath, { recursive: true, force: true });
-              return { applied: false, needsRestart: appWasStopped };
+              return { applied: false, needsRestart: false };
             }
 
             await db
@@ -323,14 +301,6 @@ export function registerTemplateHandlers() {
                 );
               }
             }
-            if (appWasStopped) {
-              throw new DyadError(
-                `Failed to apply template "${templateId}". The dev server was stopped before the failure and will need to be started manually. (${
-                  error instanceof Error ? error.message : String(error)
-                })`,
-                DyadErrorKind.Unknown,
-              );
-            }
             throw error;
           } finally {
             await fsPromises.rm(tempRoot, {
@@ -352,15 +322,15 @@ export function registerTemplateHandlers() {
             );
           }
 
-          return { applied: true, needsRestart: true };
+          return { applied: true, needsRestart: false };
         }
 
         // In-place branch (imported apps OR slug already matches existing path).
-        ({ appWasStopped } = await applyTemplateInPlace({
+        await applyTemplateInPlace({
           appId,
           appPath: workingPath,
           templateId,
-        }));
+        });
 
         // The new template's `.gitignore` likely doesn't contain `.dyad/`, so
         // re-apply it before staging to keep internal metadata out of git.
@@ -379,7 +349,7 @@ export function registerTemplateHandlers() {
           logger.info(
             `Template ${templateId} already applied to app ${appId}, skipping commit`,
           );
-          return { applied: false, needsRestart: appWasStopped };
+          return { applied: false, needsRestart: false };
         }
 
         if (chatId) {
@@ -395,7 +365,7 @@ export function registerTemplateHandlers() {
           }
         }
 
-        return { applied: true, needsRestart: true };
+        return { applied: true, needsRestart: false };
       },
     );
   });

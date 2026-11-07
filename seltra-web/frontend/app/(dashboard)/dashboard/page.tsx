@@ -32,7 +32,8 @@ import { takePendingBuild } from '@/lib/builder/pending'
 import { fetchWithSeltraAuth } from '@/lib/auth-session'
 import { CorePreviewAnnotator } from '@/components/dashboard/CorePreviewAnnotator'
 import { PublishPanel } from '@/components/dashboard/PublishPanel'
-import { CoreAgentMessage, CoreTodoProgress, type CoreBlueprint, type CoreQuestionnaire, type CoreTodo } from '@/components/dashboard/CoreAgentMessage'
+import { CoreAgentMessage, CoreQuestionnaireCard, CoreTodoProgress, type CoreBlueprint, type CoreQuestionnaire, type CoreTodo } from '@/components/dashboard/CoreAgentMessage'
+import { AgentStreamStatus } from '@/components/dashboard/AgentStreamStatus'
 import { CURRENT_ANNOUNCEMENT_VERSION, WHATS_NEW } from './config/whats-new'
 import { getGreeting } from '@/lib/greetings'
 import { safeDate, safeISOString } from '@/lib/safe-date'
@@ -445,8 +446,10 @@ function PendingImageChip({ attachment, onRemove, tone = 'light' }: { attachment
   )
 }
 
-function AgentReply({ content, streamingPreview, isStreaming, todos, questionnaire, blueprint, onQuestionnaireSubmit, onBlueprintApprove, onBlueprintNameChange, loadAsset }: { content: string; streamingPreview?: string; isStreaming?: boolean; todos?: CoreTodo[]; questionnaire?: CoreQuestionnaire; blueprint?: CoreBlueprint; onQuestionnaireSubmit?: (answers: Record<string, string> | null) => void; onBlueprintApprove?: () => Promise<void>; onBlueprintNameChange?: (name: string) => void; loadAsset?: (path: string) => Promise<string> }) {
-  return <CoreAgentMessage content={content} streamingPreview={streamingPreview} isStreaming={isStreaming} todos={todos} questionnaire={questionnaire} blueprint={blueprint} onQuestionnaireSubmit={onQuestionnaireSubmit} onBlueprintApprove={onBlueprintApprove} onBlueprintNameChange={onBlueprintNameChange} loadAsset={loadAsset} />
+function AgentReply({ content, streamingPreview, isStreaming, statusText, phase, todos, questionnaire, blueprint, onQuestionnaireSubmit, onBlueprintApprove, onBlueprintNameChange, loadAsset }: { content: string; streamingPreview?: string; isStreaming?: boolean; statusText?: string; phase?: string; todos?: CoreTodo[]; questionnaire?: CoreQuestionnaire; blueprint?: CoreBlueprint; onQuestionnaireSubmit?: (answers: Record<string, string> | null) => void; onBlueprintApprove?: () => Promise<void>; onBlueprintNameChange?: (name: string) => void; loadAsset?: (path: string) => Promise<string> }) {
+  if (!content.trim() && (isStreaming || phase === 'asking')) return <AgentStreamStatus status={statusText || (phase === 'asking' ? 'Waiting for answers' : undefined)} skeleton={isStreaming && !statusText} phase={phase} />
+  const showStatus = Boolean(statusText && (isStreaming || phase === 'asking' || phase === 'building' || phase === 'ready'))
+  return <>{showStatus ? <AgentStreamStatus status={statusText} phase={phase} /> : null}<CoreAgentMessage content={content} streamingPreview={streamingPreview} isStreaming={isStreaming} todos={todos} questionnaire={questionnaire} blueprint={blueprint} onQuestionnaireSubmit={onQuestionnaireSubmit} onBlueprintApprove={onBlueprintApprove} onBlueprintNameChange={onBlueprintNameChange} loadAsset={loadAsset} compactStream /></>
 }
 
 function PlannerQuestionCard({
@@ -899,18 +902,31 @@ export default function DashboardPage() {
   const [corePreviewConsole, setCorePreviewConsole] = useState<Array<{ level: string; message: string; timestamp: string }>>([])
   const [corePreviewConsoleOpen, setCorePreviewConsoleOpen] = useState(false)
   const [corePreviewError, setCorePreviewError] = useState('')
+  const [previewTipIndex, setPreviewTipIndex] = useState(0)
   const [coreFiles, setCoreFiles] = useState<File[]>([])
   const coreMessageAttachmentUrlsRef = useRef<string[]>([])
   const [coreConnected, setCoreConnected] = useState(false)
   const [coreConnectionError, setCoreConnectionError] = useState('')
   const [coreQuestionnaire, setCoreQuestionnaire] = useState<CoreQuestionnaire | null>(null)
+  const [coreQuestionnaireSummary, setCoreQuestionnaireSummary] = useState<Array<{ question: string; answer: string }> | null>(null)
   const coreQuestionnaireRef = useRef<CoreQuestionnaire | null>(null)
   const coreQuestionnaireInFlightRef = useRef<Set<string>>(new Set())
+  const logCorePhase = useCallback((phase: string) => {
+    const projectId = activeStore?.id ?? coreTenantRef.current
+    if (!projectId) return
+    console.info(JSON.stringify({ event: 'core_project_phase', projectId, phase, at: new Date().toISOString(), monotonicMs: Math.round(performance.now()) }))
+  }, [activeStore?.id])
   const [coreTodos, setCoreTodos] = useState<{ chatId: number; todos: CoreTodo[] } | null>(null)
   const coreTodosRef = useRef<{ chatId: number; todos: CoreTodo[] } | null>(null)
   const [coreBlueprint, setCoreBlueprint] = useState<CoreBlueprint | null>(null)
   const [coreBlueprintName, setCoreBlueprintName] = useState('')
   const coreBlueprintRef = useRef<CoreBlueprint | null>(null)
+  const coreLastPromptRef = useRef<{ text: string; mode: 'build' | 'plan' | 'chat'; store?: StoreData } | null>(null)
+  const [agentStreamPhase, setAgentStreamPhase] = useState<'idle' | 'submitted' | 'narrating' | 'asking' | 'planReady' | 'building' | 'ready' | 'error'>('idle')
+  const agentStreamPhaseRef = useRef(agentStreamPhase)
+  useEffect(() => { agentStreamPhaseRef.current = agentStreamPhase }, [agentStreamPhase])
+  const agentTimingRef = useRef<{ sentAt?: number; firstNarrationLogged?: boolean; answeredAt?: number }>({})
+  const logAgentTiming = (phase: string, at = Date.now()) => console.info('[agent-stream-timing]', JSON.stringify({ projectId: activeStore?.id ?? coreTenantRef.current ?? null, phase, localTime: new Date(at).toLocaleString(), at: new Date(at).toISOString(), ...(agentTimingRef.current.sentAt ? { sinceSendMs: at - agentTimingRef.current.sentAt } : {}), ...(phase === 'build_started' && agentTimingRef.current.answeredAt ? { answerToBuildMs: at - agentTimingRef.current.answeredAt } : {}) }))
 
   const respondToCoreQuestionnaire = async (answers: Record<string, string> | null) => {
     const questionnaire = coreQuestionnaire
@@ -920,8 +936,11 @@ export default function DashboardPage() {
     coreQuestionnaireInFlightRef.current.add(questionnaire.requestId)
     setCoreQuestionnaire({ ...questionnaire, isResponding: true })
     if (answers !== null) {
+      agentTimingRef.current.answeredAt = Date.now()
+      logAgentTiming('questionnaire_answered', agentTimingRef.current.answeredAt)
       setSending(true)
-      setCoreStartupStatus('Sending your answers to Seltra…')
+      setAgentStreamPhase('narrating')
+      setCoreStartupStatus('')
       coreMessageRef.current = undefined
     }
     try {
@@ -930,13 +949,15 @@ export default function DashboardPage() {
         coreQuestionnaireRef.current = null
         setCoreQuestionnaire(null)
       } else {
-        setCoreStartupStatus('Your answers are in. Updating the build plan…')
+        setCoreStartupStatus('')
+        setCoreQuestionnaireSummary(questionnaire.questions.map((item) => ({ question: item.question, answer: answers[item.id] || 'Skipped' })))
       }
-    } catch (error) {
+    } catch {
       setCoreQuestionnaire((current) => current?.requestId === questionnaire.requestId ? { ...current, isResponding: false } : current)
       setSending(false)
       setCoreStartupStatus('')
-      toast.error(error instanceof Error ? error.message : 'Could not submit your answers.')
+      console.warn('[agent-stream] questionnaire response failed')
+      toast.error('Your answers could not be sent. Please try again.')
     } finally {
       coreQuestionnaireInFlightRef.current.delete(questionnaire.requestId)
     }
@@ -960,39 +981,38 @@ export default function DashboardPage() {
     const appId = coreAppRef.current
     if (!blueprint || !client || !runtime || !appId || blueprint.chatId !== coreChatRef.current) throw new Error('The Core app plan is no longer active. Reopen the workspace and try again.')
     corePromptInFlightRef.current = true
+    logCorePhase('Approve clicked')
     const chatId = blueprint.chatId
     const name = coreBlueprintName.trim() || blueprint.appName
     let finalAppName = name
     const approvalKey = `seltra:core:blueprint-approved:${activeStore?.id ?? ''}`
     const alreadyApproved = localStorage.getItem(approvalKey) === '1'
     setSending(true)
-    setCoreStartupStatus('Applying your approved plan…')
-    // The previous assistant message contains the blueprint, so make the
-    // live status card visible while template and workspace RPCs run.
-    coreMessageRef.current = undefined
+    setAgentStreamPhase('building')
+    setCoreStartupStatus('Building your app')
     try {
       if (!alreadyApproved) {
-        setCoreStartupStatus('Checking your workspace and project…')
+        setCoreStartupStatus('Building your app')
         const app = await client.invoke<{ name: string; path: string }>('get-app', [appId], runtime)
         const folder = name.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 80) || 'seltra-app'
         if (name !== app.name || folder !== app.path.split(/[\\/]/).filter(Boolean).at(-1)) {
-          setCoreStartupStatus('Preparing your project name…')
           const renamed = await client.invoke<{ name: string }>('rename-app', [{ appId, appName: name, appPath: folder, autoResolveConflicts: true }], runtime)
           finalAppName = renamed.name
           setCoreBlueprint((current) => current?.chatId === chatId ? { ...current, appName: renamed.name } : current)
         }
         await client.invoke('app-blueprint:edit-field', [{ chatId, field: 'appName', value: finalAppName }], runtime)
-        setCoreStartupStatus('Applying the selected starting point…')
-        const templateResult = await client.invoke<{ needsRestart?: boolean }>('apply-app-template', [{ appId, templateId: blueprint.templateId, chatId }], runtime)
-        if (templateResult?.needsRestart) {
-          setCoreStartupStatus('Restarting your workspace with the selected starting point…')
-          await client.invoke('restart-app', [{ appId }], runtime)
+        // New Core projects already start from the React scaffold. Avoid
+        // rewriting that same scaffold during approval: doing so swaps the
+        // app directory and can force the preview process to restart.
+        if (blueprint.templateId !== 'react') {
+          setCoreStartupStatus('Updating your app files')
+          await client.invoke('apply-app-template', [{ appId, templateId: blueprint.templateId, chatId }], runtime)
+          logCorePhase('apply-app-template done')
         }
         if (blueprint.themeId !== 'default') {
-          setCoreStartupStatus('Applying your selected theme…')
+          setCoreStartupStatus('Updating your app style')
           await client.invoke('set-app-theme', [{ appId, themeId: blueprint.themeId }], runtime)
         }
-        setCoreStartupStatus('Confirming your approved plan…')
         await client.invoke('app-blueprint:approve', [{ chatId }], runtime)
         // Persist only after Core confirms approval. Retrying a failed follow-up
         // must not reapply a template and overwrite work already in the app.
@@ -1003,7 +1023,7 @@ export default function DashboardPage() {
       const prompt = ['The app blueprint has been approved. Please build the app based on the following approved blueprint.', 'This is a multi-step build: immediately use Core’s update_todos tool to create a concise plan before editing files, update it as work proceeds, and mark each step complete only after doing it. Continue implementation in this same turn; do not stop after writing the plan.', 'Before declaring completion, inspect the actual project files, resolve every planned page in the app router, and verify navigation destinations. Implement every page promised by the blueprint; a page file that is not imported and routed does not count as complete. Run the project build and fix import, compile, and browser-visible runtime errors before marking the build complete.', 'Follow Section 8.2 of the Seltra build reliability requirements for visual assets. Use customer supplied and catalog imagery first. For planned brand/editorial photo slots without suitable supplied assets, call the configured image-generation tool and save its real raster output (such as PNG or WebP) under public assets, then reference that file in the page. Do not use SVG illustrations, gradients, remote hotlinks, or placeholder.svg as substitutes for requested photography. Keep SVG for logos, icons, and vector decoration. Mark a photo task complete only after the generated raster file exists and is used by the app.', '', `App Name: ${finalAppName}`, `Template: ${blueprint.templateId}`, `Theme: ${blueprint.themeId}`, `Primary Color: ${blueprint.primaryColor}`, `Design Direction: ${blueprint.designDirection}`, '', 'Visual Assets:', visuals, '', `Original Prompt: ${blueprint.userPrompt}`].join('\n')
       const visiblePrompt = blueprint.userPrompt || `Build ${finalAppName}`
       const machine = { protocolVersion: 1, machineId: 'chat_stream', encodedKey: { chatId } }
-      setCoreStartupStatus('Preparing Seltra to build your app…')
+      setCoreStartupStatus('Building your app')
       const actor = await client.invoke<{ actorInstanceId: string; revision: number; encodedState: { stopPolicyVersion?: number } }>('distributed-machine:subscribe', [machine], runtime)
       const operationId = crypto.randomUUID()
       const intentId = crypto.randomUUID()
@@ -1018,10 +1038,12 @@ export default function DashboardPage() {
         coreMessageRef.current = current.length + 1
         return [...current, { role: 'user', content: visiblePrompt, createdAt: new Date().toISOString() }, { role: 'assistant', content: '' }]
       })
-      setCoreStartupStatus('Starting your approved build…')
+      setAgentStreamPhase('building')
+      setCoreStartupStatus('Building your app')
       setCorePreviewUrl('')
       const receipt = await client.invoke<{ kind: string; reason?: string }>('distributed-machine:dispatch', [{ ...machine, expectedActorInstanceId: actor.actorInstanceId, expectedRevision: actor.revision, messageId: crypto.randomUUID(), encodedEvent: { type: 'SUBMIT', intent: { ...intent, payloadHash }, observedStopPolicyVersion: actor.encodedState.stopPolicyVersion ?? 0 } }], runtime)
       if (receipt.kind !== 'applied' && receipt.kind !== 'replayed') throw new Error(receipt.reason || `Core did not start the approved build (${receipt.kind}).`)
+      logAgentTiming('build_started')
       setCoreBlueprint(null)
       coreBlueprintRef.current = null
       corePromptInFlightRef.current = false
@@ -1031,7 +1053,9 @@ export default function DashboardPage() {
       corePromptInFlightRef.current = false
       setSending(false)
       setCoreStartupStatus('')
-      toast.error(error instanceof Error ? error.message : 'Could not approve the Core app plan.')
+      setAgentStreamPhase('error')
+      console.warn('[agent-stream] blueprint approval failed')
+      toast.error('Seltra could not start the build. Retry from the plan.')
       throw error
     }
   }
@@ -1062,7 +1086,8 @@ export default function DashboardPage() {
       previewRecoveryTimeoutRef.current = null
       previewRecoveryInFlightRef.current = false
       setPreviewRecovering(false)
-      setPreviewRecoveryError(error instanceof Error ? error.message : 'Could not reconnect the preview.')
+      console.warn('[agent-stream] preview reconnect failed')
+      setPreviewRecoveryError('Seltra could not reconnect to the preview. Try again.')
     }
   }, [corePreviewUrl])
 
@@ -1071,7 +1096,6 @@ export default function DashboardPage() {
   }, [corePreviewUrl, previewReloadKey])
 
   const updateCoreAssistantMessage = (content: string) => {
-    if (content.trim()) setCoreStartupStatus('')
     setMsgs((current) => {
       const activeIndex = coreMessageRef.current
       if (typeof activeIndex === 'number' && current[activeIndex]?.role === 'assistant') {
@@ -1124,19 +1148,20 @@ export default function DashboardPage() {
       if (data.type === 'dyad-screenshot-response' && data.requestId === corePreviewScreenshotRequestRef.current) {
         corePreviewScreenshotRequestRef.current = undefined
         if (data.success && typeof data.dataUrl === 'string' && data.dataUrl.startsWith('data:image/')) setCorePreviewScreenshot(data.dataUrl)
-        else setCorePreviewError(data.error || 'Core could not capture this preview.')
+        else { console.warn('[agent-stream] preview capture failed', data.error); setCorePreviewError('Seltra could not capture the preview.') }
         return
       }
       if (data.type === 'console-log') {
         const level = ['log', 'info', 'debug', 'warn', 'error'].includes(data.level ?? '') ? data.level! : 'log'
         const message = Array.isArray(data.args) ? data.args.map((item) => typeof item === 'string' ? item : JSON.stringify(item)).join(' ') : ''
         setCorePreviewConsole((current) => [...current, { level, message: message.slice(0, 2000), timestamp: data.timestamp || new Date().toISOString() }].slice(-100))
-        if (level === 'error' && message) setCorePreviewError(message.slice(0, 500))
+        if (level === 'error' && message) { console.warn('[agent-stream] preview reported an error'); setCorePreviewError('The app reported an error before its preview was ready.') }
         return
       }
       if (['window-error', 'unhandled-rejection', 'iframe-sourcemapped-error', 'build-error-report'].includes(data.type ?? '')) {
         const message = data.payload?.message || data.payload?.reason || `Preview reported ${data.type}${data.payload?.file ? ` in ${data.payload.file}` : ''}.`
-        setCorePreviewError(message.slice(0, 500))
+        console.warn('[agent-stream] preview frame failed')
+        setCorePreviewError('The app preview could not be reached.')
         setCorePreviewConsole((current) => [...current, { level: 'error', message: message.slice(0, 2000), timestamp: new Date().toISOString() }].slice(-100))
       }
     }
@@ -1202,7 +1227,7 @@ export default function DashboardPage() {
       )
       if (error || !saved?.url) {
         coreSnapshotCapturedForRef.current = ''
-        console.error('[dashboard] Could not persist the Core preview snapshot.', error || 'The server returned no snapshot URL.')
+        console.warn('[dashboard] Could not persist the Core preview snapshot.')
         return
       }
       setStores((current) => current.map((store) => store.id !== activeStore.id ? store : {
@@ -1291,9 +1316,18 @@ export default function DashboardPage() {
   useEffect(() => {
     if (previewOpen) setCorePreviewLoaded(false)
   }, [previewOpen])
+  useEffect(() => {
+    if (!previewOpen || corePreviewUrl || corePreviewError) return
+    const tips = [
+      'Keep your first version focused on the most important customer task.',
+      'Clear calls to action help visitors know what to do next.',
+      'Your answers help shape the first version of the app.',
+    ]
+    const timer = window.setInterval(() => setPreviewTipIndex((current) => (current + 1) % tips.length), 5000)
+    return () => window.clearInterval(timer)
+  }, [previewOpen, corePreviewUrl, corePreviewError])
   const [previewDevice, setPreviewDevice] = useState<'desktop' | 'tablet' | 'mobile'>('desktop')
   const [chatMenuOpen, setChatMenuOpen] = useState(false)
-  const [thoughtSeconds, setThoughtSeconds] = useState<number | null>(null)
   const [buildProgress, setBuildProgress] = useState<BuildProgress | null>(null)
   const [resumeProjectAvailable, setResumeProjectAvailable] = useState(false)
   const [connection, setConnection] = useState<LinkState>('online')
@@ -1365,8 +1399,10 @@ export default function DashboardPage() {
       coreChatRef.current = undefined
     }
     const getSession = async (): Promise<CoreSession> => {
+      logCorePhase('project session request')
       const result = await apiFetch<CoreSession>('/api/v5/builder/session', { method: 'POST', body: JSON.stringify({ tenantId }) })
       if (!result.data) throw new Error(result.error || 'Could not connect to Seltra Internal Server.')
+      logCorePhase('project session response')
       return result.data
     }
     const client = new CoreClient(getSession, getSession)
@@ -1379,6 +1415,7 @@ export default function DashboardPage() {
         await client.invoke('select-app-for-preview', [{ appId }], runtimeId)
         const previewUrl = actor.encodedState?.url?.appUrl
         if (previewUrl && coreRuntimeRef.current === runtimeId) {
+          logCorePhase('preview ready')
           setCorePreviewLoaded(false)
           setCorePreviewUrl(previewUrl)
           setPreviewOpen(true)
@@ -1391,7 +1428,8 @@ export default function DashboardPage() {
           }).catch((error) => console.warn('[builder] Could not refresh the app record from Core', { tenantId, appId, error }))
         }
       } catch (error) {
-        if (coreRuntimeRef.current === runtimeId) setCoreConnectionError(error instanceof Error ? error.message : 'Could not restore the Core app preview.')
+        console.warn('[agent-stream] failed to restore preview')
+        if (coreRuntimeRef.current === runtimeId) setCoreConnectionError('Seltra could not reconnect to the app preview.')
       }
     }
     const recoverLatestProjectChat = async (runtimeId: string, appId: number) => {
@@ -1434,6 +1472,20 @@ export default function DashboardPage() {
           body: JSON.stringify({ tenantId, coreAppId: appId, eventType, ...values }),
         }).catch((error) => console.warn('[builder] Could not persist Core app state', { tenantId, appId, eventType, error }))
       }
+      if (frame.channel === 'app:output') {
+        const output = frame.payload as { appId?: number; type?: string; message?: string }
+        if (output.appId === coreAppRef.current) {
+          const line = output.message ?? ''
+          if (output.type === 'stdout' || output.type === 'stderr') {
+            if (/added \d+ packages|dependencies installed|installation complete/i.test(line)) setCoreStartupStatus('Dependencies are ready')
+            if (/\blocal:\s*https?:\/\/|ready in \d+ms|compiled successfully/i.test(line)) setCoreStartupStatus('Development server is running')
+          }
+        }
+      }
+      if (frame.channel === 'agent-tool:file-written') {
+        const payload = frame.payload as { chatId?: number }
+        if (payload.chatId === coreChatRef.current) setCoreStartupStatus('Writing your app files')
+      }
       if (frame.channel === 'agent-tool:todos-update') {
         const payload = frame.payload as { chatId?: number; todos?: CoreTodo[] }
         if (payload.chatId !== undefined && payload.chatId === coreChatRef.current && Array.isArray(payload.todos)) {
@@ -1441,7 +1493,7 @@ export default function DashboardPage() {
           coreTodosRef.current = nextTodos
           setCoreTodos(nextTodos)
           const currentTodo = payload.todos.find((todo) => todo.status === 'in_progress')
-          if (currentTodo) setCoreStartupStatus(`Working on: ${currentTodo.content}`)
+          if (currentTodo) setCoreStartupStatus(/verif|test|check/i.test(currentTodo.content) ? 'Verifying the app' : `Working on ${currentTodo.content.toLocaleLowerCase()}`)
           persistRunEvent('step.progress', 'build', 'running', { chatId: payload.chatId, total: payload.todos.length, completed: payload.todos.filter((todo) => todo.status === 'completed').length, current: payload.todos.find((todo) => todo.status === 'in_progress')?.content ?? null, todos: payload.todos })
         }
       }
@@ -1451,6 +1503,7 @@ export default function DashboardPage() {
           const blueprint = { ...payload.data, chatId: payload.chatId }
           coreBlueprintRef.current = blueprint
           setCoreBlueprint(blueprint)
+          setAgentStreamPhase('planReady')
           setCoreBlueprintName(blueprint.appName)
           setCorePreviewUrl('')
           persistAppState('app.blueprint.ready', { name: blueprint.appName, status: 'draft', blueprint: blueprint as unknown as Record<string, unknown> })
@@ -1471,11 +1524,13 @@ export default function DashboardPage() {
       if (frame.channel === 'user-input:requested') {
         const descriptor = frame.payload as { kind?: string; requestId?: string; chatId?: number; questions?: CoreQuestionnaire['questions'] }
         if (descriptor.kind === 'questionnaire' && descriptor.requestId && descriptor.chatId !== undefined && descriptor.chatId === coreChatRef.current && Array.isArray(descriptor.questions)) {
+          logCorePhase('questionnaire emitted')
           const questionnaire = { requestId: descriptor.requestId, chatId: descriptor.chatId, questions: descriptor.questions }
           coreQuestionnaireRef.current = questionnaire
           setCoreQuestionnaire(questionnaire)
+          setAgentStreamPhase('asking')
           setSending(false)
-          setCoreStartupStatus('')
+          setCoreStartupStatus('Waiting for answers')
           setPreviewOpen(true)
           persistRunEvent('questionnaire.requested', 'understand', 'waiting_for_user', { requestId: descriptor.requestId, questionCount: descriptor.questions.length, questions: descriptor.questions })
         }
@@ -1486,7 +1541,8 @@ export default function DashboardPage() {
           coreQuestionnaireRef.current = coreQuestionnaireRef.current?.requestId === payload.requestId ? null : coreQuestionnaireRef.current
           setCoreQuestionnaire((current) => current?.requestId === payload.requestId ? null : current)
           setSending(true)
-          setCoreStartupStatus('Your answers are in. Planning the next step…')
+          setAgentStreamPhase('narrating')
+          setCoreStartupStatus('')
           coreMessageRef.current = undefined
           persistRunEvent('questionnaire.answered', 'understand', 'running', { requestId: payload.requestId })
         }
@@ -1495,7 +1551,8 @@ export default function DashboardPage() {
         const payload = frame.payload as { chatId?: number }
         if (payload.chatId === coreChatRef.current) {
           setSending(true)
-          setCoreStartupStatus('Your plan is approved. Preparing the build…')
+          setAgentStreamPhase('building')
+          setCoreStartupStatus('Building your app')
           coreMessageRef.current = undefined
           persistAppState('app.blueprint.approved', { name: coreBlueprintName || undefined, status: 'building', approved: true, ...(coreBlueprintRef.current ? { blueprint: coreBlueprintRef.current as unknown as Record<string, unknown> } : {}) })
           persistRunEvent('blueprint.approved', 'analyze', 'running', { appName: coreBlueprintName || null })
@@ -1505,6 +1562,7 @@ export default function DashboardPage() {
         const id = (frame.payload as { id?: string } | null)?.id
         if (id) {
           coreRuntimeRef.current = id
+          logCorePhase('WS subscribed')
           // Runtime sessions change after a websocket reconnect. Reattach the
           // active chat and preview machines so their snapshots and completion
           // events continue flowing to the dashboard.
@@ -1549,19 +1607,36 @@ export default function DashboardPage() {
       if (frame.channel === 'chat:response:chunk') {
         const payload = frame.payload as { chatId?: number; messages?: Array<{ role?: string; content?: string }>; streamingMessageId?: number; streamingPatch?: { offset: number; content: string }; streamingPreview?: { content?: string } }
         if (payload.chatId !== coreChatRef.current) return
-        if (payload.streamingPreview) setCoreStreamingPreview(payload.streamingPreview.content ?? '')
+        if (payload.streamingPreview) {
+          const preview = payload.streamingPreview.content ?? ''
+          setCoreStreamingPreview(preview)
+          const sentence = preview.match(/^\s*([^\n.!?]+[.!?])/)
+          if (sentence?.[1]) {
+            setAgentStreamPhase('narrating')
+            setCoreStartupStatus(sentence[1].trim())
+            if (!agentTimingRef.current.firstNarrationLogged) { agentTimingRef.current.firstNarrationLogged = true; logAgentTiming('first_narration') }
+          }
+        }
         if (payload.messages) {
           const assistant = payload.messages.filter((message) => message.role === 'assistant').at(-1)?.content
           if (typeof assistant === 'string') {
             coreReplyRef.current = assistant
-            if (assistant.trim()) setCoreStartupStatus('')
+            const sentence = assistant.match(/^\s*([^\n.!?]+[.!?])/)
+            if (sentence?.[1] && agentStreamPhaseRef.current !== 'building') {
+              setCoreStartupStatus(sentence[1].trim())
+              if (!agentTimingRef.current.firstNarrationLogged) { agentTimingRef.current.firstNarrationLogged = true; logAgentTiming('first_narration') }
+            }
             updateCoreAssistantMessage(assistant)
           }
         }
         if (payload.streamingPatch) {
           const { offset, content } = payload.streamingPatch
           coreReplyRef.current = coreReplyRef.current.slice(0, offset) + content
-          if (coreReplyRef.current.trim()) setCoreStartupStatus('')
+          const sentence = coreReplyRef.current.match(/^\s*([^\n.!?]+[.!?])/)
+          if (sentence?.[1] && agentStreamPhaseRef.current !== 'building') {
+            setCoreStartupStatus(sentence[1].trim())
+            if (!agentTimingRef.current.firstNarrationLogged) { agentTimingRef.current.firstNarrationLogged = true; logAgentTiming('first_narration') }
+          }
           updateCoreAssistantMessage(coreReplyRef.current)
         }
       }
@@ -1580,24 +1655,28 @@ export default function DashboardPage() {
             setResumeProjectAvailable(true)
             persistRunEvent('run.failed', 'build', 'failed', {
               reason: 'core_response_error',
-              message: payload.message?.trim() || payload.error?.trim() || 'Seltra could not complete this request.',
+              message: 'Seltra could not reach the model provider. Check the Core connection and retry.',
             })
           }
           if (!coreReplyRef.current.trim()) {
-            const detail = payload.message?.trim() || payload.error?.trim()
-            const fallback = detail
-              ? `Seltra could not complete this request: ${detail}`
-              : 'Seltra could not complete this request. Stop the run, then retry your prompt.'
+            const fallback = 'Seltra could not reach the model provider. Check the Core connection and retry.'
             updateCoreAssistantMessage(fallback)
             void saveMessage(coreDashboardConversationRef.current, 'assistant', fallback)
           }
-          toast.error(payload.message?.trim() || payload.error?.trim() || 'Seltra could not complete this request.')
+          setAgentStreamPhase('error')
+          console.warn('[agent-stream] Core response failed; technical details are in Core logs.')
+          toast.error('Seltra could not finish that request. Retry to continue.')
         }
       }
       if (frame.channel === 'distributed-machine:snapshot') {
         const value = frame.payload as { machineId?: string; encodedKey?: { appId?: number; chatId?: number }; encodedState?: { phase?: string; url?: { appUrl?: string }; operationError?: { message?: string }; lastCompletion?: { intentId?: string; outcome?: string; error?: string; targetAppId?: number | null } } }
         if (value.machineId === 'app_run' && value.encodedKey?.appId === coreAppRef.current) {
           if (value.encodedState?.url?.appUrl) {
+            setAgentStreamPhase('ready')
+            setCoreStartupStatus('Preview is ready')
+            setCorePreviewError('')
+            setCoreConnectionError('')
+            logCorePhase('preview ready')
             setCorePreviewLoaded(false)
             setCorePreviewUrl(value.encodedState.url.appUrl)
             setPreviewOpen(true)
@@ -1606,15 +1685,20 @@ export default function DashboardPage() {
             persistRunEvent('preview.ready', 'verify', 'running', { previewUrl: value.encodedState.url.appUrl })
           }
           if (value.encodedState?.phase === 'errored') {
+            setAgentStreamPhase('error')
+            setCorePreviewError('Seltra could not start the preview.')
+            setPreviewOpen(true)
             setSending(false)
             setCoreStartupStatus('')
             persistAppState('app.preview.failed', { status: 'failed' })
             persistRunEvent('preview.failed', 'verify', 'running', { error: value.encodedState.operationError?.message ?? 'Preview failed to start.' })
-            toast.error(value.encodedState.operationError?.message || 'Preview failed to start.')
+            console.warn('[agent-stream] app preview failed; technical details are in Core logs')
+            toast.error('The preview could not start. Retry in the preview pane.')
           }
         }
         if (value.machineId === 'chat_stream' && value.encodedKey?.chatId === coreChatRef.current && value.encodedState?.lastCompletion?.outcome && value.encodedState.lastCompletion.intentId === coreIntentRef.current && value.encodedState.lastCompletion.intentId !== coreCompletedIntentRef.current) {
           const completion = value.encodedState.lastCompletion
+          if (completion.outcome === 'completed' && !coreQuestionnaireRef.current && !coreBlueprintRef.current) setAgentStreamPhase(corePreviewUrl ? 'ready' : 'planReady')
           setCoreStartupStatus('')
           coreCompletedIntentRef.current = completion.intentId
           const completedRun = coreRunRef.current
@@ -1633,7 +1717,7 @@ export default function DashboardPage() {
               persistRunEvent(`run.${completion.outcome === 'cancelled' ? 'stopped' : completion.outcome === 'completed' ? 'completed' : 'failed'}`, 'verify', state, {
                 chatId: coreChatRef.current,
                 outcome: completion.outcome,
-                error: completion.error ?? null,
+                error: completion.error ? 'Build could not be completed.' : null,
                 todos: coreTodosRef.current?.chatId === coreChatRef.current ? coreTodosRef.current?.todos ?? [] : [],
               })
               if (completion.outcome === 'completed') {
@@ -1664,14 +1748,13 @@ export default function DashboardPage() {
           if (coreReplyRef.current.trim() && !awaitingUser) void saveMessage(coreDashboardConversationRef.current, 'assistant', coreReplyRef.current)
           if (completion.outcome === 'errored') {
             if (!coreReplyRef.current.trim()) {
-              const detail = completion.error?.trim()
-              const fallback = detail
-                ? `Seltra could not complete this request: ${detail}`
-                : 'Seltra could not complete this request. Stop the run, then retry your prompt.'
+              const fallback = 'Seltra could not complete this request. Retry your prompt to continue.'
               updateCoreAssistantMessage(fallback)
               void saveMessage(coreDashboardConversationRef.current, 'assistant', fallback)
             }
-            toast.error(completion.error?.trim() || 'Seltra could not complete this request.')
+            console.warn('[agent-stream] build completion failed; technical details are in Core logs')
+            setAgentStreamPhase('error')
+            toast.error('Seltra could not complete this request. Retry to continue.')
           }
           if (completion.outcome === 'cancelled') {
             if (!coreReplyRef.current.trim()) {
@@ -1698,7 +1781,7 @@ export default function DashboardPage() {
                 const actor = await activeClient.invoke<{ actorInstanceId: string; revision: number }>('distributed-machine:subscribe', [machine], runtime)
                 await activeClient.invoke('select-app-for-preview', [{ appId }], runtime)
                 await activeClient.invoke('distributed-machine:dispatch', [{ ...machine, expectedActorInstanceId: actor.actorInstanceId, expectedRevision: actor.revision, messageId: crypto.randomUUID(), encodedEvent: { type: 'START', operationId: crypto.randomUUID(), startedAt: Date.now(), expectedRevision: actor.revision } }], runtime)
-              } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not start the app preview.') }
+              } catch { console.warn('[agent-stream] preview start failed'); setCorePreviewError('Seltra couldn’t start the app preview.'); setAgentStreamPhase('error'); setPreviewOpen(true); toast.error('Seltra couldn’t start the preview. Retry in the preview pane.') }
             })()
           }
         }
@@ -2095,7 +2178,7 @@ export default function DashboardPage() {
           messageId: crypto.randomUUID(),
           encodedEvent: { type: 'cancel-active', stopId: crypto.randomUUID(), observedStopPolicyVersion: actor.stopPolicyVersion ?? 0 },
         }], runtime),
-      ).catch((error) => toast.error(error instanceof Error ? error.message : 'Could not stop the Core run.'))
+      ).catch(() => { console.warn('[agent-stream] stop request failed'); toast.error('Seltra could not stop the current run. Try again.') })
     }
     if (run) {
       void apiFetch<{ id: string }>(`/api/v5/runs/${encodeURIComponent(run.id)}/stop`, { method: 'POST' })
@@ -2196,12 +2279,11 @@ export default function DashboardPage() {
       })
       if (signal?.aborted || stoppedRef.current) return ''
       if (!res.ok) {
-        const responseBody = await res.text().catch(() => '')
-        console.error(JSON.stringify({
+        await res.text().catch(() => '')
+        console.warn(JSON.stringify({
           event: 'frontend_agent_stream_failed',
           requestId: res.headers.get('X-Request-ID') ?? requestId,
           status: res.status,
-          responseBody: responseBody.slice(0, 500),
         }))
       }
       if (res.ok && res.body) {
@@ -2332,12 +2414,13 @@ export default function DashboardPage() {
     await beginBuild(plannerPrompt, convId, undefined, signal)
   }
 
-  const runCorePrompt = async (text: string, requestedMode: 'build' | 'plan' | 'chat', store: StoreData, stagedFiles: File[] = [], resumeExistingChat = false) => {
+  const runCorePrompt = async (text: string, requestedMode: 'build' | 'plan' | 'chat', store: StoreData, stagedFiles: File[] = [], resumeExistingChat = false, optimistic = false) => {
     if (corePromptInFlightRef.current) return
     corePromptInFlightRef.current = true
     completionTonePlayedForRef.current = ''
     unlockCompletionTone()
     const tenantId = store.id
+    coreLastPromptRef.current = { text, mode: requestedMode, store }
     if (!tenantId) {
       corePromptInFlightRef.current = false
       setSending(false)
@@ -2346,8 +2429,10 @@ export default function DashboardPage() {
       return
     }
     const getSession = async (): Promise<CoreSession> => {
+      logCorePhase('project session request')
       const result = await apiFetch<CoreSession>('/api/v5/builder/session', { method: 'POST', body: JSON.stringify({ tenantId }) })
       if (!result.data) throw new Error(result.error || 'Could not connect to Seltra Internal Server.')
+      logCorePhase('project session response')
       return result.data
     }
     const client = coreClientRef.current ?? new CoreClient(getSession, getSession)
@@ -2381,7 +2466,8 @@ export default function DashboardPage() {
     shouldFollowStreamRef.current = true
     setHasNewActivity(false)
     setSending(true)
-    setCoreStartupStatus('Connecting to your workspace…')
+    setAgentStreamPhase('submitted')
+    setCoreStartupStatus('')
     setCoreBuildCompleted(false)
     setBuildProgress(null)
     setCorePreviewUrl('')
@@ -2391,20 +2477,15 @@ export default function DashboardPage() {
     setCorePreviewConsole([])
     const imageFiles = files.filter((file) => file.type.startsWith('image/'))
     const otherFiles = files.filter((file) => !file.type.startsWith('image/'))
-    const imageAttachments = imageFiles.map((file) => {
+    const imageAttachments = optimistic ? [] : imageFiles.map((file) => {
       const url = URL.createObjectURL(file)
       coreMessageAttachmentUrlsRef.current.push(url)
       return { type: 'image' as const, name: file.name, url }
     })
     const userMessageCreatedAt = new Date().toISOString()
-    const row = {
-      role: 'user' as const,
-      content: `${text}${otherFiles.length ? `${text ? '\n' : ''}Attached: ${otherFiles.map((file) => file.name).join(', ')}` : ''}`,
-      attachments: imageAttachments,
-      createdAt: userMessageCreatedAt,
-    }
+    const row = { role: 'user' as const, content: `${text}${otherFiles.length ? `${text ? '\n' : ''}Attached: ${otherFiles.map((file) => file.name).join(', ')}` : ''}`, attachments: imageAttachments, createdAt: userMessageCreatedAt }
     coreReplyRef.current = ''
-    setMsgs((current) => {
+    if (!optimistic) setMsgs((current) => {
       coreMessageRef.current = current.length + 1
       return [...current, row, { role: 'assistant', content: '' }]
     })
@@ -2418,7 +2499,9 @@ export default function DashboardPage() {
       while (!coreRuntimeRef.current && Date.now() - runtimeStarted < CORE_RUNTIME_CONNECTION_TIMEOUT_MS) await new Promise((resolve) => setTimeout(resolve, 100))
       const runtime = coreRuntimeRef.current
       if (!runtime) throw new Error(coreConnectionError || 'Seltra runtime did not connect within 10 minutes. Check the Core service status and try again.')
-      setCoreStartupStatus('Workspace connected. Opening your app and conversation…')
+      logCorePhase('workspace ready')
+      setAgentStreamPhase('narrating')
+      setCoreStartupStatus('Workspace is ready')
       const coreMode = requestedMode === 'chat' ? 'ask' : requestedMode
       const storedApp = (() => { try { return JSON.parse(localStorage.getItem(`seltra:core:last-app:${tenantId}`) ?? 'null') as { appId?: number; chatId?: number } | null } catch { return null } })()
       if (resumeExistingChat && (!storedApp?.appId || !storedApp.chatId)) throw new Error('The saved project chat is no longer available. Send a new prompt to continue.')
@@ -2438,7 +2521,7 @@ export default function DashboardPage() {
         localStorage.removeItem(`seltra:core:last-app:${tenantId}`)
       }
       if (!appId) {
-        setCoreStartupStatus('Checking your saved projects…')
+        setCoreStartupStatus('')
         const apps = await apiFetch<Array<{ coreAppId: number; name: string }>>(`/api/v5/builder/apps?tenantId=${encodeURIComponent(tenantId)}`)
         for (const existingApp of apps.data ?? []) {
           if (!Number.isSafeInteger(existingApp.coreAppId) || existingApp.coreAppId <= 0) continue
@@ -2456,7 +2539,7 @@ export default function DashboardPage() {
       // Core owns the workspace app list, so consult it before creating a
       // duplicate when the Seltra index is temporarily behind.
       if (!appId) {
-        setCoreStartupStatus('Preparing your app…')
+        setCoreStartupStatus('')
         try {
           const runtimeApps = await client.invoke<{ apps?: Array<{ id: number; name: string }> }>('list-apps', [], runtime)
           const existingRuntimeApp = runtimeApps.apps?.find((app) => Number.isSafeInteger(app.id) && app.id > 0)
@@ -2504,6 +2587,13 @@ export default function DashboardPage() {
         appName = created.app.name
         chatId = created.chatId
         localStorage.setItem(`seltra:core:last-app:${tenantId}`, JSON.stringify({ appId, chatId }))
+        // Warm the scaffold while the plan and questionnaire are running.
+        // Do not await preview readiness here; prompt submission must remain
+        // independent from the preview process lifecycle.
+        logCorePhase('app process start requested')
+        void client.invoke('run-app', [{ appId }], runtime).catch(() => {
+          console.warn('[builder] The prewarmed app process did not start; see Core runtime diagnostics.', { projectId: tenantId })
+        })
       }
       coreAppRef.current = appId
       if (coreChatRef.current !== chatId) {
@@ -2550,7 +2640,7 @@ export default function DashboardPage() {
           attachmentType: 'chat-context' as const,
         })),
       )
-      setCoreStartupStatus(files.length ? `Preparing ${files.length} attachment${files.length === 1 ? '' : 's'} and reconnecting to your conversation…` : 'Reconnecting to your Seltra conversation…')
+      setCoreStartupStatus('')
       const machine = { protocolVersion: 1, machineId: 'chat_stream', encodedKey: { chatId } }
       const actor = await client.invoke<{ actorInstanceId: string; revision: number; encodedState: { stopPolicyVersion?: number } }>('distributed-machine:subscribe', [machine], runtime)
       const operationId = crypto.randomUUID()
@@ -2572,7 +2662,7 @@ export default function DashboardPage() {
       const payloadHash = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
       coreIntentRef.current = intentId
       coreCompletedIntentRef.current = undefined
-      setCoreStartupStatus(resumeExistingChat ? 'Saving your resume request…' : 'Saving your build request…')
+      setCoreStartupStatus('')
       const runWorkspace = await getSession()
       const runStart = previousRunId
         ? await apiFetch<{ id: string }>(`/api/v5/runs/${encodeURIComponent(previousRunId)}/continue`, { method: 'POST' })
@@ -2595,10 +2685,11 @@ export default function DashboardPage() {
       if (coreRunHeartbeatRef.current) window.clearInterval(coreRunHeartbeatRef.current)
       heartbeat()
       coreRunHeartbeatRef.current = window.setInterval(heartbeat, 5000)
-      setCoreStartupStatus(resumeExistingChat ? 'Seltra Core is receiving your resume request…' : 'Seltra Core is receiving your request…')
+      setCoreStartupStatus('')
       const receipt = await client.invoke<{ kind: string; reason?: string }>('distributed-machine:dispatch', [{ ...machine, expectedActorInstanceId: actor.actorInstanceId, expectedRevision: actor.revision, messageId: crypto.randomUUID(), encodedEvent: { type: 'SUBMIT', intent: { ...intent, payloadHash }, observedStopPolicyVersion: actor.encodedState.stopPolicyVersion ?? 0 } }], runtime)
       if (receipt.kind !== 'applied' && receipt.kind !== 'replayed') throw new Error(receipt.reason || `Core accepted no work (${receipt.kind}).`)
       coreDispatchAccepted = true
+      logCorePhase('prompt received')
       corePromptInFlightRef.current = false
       // This heartbeat only covers the RPC acceptance window. Once Core has
       // accepted the intent, Core events own the worker lease; the dashboard
@@ -2612,12 +2703,12 @@ export default function DashboardPage() {
           body: JSON.stringify({ type: resumeExistingChat ? 'run.resumed' : 'run.started', phase: 'understand', agent: 'supervisor', state: 'running', payload: { chatId, appId } }),
         }).catch(() => undefined)
       }
-      setCoreStartupStatus('Seltra accepted your request. Planning the work…')
+      setCoreStartupStatus('')
       setCoreSelectedComponents([])
       toast.success(requestedMode === 'plan' ? 'Plan request sent to Seltra.' : requestedMode === 'chat' ? 'Message sent to Seltra.' : 'Build started in your workspace.')
       void saveMessage(dashboardConversationId, 'user', row.content).catch(() => toast.error('Seltra received your request, but this conversation could not sync yet. Your build is still running.'))
       void appName
-    } catch (error) {
+    } catch {
       corePromptInFlightRef.current = false
       if (!coreDispatchAccepted) {
         if (coreRunHeartbeatRef.current) window.clearInterval(coreRunHeartbeatRef.current)
@@ -2626,14 +2717,18 @@ export default function DashboardPage() {
       if (!coreDispatchAccepted && dispatchRunIdForCatch) {
         void apiFetch(`/api/v5/runs/${encodeURIComponent(dispatchRunIdForCatch)}/events`, {
           method: 'POST',
-          body: JSON.stringify({ type: 'run.failed', state: 'failed', payload: { code: 'CORE_DISPATCH_FAILED', reason: error instanceof Error ? error.message : 'Core did not accept the request.' } }),
+          body: JSON.stringify({ type: 'run.failed', state: 'failed', payload: { code: 'CORE_DISPATCH_FAILED', reason: 'Seltra could not start this request.' } }),
         }).catch(() => undefined)
         if (coreRunRef.current?.id === dispatchRunIdForCatch) coreRunRef.current = undefined
       }
       setSending(false)
       setCoreStartupStatus('')
       if (resumeExistingChat) setResumeProjectAvailable(true)
-      const message = error instanceof Error ? error.message : 'Could not start the Core workflow.'
+      console.warn('[agent-stream] Core workflow dispatch failed')
+      const message = 'Seltra could not start this request. Retry to continue.'
+      setAgentStreamPhase('error')
+      setCorePreviewError('Seltra could not start the app preview.')
+      setPreviewOpen(true)
       if (!coreDispatchAccepted) {
         setMsgs((current) => current.filter((message, index) =>
           !(message.role === 'user' && message.createdAt === userMessageCreatedAt) &&
@@ -2644,7 +2739,7 @@ export default function DashboardPage() {
     }
   }
 
-  const openCoreBuilder = async (options: { prompt?: string; mode?: 'build' | 'plan' | 'chat'; option?: 'files' | 'figma'; figmaUrl?: string; autoSubmit?: boolean; storeOverride?: StoreData }): Promise<boolean | void> => {
+  const openCoreBuilder = async (options: { prompt?: string; mode?: 'build' | 'plan' | 'chat'; option?: 'files' | 'figma'; figmaUrl?: string; autoSubmit?: boolean; optimistic?: boolean; storeOverride?: StoreData }): Promise<boolean | void> => {
     if (options.option === 'figma' && !options.figmaUrl?.trim()) {
       setFigmaUrl('')
       setFigmaDialogOpen(true)
@@ -2679,7 +2774,10 @@ export default function DashboardPage() {
         setStores((current) => [store!, ...current.filter((item) => item.id !== store!.id)])
         storeContext.setActiveStore(store)
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'Could not prepare the Core workspace.')
+      console.warn('[agent-stream] project setup failed')
+        setAgentStreamPhase('error')
+        setCorePreviewError('Seltra could not prepare the app preview.')
+        toast.error('Seltra could not prepare this app. Retry your request.')
         setSending(false)
         return
       }
@@ -2710,8 +2808,9 @@ export default function DashboardPage() {
         setInput((current) => `${current.trim()}${current.trim() ? '\n\n' : ''}${context}`)
         toast.success('Figma design context added to the composer.')
         return true
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'Figma import failed.')
+      } catch {
+        console.warn('[builder] Figma import failed; technical details are in Core logs.')
+        toast.error('Seltra could not import that Figma design. Check the link and retry.')
         return false
       } finally {
         setSending(false)
@@ -2724,7 +2823,7 @@ export default function DashboardPage() {
     if (options.autoSubmit && prompt) {
       setInput('')
       clearPendingAttachment()
-      await runCorePrompt(prompt, options.mode ?? builderMode, store!, staged)
+      await runCorePrompt(prompt, options.mode ?? builderMode, store!, staged, false, options.optimistic)
     }
   }
 
@@ -2743,16 +2842,39 @@ const send = async () => {
   }
 
   setProjectSessionActive(true)
+  agentTimingRef.current = { sentAt: Date.now(), firstNarrationLogged: false }
+  logAgentTiming('send', agentTimingRef.current.sentAt)
   // Show immediate feedback before workspace checks, file encoding, app
   // recovery, or RPC dispatch can wait on network or runtime startup.
   setSending(true)
-  setCoreStartupStatus('Preparing your request for Seltra…')
+  setAgentStreamPhase('submitted')
+  setCoreStartupStatus('')
+  setPreviewOpen(true)
+  setCorePreviewUrl('')
+  setCorePreviewError('')
+  setCoreQuestionnaireSummary(null)
 
   const corePrompt = pendingAttachment?.url
     ? `${text || 'Use this image as visual context for my app.'}\n\nReference image: ${pendingAttachment.url}`
     : text || (pendingAttachment || coreFiles.length ? 'Use the attached files as context for my app.' : '')
-  if (!activeStore) { await openCoreBuilder({ prompt: corePrompt, mode: builderMode, autoSubmit: true }); return }
-  await runCorePrompt(corePrompt, builderMode, activeStore)
+  setInput('')
+  clearPendingAttachment()
+  const createdAt = new Date().toISOString()
+  const attachedImages = coreFiles.filter((file) => file.type.startsWith('image/'))
+  const attachments = attachedImages.map((file) => {
+    const url = URL.createObjectURL(file)
+    coreMessageAttachmentUrlsRef.current.push(url)
+    return { type: 'image' as const, name: file.name, url }
+  })
+  if (pendingAttachment) attachments.push({ type: 'image' as const, name: pendingAttachment.name, url: pendingAttachment.previewUrl })
+  coreReplyRef.current = ''
+  setMsgs((current) => {
+    coreMessageRef.current = current.length + 1
+    return [...current, { role: 'user', content: text || 'Use the attached files as context for my app.', attachments, createdAt }, { role: 'assistant', content: '' }]
+  })
+  requestAnimationFrame(() => logAgentTiming('assistant_skeleton_visible'))
+  if (!activeStore) { await openCoreBuilder({ prompt: corePrompt, mode: builderMode, autoSubmit: true, optimistic: true }); return }
+  await runCorePrompt(corePrompt, builderMode, activeStore, [], false, true)
 }
 
   const resetProjectSurface = () => {
@@ -2769,6 +2891,8 @@ const send = async () => {
     clearPendingAttachment()
     setConvId(undefined)
     setSending(false)
+    setAgentStreamPhase('idle')
+    setCoreStartupStatus('')
     setBuildId(null)
     setBuildProgress(null)
     setBuildLaunchStarted(false)
@@ -2821,7 +2945,7 @@ const send = async () => {
               return { role: message.role, content: message.content, createdAt: normalized }
             }))
             coreReplyRef.current = chat.messages.filter((message) => message.role === 'assistant').at(-1)?.content ?? ''
-          }).catch((error) => toast.error(error instanceof Error ? `Could not restore the saved Core conversation: ${error.message}` : 'Could not restore the saved Core conversation.'))
+          }).catch(() => { console.warn('[agent-stream] saved conversation restore failed'); toast.error('Seltra could not restore this conversation. Retry from the project.') })
           // Preview startup is independent from agent-run completion. Opening a
           // saved app always attempts to start/restart its sandbox.
           if (!corePreviewUrl) {
@@ -2834,7 +2958,7 @@ const send = async () => {
       }
     } catch (error) {
       setResumeProjectAvailable(false)
-      console.error('[builder] Could not read the saved project pointer.', error)
+      console.warn('[builder] Could not read the saved project pointer.')
     }
   }
 
@@ -3148,18 +3272,6 @@ const handleAgentAttach = async (f: File) => {
     }
   }
 
-  useEffect(() => {
-    if (!sending && !buildId) {
-      setThoughtSeconds(null)
-      return
-    }
-    const started = Date.now()
-    const timer = window.setInterval(() => {
-      setThoughtSeconds(Math.max(1, Math.round((Date.now() - started) / 1000)))
-    }, 500)
-    return () => window.clearInterval(timer)
-  }, [sending, buildId])
-
   const submitFigmaImport = async (url: string) => {
     setFigmaImporting(true)
     try {
@@ -3396,8 +3508,10 @@ const handleAgentAttach = async (f: File) => {
                           content={message.content}
                           streamingPreview={isLatestAssistant && coreStreamingPreview ? coreStreamingPreview : undefined}
                           isStreaming={isLatestAssistant && sending}
+                          statusText={isLatestAssistant ? coreStartupStatus : undefined}
+                          phase={isLatestAssistant ? agentStreamPhase : undefined}
                           todos={isLatestAssistant && coreTodos && coreTodos.chatId === coreChatRef.current ? coreTodos.todos : undefined}
-                          questionnaire={isLatestAssistant && coreQuestionnaire && coreQuestionnaire.chatId === coreChatRef.current ? coreQuestionnaire : undefined}
+                          questionnaire={undefined}
                           blueprint={isLatestAssistant && coreBlueprint && coreBlueprint.chatId === coreChatRef.current ? coreBlueprint : undefined}
                           onQuestionnaireSubmit={respondToCoreQuestionnaire}
                           onBlueprintApprove={approveCoreBlueprint}
@@ -3408,11 +3522,9 @@ const handleAgentAttach = async (f: File) => {
                       </div>
                     )
                   })}
-                  {sending && (Boolean(coreStartupStatus) || !activeAssistantVisible) && <section className="agent-card-in flex w-full max-w-[680px] min-w-0 items-start gap-3 rounded-2xl border border-white/[0.08] bg-[#171b19] px-4 py-4" role="status" aria-live="polite">
-                    <img src="/assets/brand/mark.png" alt="" className="seltra-build-mark mt-0.5 h-8 w-8 shrink-0 object-contain" />
-                    <div className="min-w-0 flex-1"><p className="text-sm font-medium text-white">{coreStartupStatus || (builderMode === 'build' ? 'Seltra is preparing your build' : 'Seltra is preparing a response')}</p><div className="mt-3 space-y-2" aria-hidden="true"><div className="h-2 w-4/5 animate-pulse rounded-full bg-white/[0.08]"/><div className="h-2 w-3/5 animate-pulse rounded-full bg-white/[0.06]"/></div><p className="mt-3 text-xs leading-5 text-white/55">{thoughtSeconds !== null && thoughtSeconds >= 20 ? `Still waiting — ${Math.floor(thoughtSeconds / 60)}:${String(thoughtSeconds % 60).padStart(2, '0')} elapsed. Seltra is at: ${coreStartupStatus || 'workspace connection'}. Your saved project remains available if the connection drops.` : 'Your request is saved. Seltra is connecting to the workspace and will post progress here while it works.'}</p></div>
-                  </section>}
-                  {!activeAssistantVisible && activeTodos.length > 0 && <CoreTodoProgress todos={activeTodos} />}
+                  {coreQuestionnaire && coreQuestionnaire.chatId === coreChatRef.current && <div className="w-full max-w-[680px]" aria-label="Questionnaire"><CoreQuestionnaireCard questionnaire={coreQuestionnaire} onSubmit={respondToCoreQuestionnaire} /></div>}
+                  {coreQuestionnaireSummary?.length ? <section className="w-full max-w-[680px] rounded-xl border border-white/[0.08] bg-[#171b19] p-3" aria-label="Answered questions"><p className="mb-2 text-xs font-medium text-white/55">Your answers</p>{coreQuestionnaireSummary.map((item) => <p key={item.question} className="py-1 text-sm text-white/75"><span className="text-white/45">{item.question} </span>{item.answer}</p>)}</section> : null}
+                  {!sending && !activeAssistantVisible && activeTodos.length > 0 && <CoreTodoProgress todos={activeTodos} />}
                   {(buildProgress && (buildId || buildProgress.phase === 'ready' || buildProgress.phase === 'error')) && (
                     <BuildFlow
                       key={buildProgress.phase === 'error' ? 'failed' : (buildId ?? 'done')}
@@ -3515,7 +3627,7 @@ const handleAgentAttach = async (f: File) => {
                             {!previewRecovering && previewRecoveryError && <details className="max-w-full text-left text-xs text-white/45"><summary className="cursor-pointer hover:text-white/70">Show details</summary><pre className="mt-2 max-h-32 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{previewRecoveryError}</pre></details>}
                             {!previewRecovering && <button type="button" onClick={() => void recoverCorePreview()} className="mt-1 rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-[#082012] hover:bg-emerald-300">Try again</button>}
                           </div>}
-                          {(corePreviewError || coreConnectionError) && <div role="alert" className="absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 bg-red-950/95 px-3 py-2 text-xs text-red-100"><span className="min-w-0 break-words">{corePreviewError || coreConnectionError}</span><button type="button" className="shrink-0 rounded p-1 hover:bg-white/10" aria-label="Dismiss preview error" onClick={() => { setCorePreviewError(''); setCoreConnectionError('') }}><X size={14} /></button></div>}
+                          {(corePreviewError || coreConnectionError) && <div role="alert" className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#141615]/95 px-6 text-center"><img src="/assets/brand/mark.png" alt="" className="h-12 w-12 object-contain"/><p className="max-w-sm text-sm text-white/80">Seltra couldn’t start the app preview.</p><button type="button" className="rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-[#082012] hover:bg-emerald-300" onClick={() => { setCorePreviewError(''); setCoreConnectionError(''); if (corePreviewUrl) void recoverCorePreview(); else { const last = coreLastPromptRef.current; if (last?.store) void runCorePrompt(last.text, last.mode, last.store) } }}>Retry preview</button></div>}
                           {corePreviewConsoleOpen && <section aria-label="Core preview console" className="absolute inset-x-0 bottom-0 z-10 flex h-[38%] min-h-28 flex-col border-t border-white/15 bg-[#111312]/95 text-[11px] text-white backdrop-blur"><div className="flex items-center justify-between border-b border-white/10 px-3 py-2"><span>Core preview console</span><button type="button" onClick={() => setCorePreviewConsole([])} className="text-white/55 hover:text-white">Clear</button></div><div className="min-h-0 flex-1 overflow-y-auto p-2 font-mono">{corePreviewConsole.length ? corePreviewConsole.map((entry, index) => <p key={`${entry.timestamp}-${index}`} className={cn('whitespace-pre-wrap break-words py-0.5', entry.level === 'error' ? 'text-red-300' : entry.level === 'warn' ? 'text-amber-200' : 'text-white/70')}><span className="mr-2 text-white/35">{new Date(entry.timestamp).toLocaleTimeString()}</span>{entry.message || `[${entry.level}]`}</p>) : <p className="p-2 text-white/40">No console messages yet.</p>}</div></section>}
                           {corePreviewScreenshot && <CorePreviewAnnotator screenshot={corePreviewScreenshot} onCancel={() => setCorePreviewScreenshot('')} onAttach={(file) => { setCoreFiles((current) => [...current, file]); setCorePreviewScreenshot(''); toast.success('Annotated Core preview attached to your next message.') }} />}
                           {publishPanelOpen && FF_PUBLISH && activeStore && <div className="absolute inset-0 z-30 flex items-start justify-end bg-slate-950/10 p-3 backdrop-blur-[1px] sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setPublishPanelOpen(false) }}>
@@ -3542,7 +3654,7 @@ const handleAgentAttach = async (f: File) => {
                       ) : (
                         <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center" role={coreQuestionnaire ? 'status' : undefined} aria-live={coreQuestionnaire ? 'polite' : undefined}>
                           <img src="/assets/brand/mark.png" alt="" className={cn('h-16 w-16 object-contain', sending && 'seltra-build-mark')} />
-                          <div className="space-y-1.5"><p className="text-[15px] text-white/80">{coreQuestionnaire ? 'Waiting for you — answer in the chat to continue.' : coreBlueprint ? 'Your app plan is ready for review.' : coreConnectionError || (sending ? 'Seltra is building your app…' : coreConnected ? 'Your app preview will appear here when the app starts.' : 'Connecting to Seltra …')}</p>{coreQuestionnaire && <p className="text-sm text-white/50">The preview will open as soon as it is ready.</p>}</div>
+                          <div className="space-y-1.5"><p className="text-[15px] text-white/80">{coreQuestionnaire ? 'Waiting for you — answer in the chat to continue.' : coreBlueprint ? 'Your app plan is ready for review.' : sending ? 'Seltra is getting your preview ready.' : coreConnected ? 'Your app preview will appear here when the app starts.' : 'Connecting to Seltra …'}</p>{!coreQuestionnaire && !coreBlueprint && sending && <p className="max-w-sm text-sm text-white/45">{['Keep your first version focused on the most important customer task.', 'Clear calls to action help visitors know what to do next.', 'Your answers help shape the first version of the app.'][previewTipIndex]}</p>}</div>
                         </div>
                       )}
                     </div>
@@ -4229,7 +4341,7 @@ function ProjectCardPreview({ store, cover, onSnapshotSaved }: {
         body: JSON.stringify({ snapshotUrl: data.dataUrl, coreAppId: store.dashboardApp?.coreAppId }),
       })
       if (error || !saved?.url || !store.dashboardApp?.coreAppId) {
-        console.error('[dashboard] Could not persist the project preview snapshot.', error || 'Missing snapshot URL or app ID.')
+        console.warn('[dashboard] Could not persist the project preview snapshot.')
         return
       }
       onSnapshotSaved(store.id, store.dashboardApp.coreAppId, saved.url)
@@ -5529,9 +5641,10 @@ function StoreTab({ stores, activeStore, onSelectStore, onStoreDeleted, deleteSt
     setDeleting(true)
     try {
       if (storeToDelete.id) await deleteStoreAppsFromCore(storeToDelete.id)
-    } catch (error) {
+    } catch {
       setDeleting(false)
-      toast.error(error instanceof Error ? error.message : 'Could not remove this store’s app files. The store was not deleted.')
+      console.warn('[dashboard] Could not remove project app files before deletion.')
+      toast.error('Seltra could not remove this project’s app files. The project was not deleted; retry shortly.')
       return
     }
     const { error } = await apiFetch<{ success: boolean }>(`/api/v5/seltra/store/${encodeURIComponent(id)}`, { method: 'DELETE' })

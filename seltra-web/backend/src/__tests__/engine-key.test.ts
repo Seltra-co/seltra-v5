@@ -1,7 +1,8 @@
 import { createHash, createHmac } from 'node:crypto'
+import { JwtService } from '@nestjs/jwt'
 
 const mocks = {
-  tenant: { id: 'tenant-1', ownerId: 'user-1', creditWorkspaceId: 'user-1', slug: 'rush-grab' },
+  tenant: { id: 'tenant-1', ownerId: 'user-1', creditWorkspaceId: 'user-1', coreWorkspaceKey: 'core-key-1', slug: 'rush-grab', status: 'active', owner: { plan: 'free', email: 'builder@example.test' } },
   keys: [] as Array<Record<string, any>>,
   workspaceUpserts: [] as unknown[],
 }
@@ -10,7 +11,7 @@ jest.mock('../db', () => ({
   prisma: {
     tenant: {
       findUnique: jest.fn(async () => mocks.tenant),
-      findFirst: jest.fn(async () => ({ id: 'tenant-1', ownerId: 'user-1', creditWorkspaceId: 'user-1', coreWorkspaceKey: 'core-key-1' })),
+      findFirst: jest.fn(async () => ({ ...mocks.tenant })),
       updateMany: jest.fn(async () => ({ count: 1 })),
     },
     workspaceCredit: {
@@ -44,12 +45,46 @@ beforeEach(() => {
   process.env.SELTRA_ENGINE_API_KEY_HASH_SALT = '0123456789abcdef0123456789abcdef'
   process.env.ENGINE_KEY_ENCRYPTION_SECRET = 'test-encryption-secret-0123456789abcdef'
   process.env.CORE_SERVICE_SECRET = 'core-service-secret-for-test-only'
-  mocks.tenant = { id: 'tenant-1', ownerId: 'user-1', creditWorkspaceId: 'user-1', slug: 'rush-grab' }
+  process.env.CORE_TOKEN_SECRET = 'core-token-secret-for-websocket-ticket-tests'
+  process.env.JWT_SECRET = 'session-jwt-secret-for-websocket-ticket-tests'
+  mocks.tenant = { id: 'tenant-1', ownerId: 'user-1', creditWorkspaceId: 'user-1', coreWorkspaceKey: 'core-key-1', slug: 'rush-grab', status: 'active', owner: { plan: 'free', email: 'builder@example.test' } }
   mocks.keys = []
   mocks.workspaceUpserts = []
 })
 
 describe('workspace Engine keys', () => {
+  it('issues and redeems a signed websocket ticket through the Backend service flow', async () => {
+    const jwt = new JwtService()
+    const credits = {
+      ensureAccount: jest.fn(async () => ({ windowAllowance: 100, balance: 100 })),
+    }
+    const builder = new BuilderService(jwt, credits as never)
+    const sessionToken = await jwt.signAsync(
+      { sub: 'user-1' },
+      { secret: process.env.JWT_SECRET },
+    )
+
+    const issued = await builder.createWsTicket(
+      `Bearer ${sessionToken}`,
+      'tenant-1',
+    )
+    const redeemed = await builder.redeemWsTicket(issued.ticket)
+
+    expect(issued.expiresIn).toBe(30)
+    expect(redeemed).toMatchObject({
+      workspaceId: 'tenant-1',
+      userId: 'user-1',
+      coreWorkspaceKey: 'core-key-1',
+      storeSlug: 'rush-grab',
+      email: 'builder@example.test',
+      plan: 'free',
+    })
+    expect(redeemed.engineApiKey).toMatch(/^sk_seltra_[A-Za-z0-9_-]{40,}$/)
+    await expect(builder.redeemWsTicket(issued.ticket)).rejects.toThrow(
+      'Invalid websocket ticket.',
+    )
+  })
+
   it('provisions an idempotent tenant-scoped key encrypted at rest and accepted by Engine auth', async () => {
     const key = await provisionEngineKey('tenant-1')
     const stored = mocks.keys[0]

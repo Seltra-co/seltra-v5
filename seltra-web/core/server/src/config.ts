@@ -70,6 +70,8 @@ const schema = z.object({
   WORKSPACE_ROOT: z.string().default(path.join(os.tmpdir(), "seltra-workspaces")),
   MAX_ACTIVE_WORKSPACES: z.coerce.number().int().positive().default(4),
   WORKSPACE_IDLE_TTL_SECONDS: z.coerce.number().int().positive().default(1800),
+  WORKSPACE_GATEWAY_IDLE_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(1800),
+  WORKSPACE_GATEWAY_REAPER_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
   AI_PROVIDER: z.string().default("cloudflare"),
   AI_MODEL_DEFAULT: z.string().default("@cf/moonshotai/kimi-k2.7-code"),
   AI_MODEL_TOOL: z.string().optional(),

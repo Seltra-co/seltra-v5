@@ -31,6 +31,9 @@ const files = [
   "src/web/client/install_bridge.test.ts",
   "src/web/client/install_bridge_session.test.ts",
   "src/web/web_runtime_network.test.ts",
+  "src/web/agent_stream_ui.test.tsx",
+  "src/web/core_startup_checks.test.ts",
+  "src/web/model_gateway_url.test.ts",
 ];
 const modelPreflight = spawnSync(
   process.execPath,

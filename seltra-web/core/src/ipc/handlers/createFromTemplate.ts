@@ -42,6 +42,16 @@ export async function createFromTemplate({
       scaffoldPath,
       fullAppPath,
     );
+    // The sandbox image builds this lockfile-pinned dependency tree alongside
+    // the scaffold. Seed each new web project from it so preview startup does
+    // not perform a network install inside the workspace.
+    const scaffoldModules = path.join(scaffoldPath, "node_modules");
+    if (process.env.DYAD_WEB_RUNTIME === "1" && fs.existsSync(scaffoldModules)) {
+      await fs.promises.cp(scaffoldModules, path.join(fullAppPath, "node_modules"), {
+        recursive: true,
+        dereference: false,
+      });
+    }
     if (process.env.DYAD_WEB_RUNTIME === "1")
       await brandWebBlankScaffold(fullAppPath);
     return;

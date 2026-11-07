@@ -77,13 +77,40 @@ function getSeltraEngineFetchOption(): { fetch?: FetchFunction } {
   const fetcher = configured.fetch ?? fetch;
   return {
     ...configured,
-    fetch: ((input: RequestInfo | URL, init?: RequestInit) => {
+    fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
       const headers = new Headers(input instanceof Request ? input.headers : undefined);
       new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
       headers.set("x-seltra-credit-identity", identity);
-      return fetcher(input, { ...init, headers });
+      const phase = process.env.DYAD_WEB_RUNTIME === "1" ? seltraModelPhaseIdentity() : undefined;
+      const startedAt = Date.now();
+      const firstModelCall = Boolean(phase && !modelCallPhaseLogged.has(phase.projectId));
+      if (firstModelCall) {
+        modelCallPhaseLogged.add(phase!.projectId);
+        console.info(JSON.stringify({ event: "core_project_phase", projectId: phase!.projectId, phase: "first model call start", at: new Date().toISOString() }));
+      }
+      try {
+        const response = await fetcher(input, { ...init, headers });
+        if (firstModelCall) console.info(JSON.stringify({ event: "core_project_phase", projectId: phase!.projectId, phase: "first model call end", at: new Date().toISOString(), durationMs: Date.now() - startedAt, status: response.status }));
+        return response;
+      } catch (error) {
+        if (firstModelCall) console.info(JSON.stringify({ event: "core_project_phase", projectId: phase!.projectId, phase: "first model call end", at: new Date().toISOString(), durationMs: Date.now() - startedAt, status: "network_error" }));
+        throw error;
+      }
     }) as FetchFunction,
   };
+}
+
+const modelCallPhaseLogged = new Set<string>();
+
+function seltraModelPhaseIdentity(): { projectId: string } | undefined {
+  try {
+    const encoded = process.env.SELTRA_ENGINE_CREDIT_IDENTITY?.split(".", 1)[0];
+    if (!encoded) return undefined;
+    const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as { tenantId?: unknown };
+    return typeof payload.tenantId === "string" ? { projectId: payload.tenantId } : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const AUTO_MODEL_ALIASES = [

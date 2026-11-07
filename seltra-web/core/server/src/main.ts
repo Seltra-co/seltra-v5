@@ -15,6 +15,7 @@ import httpProxy from "http-proxy";
 import { SignJWT, jwtVerify } from "jose";
 import { GatewayModule } from "./app.module.js";
 import { loadConfig, type GatewayConfig } from "./config.js";
+import { assertCorePublicUrlResolvable, assertModelProviderReachable } from "./startup_checks.js";
 import { redactSensitiveText } from "./security.js";
 import {
   FileControlStore,
@@ -26,6 +27,7 @@ import {
   createBreakerRegistry,
 } from "./resilience/circuit_breaker.js";
 import { isWebChannelAllowed } from "../../src/web/channel_policy.js";
+import { isPrimaryGatewayHost } from "../../src/web/primary_gateway_host.js";
 import { rewritePreviewUrls } from "../../src/web/preview_urls.js";
 import { WorkspaceSupervisor, type WorkspaceRuntime } from "./workspace_supervisor.js";
 import {
@@ -48,6 +50,7 @@ const MAX_RPC_BODY_BYTES = 40 * 1024 * 1024;
 const MAX_RPC_WEBSOCKET_PAYLOAD_BYTES = 1024 * 1024;
 const MAX_MODEL_BODY_BYTES = 10 * 1024 * 1024;
 const MAX_WORKSPACE_SYNC_BODY_BYTES = 10 * 1024 * 1024;
+const WS_TICKET_REDEEM_TIMEOUT_MS = 15_000;
 const WORKSPACE_SYNC_IGNORED_NAMES = new Set([
   ".git",
   ".next",
@@ -289,20 +292,7 @@ function openAiError(
 }
 
 function primaryHost(request: IncomingMessage, config: GatewayConfig): boolean {
-  const requestHost = (request.headers.host ?? "").split(":")[0].toLowerCase();
-  if (requestHost === config.GATEWAY_HOST.toLowerCase()) return true;
-  if (
-    requestHost === "127.0.0.1" ||
-    requestHost === "localhost" ||
-    requestHost === "[::1]"
-  ) return true;
-  // Deployed behind a public domain: the bare base domain and any listed hosts
-  // are the builder UI; only *.PREVIEW_BASE_DOMAIN hosts are previews.
-  if (requestHost === config.PREVIEW_BASE_DOMAIN.toLowerCase()) return true;
-  return config.GATEWAY_PUBLIC_HOSTS.split(",")
-    .map((host) => host.trim().toLowerCase())
-    .filter(Boolean)
-    .includes(requestHost);
+  return isPrimaryGatewayHost(request.headers.host, config);
 }
 //   // if (
 //   //   requestHost === "localhost" ||
@@ -539,6 +529,43 @@ async function main(): Promise<void> {
       return;
     }
   }
+  if (process.env.NODE_ENV === "test") {
+    console.info(JSON.stringify({ event: "ai_startup_selfcheck", status: "skipped", reason: "test environment" }));
+  } else {
+    try {
+      await assertModelProviderReachable({
+        provider: config.AI_PROVIDER,
+        baseUrl: config.modelBaseUrl,
+        apiKey: config.MODEL_API_KEY,
+        model: config.AI_MODEL_DEFAULT,
+        callbackUrl: config.CORE_PUBLIC_URL,
+      });
+      console.info(JSON.stringify({ event: "ai_startup_selfcheck", status: "passed", role: "default" }));
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "ai_startup_selfcheck",
+        status: "failed",
+        code: "MODEL_PROVIDER_UNREACHABLE",
+        message: error instanceof Error ? error.message : "Model provider check failed.",
+      }));
+      process.exitCode = 1;
+      return;
+    }
+  }
+  if (config.EXECUTION_PROVIDER === "cloudflare") {
+    try {
+      await assertCorePublicUrlResolvable(config.CORE_PUBLIC_URL);
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "core_callback_startup_check",
+        status: "failed",
+        code: "CORE_PUBLIC_URL_UNRESOLVABLE",
+        message: error instanceof Error ? error.message : "Core callback URL is unavailable.",
+      }));
+      process.exitCode = 1;
+      return;
+    }
+  }
   if (!process.env.DEPLOY_MODE?.trim() || !["hobby", "team"].includes(process.env.DEPLOY_MODE.trim().toLowerCase())) {
     console.warn(JSON.stringify({ event: "deploy_mode_defaulted", variable: "DEPLOY_MODE", mode: "team" }));
   }
@@ -634,6 +661,7 @@ async function main(): Promise<void> {
     idleMs: config.WORKSPACE_IDLE_TTL_SECONDS * 1000,
     publicApiUrl: config.publish.publicApiUrl ?? config.SELTRA_PUBLIC_API_URL,
     env: process.env,
+    onWorkspaceCleanupPending: async (projectId, workspaceKey) => { await publishBackend('workspace-cleanup/pending', { projectId, workspaceKey }) },
     ...(config.publish.restoreEnabled ? {
       restoreBeforeStart: (workspaceKey: string, workspaceRoot: string) => durability.restoreBeforeStart(workspaceKey, workspaceRoot),
     } : {}),
@@ -648,6 +676,18 @@ async function main(): Promise<void> {
     console.warn("NOT ISOLATED - DEV ONLY: workspace code runs as a host process.");
   }
   durability.start(() => supervisor.listRuntimes());
+  const gatewayWorkspaceReaper = setInterval(() => {
+    void (async () => {
+      try {
+        const active = await publishBackend<{ workspaceKeys: string[] }>('workspaces/active', {});
+        const result = await supervisor.reapGatewayWorkspaces(new Set(active.workspaceKeys), config.WORKSPACE_GATEWAY_IDLE_TIMEOUT_SECONDS * 1000);
+        if (result.destroyed) console.info(JSON.stringify({ event: 'gateway_workspace_reap', scanned: result.scanned, destroyed: result.destroyed }));
+      } catch (error) {
+        console.error(JSON.stringify({ event: 'gateway_workspace_reap_failed', code: error instanceof Error ? error.name : 'unknown' }));
+      }
+    })();
+  }, config.WORKSPACE_GATEWAY_REAPER_INTERVAL_SECONDS * 1000);
+  gatewayWorkspaceReaper.unref();
   const entitlementCache = new Map<string, { expiresAt: number; active: boolean; reason?: string; engineApiKey: string }>();
   const sessionOwners = new Map<string, SessionClaims>();
   const modelTokens = new Map<string, SessionClaims>();
@@ -780,81 +820,6 @@ async function main(): Promise<void> {
   });
   await nest.listen(config.GATEWAY_PORT, config.GATEWAY_HOST);
   traceStartup("http_listening");
-  void (async () => {
-    const accountId = config.MODEL_ACCOUNT_ID?.trim() ?? "";
-    const accountLast4 = accountId.slice(-4);
-    const roles = {
-      default: config.AI_MODEL_DEFAULT,
-      reasoning: config.AI_MODEL_REASONING ?? config.AI_MODEL_DEFAULT,
-      fast: config.AI_MODEL_FAST ?? config.AI_MODEL_DEFAULT,
-      vision: config.AI_MODEL_VISION ?? config.AI_MODEL_DEFAULT,
-      image: config.AI_MODEL_IMAGE ?? "",
-    };
-    const unresolvedTemplate = config.modelBaseUrl.includes("${") ||
-      Boolean(config.MODEL_BASE_URL?.includes("${"));
-    console.log(JSON.stringify({
-      level: "info",
-      event: "ai_config_startup",
-      provider: config.AI_PROVIDER,
-      baseUrl: config.modelBaseUrl,
-      accountIdLast4: accountLast4 || null,
-      roles,
-      unresolvedTemplate,
-      empty: {
-        provider: !config.AI_PROVIDER,
-        baseUrl: !config.modelBaseUrl,
-        accountId: !accountId,
-        apiKey: !config.MODEL_API_KEY,
-      },
-    }));
-    if (config.AI_PROVIDER === "cloudflare" && config.modelBaseUrl && config.MODEL_API_KEY) {
-      const textRoles = [
-        ["default", roles.default],
-        ["reasoning", roles.reasoning],
-        ["fast", roles.fast],
-        ["vision", roles.vision],
-      ];
-      for (const [role, modelId] of textRoles) {
-        if (!modelId?.trim()) continue;
-        try {
-          const response = await fetch(
-            config.modelBaseUrl.replace(/\/+$/, "") + "/chat/completions",
-            {
-              method: "POST",
-              headers: {
-                authorization: "Bearer " + config.MODEL_API_KEY,
-                "content-type": "application/json",
-              },
-              body: JSON.stringify({
-                model: modelId,
-                messages: [{ role: "user", content: "ping" }],
-                max_tokens: 1,
-              }),
-              signal: AbortSignal.timeout(10_000),
-            },
-          );
-          console.log(JSON.stringify({
-            level: "info",
-            event: "ai_startup_selfcheck",
-            role,
-            modelId,
-            url: config.modelBaseUrl.replace(/\/+$/, "") + "/chat/completions",
-            statusCode: response.status,
-          }));
-          await response.text().catch(() => "");
-        } catch (error) {
-          console.error(JSON.stringify({
-            level: "error",
-            event: "ai_startup_selfcheck",
-            role,
-            modelId,
-            url: config.modelBaseUrl.replace(/\/+$/, "") + "/chat/completions",
-            cause: error instanceof Error ? error.message : String(error),
-          }));
-        }
-      }
-    }
-  })();
   const server = nest.getHttpServer() as Server;
   const wss = new WebSocketServer({
     noServer: true,
@@ -1352,6 +1317,7 @@ async function main(): Promise<void> {
         "Invalid workspace model token.",
       );
     }
+    console.info(JSON.stringify({ event: 'core_project_phase', projectId: modelClaims.workspaceId, phase: 'model call start', at: new Date().toISOString(), requestId }));
     await assertEntitlement(modelClaims);
     if (modelsOnly) {
       sendJson(response, 200, {
@@ -1833,6 +1799,7 @@ async function main(): Promise<void> {
           message,
         );
     } finally {
+      console.info(JSON.stringify({ event: 'core_project_phase', projectId: claimsWorkspace, phase: 'model call end', at: new Date().toISOString(), requestId: request.headers['x-request-id'] ?? null }));
       state.inFlight = Math.max(0, state.inFlight - 1);
       const reportedInput = (
         statefulBucket as UsageBucket & { reportedInput?: number }
@@ -1972,6 +1939,18 @@ async function main(): Promise<void> {
     response: ServerResponse,
   ): Promise<void> {
     const url = new URL(request.url ?? "/", "http://gateway.invalid");
+    if (request.method === 'POST' && url.pathname === '/internal/workspaces/destroy') {
+      const supplied = Buffer.from(request.headers['x-core-service-secret'] ?? '');
+      const expected = Buffer.from(config.CORE_SERVICE_SECRET);
+      if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new HttpError(401, 'UNAUTHORIZED', 'Core service authentication is required.');
+      let body: { workspaceKey?: unknown };
+      try { body = JSON.parse((await readBody(request, 4096)).toString('utf8')) as typeof body; }
+      catch { throw new HttpError(400, 'INVALID_REQUEST', 'A valid workspace destroy request is required.'); }
+      if (typeof body.workspaceKey !== 'string' || !/^[a-f0-9]{12,128}$/i.test(body.workspaceKey)) throw new HttpError(400, 'INVALID_REQUEST', 'A valid workspace key is required.');
+      await supervisor.destroyWorkspace(body.workspaceKey);
+      sendJson(response, 200, { ok: true });
+      return;
+    }
     if (request.method === "OPTIONS") {
       if (!request.headers.origin || !config.allowedOrigins.has(request.headers.origin))
         throw new HttpError(403, "ORIGIN_FORBIDDEN", "Request origin is not allowed.");
@@ -2328,6 +2307,7 @@ async function main(): Promise<void> {
         }
         if ((channel === "create-app" || channel === "list-apps") && result && typeof result === "object") {
           const rpcResponse = result as { ok?: boolean; result?: unknown };
+          if (channel === 'create-app' && rpcResponse.ok) console.info(JSON.stringify({ event: 'core_project_phase', projectId: claims.workspaceId, phase: 'create-app done', at: new Date().toISOString() }));
           let value = rpcResponse.result;
           // Runtime IPC handlers return a typed IPC envelope inside the RPC
           // response. Core's own browser bridge unwraps it. Read the same
@@ -2458,20 +2438,58 @@ async function main(): Promise<void> {
         const ticket = url.searchParams.get("ticket");
         if (!ticket || ticket.length > 4096) throw new HttpError(401, "WS_TICKET_REQUIRED", "A websocket ticket is required.");
         let redeemed: { workspaceId?: string; creditWorkspaceId?: string; userId?: string; coreWorkspaceKey?: string; storeSlug?: string; email?: string; plan?: string; engineApiKey?: string };
+        const redeemStartedAt = Date.now();
+        const backendUrl = new URL(config.NEST_INTERNAL_URL);
+        const backendHostPort = `${backendUrl.hostname}:${backendUrl.port || (backendUrl.protocol === "https:" ? "443" : "80")}`;
         try {
-          const result = await fetch(`${config.NEST_INTERNAL_URL.replace(/\/+$/, "")}/api/v5/internal/core/ws-ticket/redeem`, {
+          const result = await fetch(`${backendUrl.origin.replace(/\/+$/, "")}/api/v5/internal/core/ws-ticket/redeem`, {
             method: "POST", headers: { "content-type": "application/json", "x-core-service-secret": config.CORE_SERVICE_SECRET },
-            body: JSON.stringify({ ticket }), signal: AbortSignal.timeout(5_000),
+            body: JSON.stringify({ ticket }), signal: AbortSignal.timeout(WS_TICKET_REDEEM_TIMEOUT_MS),
           });
-          if (!result.ok) throw new Error("ticket rejected");
+          if (!result.ok) {
+            console.error(JSON.stringify({
+              event: "ws_ticket_redeem_failed",
+              failureClass: "backend_http_status",
+              backendHostPort,
+              backendStatus: result.status,
+              elapsedMs: Date.now() - redeemStartedAt,
+            }));
+            throw new Error("ticket rejected");
+          }
           redeemed = await result.json() as typeof redeemed;
-        } catch { throw new HttpError(401, "WS_TICKET_INVALID", "Websocket ticket is invalid or expired."); }
-        if (!redeemed.workspaceId || !redeemed.userId || !redeemed.coreWorkspaceKey || !redeemed.storeSlug || !redeemed.email || !redeemed.plan || typeof redeemed.engineApiKey !== "string" || !/^sk_seltra_[A-Za-z0-9_-]{40,}$/.test(redeemed.engineApiKey))
+        } catch (error) {
+          if (!(error instanceof Error && error.message === "ticket rejected")) {
+            const cause = error instanceof Error ? (error as Error & { cause?: { code?: unknown } }).cause : undefined;
+            const causeCode = typeof cause?.code === "string" && /^[A-Z0-9_]+$/.test(cause.code)
+              ? cause.code
+              : error instanceof Error ? error.name : "UnknownError";
+            console.error(JSON.stringify({
+              event: "ws_ticket_redeem_failed",
+              failureClass: "network_error",
+              failureCode: causeCode,
+              backendHostPort,
+              elapsedMs: Date.now() - redeemStartedAt,
+            }));
+          }
           throw new HttpError(401, "WS_TICKET_INVALID", "Websocket ticket is invalid or expired.");
+        }
+        if (!redeemed.workspaceId || !redeemed.userId || !redeemed.coreWorkspaceKey || !redeemed.storeSlug || !redeemed.email || !redeemed.plan || typeof redeemed.engineApiKey !== "string" || !/^sk_seltra_[A-Za-z0-9_-]{40,}$/.test(redeemed.engineApiKey)) {
+          console.error(JSON.stringify({
+            event: "ws_ticket_redeem_failed",
+            failureClass: "invalid_ticket_claims",
+            backendHostPort,
+            backendStatus: 200,
+            elapsedMs: Date.now() - redeemStartedAt,
+          }));
+          throw new HttpError(401, "WS_TICKET_INVALID", "Websocket ticket is invalid or expired.");
+        }
         const claims: SessionClaims = { workspaceId: redeemed.workspaceId, creditWorkspaceId: redeemed.creditWorkspaceId, sub: redeemed.userId, coreWorkspaceKey: redeemed.coreWorkspaceKey, storeSlug: redeemed.storeSlug, email: redeemed.email, plan: redeemed.plan };
+        console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "ticket redeemed", at: new Date().toISOString(), durationMs: Date.now() - redeemStartedAt }));
         entitlementCache.set(redeemed.workspaceId, { active: true, engineApiKey: redeemed.engineApiKey, expiresAt: Date.now() + 60_000 });
         await assertEntitlement(claims, true);
+        console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "workspace lookup requested", at: new Date().toISOString() }));
         const workspaceRuntime = await runtimeFor(claims);
+        console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "workspace runtime ready", at: new Date().toISOString() }));
         url.searchParams.delete("ticket");
         request.url = url.pathname + url.search;
         wss.handleUpgrade(request, socket, head, (browser) => {
@@ -2484,6 +2502,8 @@ async function main(): Promise<void> {
             },
           });
           const pair: EventSession = { userId: claims.sub, workspaceId: claims.workspaceId, browser, runtime };
+          browser.once("open", () => console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "browser WS open", at: new Date().toISOString() })));
+          console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "browser WS accepted", at: new Date().toISOString() }));
           eventSessions.add(pair);
           const openedAt = Date.now();
           let runtimeSessionId: string | undefined;
@@ -2547,6 +2567,10 @@ async function main(): Promise<void> {
             if (!closed) void syncWorkspaceFiles();
           }, 8_000);
           workspaceSyncTimer.unref();
+          const workspaceLeaseTimer = setInterval(() => {
+            if (!closed) supervisor.getByKey(claims.coreWorkspaceKey);
+          }, 5_000);
+          workspaceLeaseTimer.unref();
           const heartbeatTimer = setInterval(() => {
             if (closed) return;
             if (!browserAlive || !runtimeAlive) {
@@ -2585,6 +2609,7 @@ async function main(): Promise<void> {
             closed = true;
             clearTimeout(authLifetimeTimer);
             clearTimeout(sessionReadyTimer);
+            clearInterval(workspaceLeaseTimer);
             clearInterval(heartbeatTimer);
             clearInterval(workspaceSyncTimer);
             const forwardedCode =
@@ -2635,6 +2660,7 @@ async function main(): Promise<void> {
                         runtimeSessionId = frame.payload.id;
                         clearTimeout(sessionReadyTimer);
                         sessionOwners.set(runtimeSessionId, claims);
+                        console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "WS subscribed", at: new Date().toISOString() }));
                       }
                       if (frame.channel === "chat:response:end" || frame.channel === "chat:response:error") {
                         const turnId = typeof frame.payload?.intentId === "string" ? frame.payload.intentId : typeof frame.payload?.chatId === "string" ? frame.payload.chatId : "turn-end";

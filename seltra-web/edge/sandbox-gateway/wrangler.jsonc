@@ -14,8 +14,14 @@
     }
   ],
   "durable_objects": {
-    "bindings": [{ "name": "SANDBOXES", "class_name": "WorkspaceSandbox" }]
+    "bindings": [
+      { "name": "SANDBOXES", "class_name": "WorkspaceSandbox" },
+      { "name": "REGISTRY", "class_name": "WorkspaceRegistry" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WorkspaceSandbox"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["WorkspaceSandbox"] },
+    { "tag": "v2", "new_sqlite_classes": ["WorkspaceRegistry"] }
+  ],
   "observability": { "enabled": true }
 }

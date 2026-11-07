@@ -879,6 +879,28 @@ describe("executeApp", () => {
     });
   });
 
+  it("starts a web scaffold with baked dependencies without installing at runtime", async () => {
+    const appPath = await createTempAppDir();
+    await mkdir(path.join(appPath, "node_modules"), { recursive: true });
+    vi.stubEnv("DYAD_WEB_RUNTIME", "1");
+    try {
+      getPnpmMinimumReleaseAgeSupportMock.mockResolvedValue({
+        available: true,
+        minimumReleaseAgeSupported: true,
+      });
+      const process = new FakeChildProcess(101);
+      spawnMock.mockReturnValueOnce(process);
+      await executeApp({ appPath, appId: 1, output: createOutput(), isNeon: false });
+      const command = String(spawnMock.mock.calls[0][0]);
+      expect(command).toContain("pnpm");
+      expect(command).toContain("run dev");
+      expect(command).not.toMatch(/\b(?:npm|pnpm)\s+(?:ci|install)\b/);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(appPath, { recursive: true, force: true });
+    }
+  });
+
   it("does not disable Corepack project specs for custom commands", async () => {
     await withCorepackProjectSpecEnv("1", async () => {
       const process = new FakeChildProcess(101);

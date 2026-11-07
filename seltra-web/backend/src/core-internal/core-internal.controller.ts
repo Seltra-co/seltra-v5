@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common'
+import { BadRequestException, Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common'
 import { IsBoolean, IsDateString, IsEnum, IsIn, IsInt, IsObject, IsOptional, IsString, MaxLength, Min } from 'class-validator'
 import { ApiExcludeController } from '@nestjs/swagger'
 import { BuilderService } from '../builder/builder.service'
 import { CoreServiceGuard } from './core-service.guard'
 import { PublishService } from '../publish/publish.service'
 import { DeploymentKind, DeploymentStatus, PublishWorkspaceStatus } from '@prisma/client'
+import { prisma } from '../db'
 
 class CoreUsageDto {
   @IsString() tenantId!: string
@@ -181,6 +182,27 @@ export class CoreInternalController {
   @Get('entitlement/:tenantId')
   entitlement(@Param('tenantId') tenantId: string) {
     return this.builder.entitlement(tenantId)
+  }
+
+  @Post('workspaces/active')
+  async activeCoreWorkspaces() {
+    const tenants = await prisma.tenant.findMany({
+      where: { coreWorkspaceKey: { not: null } },
+      select: { coreWorkspaceKey: true },
+    })
+    return { workspaceKeys: tenants.map((tenant) => tenant.coreWorkspaceKey).filter((key): key is string => Boolean(key)) }
+  }
+
+  @Post('workspace-cleanup/pending')
+  async pendingWorkspaceCleanup(@Body() body: { projectId?: unknown; workspaceKey?: unknown }) {
+    if (typeof body.projectId !== 'string' || typeof body.workspaceKey !== 'string' || !/^[a-f0-9]{12,128}$/i.test(body.workspaceKey)) {
+      throw new BadRequestException('Invalid workspace cleanup request.')
+    }
+    return prisma.workspaceCleanup.upsert({
+      where: { workspaceKey: body.workspaceKey },
+      create: { projectId: body.projectId, workspaceKey: body.workspaceKey, nextAttemptAt: new Date() },
+      update: { projectId: body.projectId, nextAttemptAt: new Date() },
+    })
   }
 
   @Post('usage')

@@ -171,6 +171,7 @@ export class WorkspaceSandbox extends DurableObject {
           await this.ctx.storage.delete("lastErrorCode");
         } catch {
           await this.onError("CONTAINER_NOT_STARTED");
+          if (container.running) await container.destroy().catch(() => {});
           await this.ctx.storage.deleteAll();
           return json({ code: "CONTAINER_NOT_STARTED" }, 503);
         }
@@ -195,7 +196,7 @@ export class WorkspaceSandbox extends DurableObject {
     }
 
     if (url.pathname === "/__destroy" && request.method === "POST") {
-      await container.destroy();
+      if (container.running) await container.destroy();
       await this.monitoring?.catch(() => {});
       await this.ctx.storage.deleteAll();
       return json({ destroyed: true });
@@ -283,6 +284,30 @@ export class WorkspaceSandbox extends DurableObject {
       if (target.appId !== Number(appId) || target.host !== "127.0.0.1" || !Number.isInteger(target.port) || target.port < 1024 || target.port > 65535) return json({ code: "PREVIEW_INVALID" }, 502);
       const previewPath = "/" + suffix.join("/") + new URL(request.url).search;
       return container.getTcpPort(target.port).fetch(proxyRequest(`http://container${previewPath}`, request, bytes));
+    }
+    return json({ code: "NOT_FOUND" }, 404);
+  }
+}
+
+export class WorkspaceRegistry extends DurableObject {
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/__touch") {
+      const { workspaceKey } = await request.json();
+      if (!validateWorkspaceKey(workspaceKey)) return json({ code: "WORKSPACE_INVALID" }, 400);
+      const record = await this.ctx.storage.get(workspaceKey) ?? { createdAt: Date.now() };
+      await this.ctx.storage.put(workspaceKey, { ...record, lastSeenAt: Date.now() });
+      return json({ ok: true });
+    }
+    if (request.method === "POST" && url.pathname === "/__remove") {
+      const { workspaceKey } = await request.json();
+      if (!validateWorkspaceKey(workspaceKey)) return json({ code: "WORKSPACE_INVALID" }, 400);
+      await this.ctx.storage.delete(workspaceKey);
+      return json({ ok: true });
+    }
+    if (request.method === "GET" && url.pathname === "/__list") {
+      const records = await this.ctx.storage.list();
+      return json({ workspaces: [...records].map(([workspaceKey, value]) => ({ workspaceKey, ...value })) });
     }
     return json({ code: "NOT_FOUND" }, 404);
   }
@@ -384,6 +409,16 @@ export default {
     }
     const match = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/(create|exec|files|destroy|runtime|preview)(?:\/(.*))?$/i);
     const diagnostic = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/diag$/i);
+    if (url.pathname === "/v1/workspaces" && request.method === "GET") {
+      const body = await readBodyLimited(request);
+      if (!body) return json({ code: "BODY_TOO_LARGE" }, 413);
+      const auth = await authenticate(request, env, body);
+      if (!auth.ok) return json({ code: "AUTH_INVALID" }, 401);
+      const replay = await consumeNonce(env, auth.nonce, Number(request.headers.get("x-sandbox-timestamp")));
+      if (!replay.ok) return replay.response;
+      const registry = env.REGISTRY.get(env.REGISTRY.idFromName("workspace-registry"));
+      return registry.fetch("https://registry/__list");
+    }
     if (!match && !diagnostic) return json({ code: "NOT_FOUND" }, 404);
     return handleSignedWorkspaceRequest(request, env, url, match, diagnostic);
   },
@@ -401,6 +436,7 @@ async function handleSignedWorkspaceRequest(request, env, url, match = url.pathn
   const operation = match?.[2] ?? "diag";
   const doId = env.SANDBOXES.idFromName(await sandboxId(workspaceKey));
   const stub = env.SANDBOXES.get(doId);
+  const registry = env.REGISTRY.get(env.REGISTRY.idFromName("workspace-registry"));
   const internalPath = operation === "create" ? "/__create" : operation === "exec" ? "/__exec" : operation === "files" ? "/__files" : operation === "destroy" ? "/__destroy" : operation === "runtime" ? `/__runtime/${match[3] ?? ""}` : operation === "preview" ? `/__preview/${match[3] ?? ""}` : "/__diag";
   const headers = proxyHeaders(request.headers, { runtime: operation === "runtime" });
   const internal = new Request(`https://sandbox${internalPath}${url.search}`, {
@@ -408,7 +444,15 @@ async function handleSignedWorkspaceRequest(request, env, url, match = url.pathn
     headers,
     ...(["GET", "HEAD"].includes(request.method.toUpperCase()) ? {} : { body }),
   });
-  return stub.fetch(internal);
+  const response = await stub.fetch(internal);
+  if (response.ok && operation !== "diag") {
+    const registryPath = operation === "destroy" ? "/__remove" : "/__touch";
+    await registry.fetch(`https://registry${registryPath}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceKey }),
+    });
+  }
+  return response;
 }
 
 async function authenticate(request, env, body) {

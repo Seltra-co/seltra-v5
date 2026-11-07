@@ -20,6 +20,8 @@ export interface WorkspaceExecutionProvider {
   spawn(request: ExecutionRequest): ChildProcess
   startRemote?(request: ExecutionRequest): Promise<{ child: ChildProcess; baseUrl: string; signRequest: (method: string, path: string) => Record<string, string>; syncFromExecution: () => Promise<void> }>
   stop(name: string, child: ChildProcess): Promise<void>
+  destroyWorkspace?(workspaceKey: string): Promise<void>
+  listWorkspaces?(): Promise<Array<{ workspaceKey: string; createdAt: number; lastSeenAt: number }>>
   readonly runtimePort?: number
 }
 
@@ -108,10 +110,34 @@ export class CloudflareSandboxProvider implements WorkspaceExecutionProvider {
   async stop(name: string, child: ChildProcess) {
     const workspaceKey = this.handles.get(name)
     if (workspaceKey) {
-      await this.send(`/v1/workspaces/${workspaceKey}/destroy`, 'POST', '{}', 20_000).catch(() => undefined)
+      await this.destroyWorkspace(workspaceKey)
       this.handles.delete(name)
     }
     if (child.exitCode === null) (child as unknown as { exitCode: number | null }).exitCode = 0
+  }
+
+  async destroyWorkspace(workspaceKey: string) {
+    if (!/^[a-f0-9]{12,128}$/i.test(workspaceKey)) throw new Error('Invalid workspace key.')
+    let lastStatus = 0
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = await this.send(`/v1/workspaces/${workspaceKey}/destroy`, 'POST', '{}', 20_000)
+        lastStatus = response.status
+        if (response.ok) return
+      } catch {}
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)))
+    }
+    throw new Error(`Gateway workspace destroy failed (${lastStatus || 'network'}).`)
+  }
+
+  async listWorkspaces() {
+    const response = await this.send('/v1/workspaces', 'GET')
+    if (!response.ok) throw new Error(`Gateway workspace listing failed (${response.status}).`)
+    const result = await response.json().catch(() => ({})) as { workspaces?: Array<{ workspaceKey?: unknown; createdAt?: unknown; lastSeenAt?: unknown }> }
+    if (!Array.isArray(result.workspaces)) throw new Error('Gateway workspace listing returned an invalid response.')
+    return result.workspaces.filter((row): row is { workspaceKey: string; createdAt: number; lastSeenAt: number } =>
+      typeof row.workspaceKey === 'string' && /^[a-f0-9]{12,128}$/i.test(row.workspaceKey) && Number.isFinite(row.createdAt) && Number.isFinite(row.lastSeenAt),
+    )
   }
 
   async health() {

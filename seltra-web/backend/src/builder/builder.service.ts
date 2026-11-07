@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common'
+import { ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { prisma } from '../db'
@@ -17,6 +17,7 @@ function workspaceFileMime(filePath: string) {
 
 @Injectable()
 export class BuilderService {
+  private readonly logger = new Logger(BuilderService.name)
   private readonly redeemedTickets = new Map<string, number>()
   constructor(private readonly jwt: JwtService, private readonly credits: CreditsService) {}
 
@@ -27,6 +28,8 @@ export class BuilderService {
   }
 
   async createSession(authorization: string | undefined, tenantId: string) {
+    const requestStartedAt = Date.now()
+    this.logger.log(JSON.stringify({ event: 'core_project_phase', projectId: tenantId, phase: 'project session request', at: new Date(requestStartedAt).toISOString() }))
     const userId = await resolveUserIdFromAuthorization(authorization, this.jwt)
     if (!userId) throw new ForbiddenException('Authentication is required to start a builder session.')
     const tenant = await prisma.tenant.findFirst({
@@ -59,7 +62,7 @@ export class BuilderService {
       { workspaceId: tenant.id, creditWorkspaceId: userId, coreWorkspaceKey: coreWorkspaceKey!, storeSlug: tenant.slug, plan, email: tenant.owner?.email ?? '', jti: randomUUID() },
       { secret: this.coreSecret(), algorithm: 'HS256', issuer: 'seltra-api', audience: 'seltra-core', subject: userId!, expiresIn: '10m' },
     )
-    return {
+    const response = {
       coreToken,
       expiresIn: 600,
       workspaceId: tenant.id,
@@ -69,6 +72,8 @@ export class BuilderService {
       plan,
       limits: { ...planLimits(plan), aiCredits: { used, limit: creditAccount.windowAllowance, balance: creditAccount.balance, resetsAt: nextUtcCreditReset().toISOString() } },
     }
+    this.logger.log(JSON.stringify({ event: 'core_project_phase', projectId: tenantId, phase: 'project session response', at: new Date().toISOString(), durationMs: Date.now() - requestStartedAt }))
+    return response
   }
 
   async getCredits(authorization: string | undefined, tenantId?: string) {
@@ -97,11 +102,13 @@ export class BuilderService {
   }
 
   async createWsTicket(authorization: string | undefined, tenantId: string) {
+    const startedAt = Date.now()
     const session = await this.createSession(authorization, tenantId)
     const ticket = await this.jwt.signAsync(
       { workspaceId: session.workspaceId, jti: randomUUID() },
       { secret: this.coreSecret(), algorithm: 'HS256', issuer: 'seltra-api', audience: 'seltra-core-ws', subject: session.workspaceId, expiresIn: '30s' },
     )
+    this.logger.log(JSON.stringify({ event: 'core_project_phase', projectId: tenantId, phase: 'ticket issued', at: new Date().toISOString(), durationMs: Date.now() - startedAt }))
     return { ticket, expiresIn: 30 }
   }
 

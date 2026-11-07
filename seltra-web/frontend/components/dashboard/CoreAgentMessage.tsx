@@ -111,7 +111,7 @@ function parseMessage(source: string): MessageBlock[] {
   })
 }
 
-function QuestionCard({ questionnaire, onSubmit }: { questionnaire: CoreQuestionnaire; onSubmit: (answers: Record<string, string> | null) => void }) {
+export function CoreQuestionnaireCard({ questionnaire, onSubmit }: { questionnaire: CoreQuestionnaire; onSubmit: (answers: Record<string, string> | null) => void }) {
   const { questions } = questionnaire
   const storageKey = `seltra:core:questionnaire:${questionnaire.requestId}`
   const [index, setIndex] = useState(0)
@@ -260,17 +260,13 @@ function GeneratedAssets({ assets, loadAsset }: { assets: Array<Extract<MessageB
   </section>
 }
 
-export function CoreAgentMessage({ content, streamingPreview = '', isStreaming, todos, questionnaire, blueprint, onQuestionnaireSubmit, onBlueprintApprove, onBlueprintNameChange, loadAsset }: { content: string; streamingPreview?: string; isStreaming?: boolean; todos?: CoreTodo[]; questionnaire?: CoreQuestionnaire; blueprint?: CoreBlueprint; onQuestionnaireSubmit?: (answers: Record<string, string> | null) => void; onBlueprintApprove?: () => Promise<void>; onBlueprintNameChange?: (name: string) => void; loadAsset?: (path: string) => Promise<string> }) {
+export function CoreAgentMessage({ content, streamingPreview = '', isStreaming, todos, questionnaire, blueprint, onQuestionnaireSubmit, onBlueprintApprove, onBlueprintNameChange, loadAsset, compactStream = false }: { content: string; streamingPreview?: string; isStreaming?: boolean; todos?: CoreTodo[]; questionnaire?: CoreQuestionnaire; blueprint?: CoreBlueprint; onQuestionnaireSubmit?: (answers: Record<string, string> | null) => void; onBlueprintApprove?: () => Promise<void>; onBlueprintNameChange?: (name: string) => void; loadAsset?: (path: string) => Promise<string>; compactStream?: boolean }) {
   const blocks = useMemo(() => parseMessage(content), [content])
   const previewBlocks = useMemo(() => streamingPreview ? parseMessage(streamingPreview) : [], [streamingPreview])
   const hasQuestionnaireStatus = blocks.some((block) => block.kind === 'status' && /questionnaire/i.test(block.title))
   const hasBlueprintBlock = blocks.some((block) => block.kind === 'blueprint')
   return <div className="w-full min-w-0 max-w-[680px] overflow-x-hidden text-[15px] leading-7 text-white/90">
-    {/* The dashboard shows a dedicated startup/waiting card while this
-        placeholder message is empty. Start the inline activity label only
-        after Core has streamed content, so the empty row is not mistaken for
-        a response. */}
-    {isStreaming && content.trim() ? <CoreActivity hasResponse /> : null}
+    {!compactStream && isStreaming && content.trim() ? <CoreActivity hasResponse /> : null}
     {blocks.map((block, index) => {
       if (block.kind === 'blueprint') return blueprint && onBlueprintApprove ? <BlueprintCard key={`blueprint-${index}`} blueprint={blueprint} onApprove={onBlueprintApprove} onNameChange={onBlueprintNameChange ?? (() => undefined)} /> : null
       if (block.kind === 'asset') {
@@ -280,16 +276,16 @@ export function CoreAgentMessage({ content, streamingPreview = '', isStreaming, 
         return <GeneratedAssets key={`assets-${index}`} assets={assets} loadAsset={loadAsset} />
       }
       if (block.kind === 'thought') return null
-      if (block.kind === 'status') return <div key={`status-${index}`} className={cn('my-3 flex min-w-0 gap-3 rounded-xl border px-3.5 py-3', /error|failed|aborted/i.test(block.state) ? 'border-red-400/20 bg-red-400/[0.05]' : 'border-white/[0.08] bg-[#171b19]')}>
+      if (block.kind === 'status') return compactStream ? null : <div key={`status-${index}`} className={cn('my-3 flex min-w-0 gap-3 rounded-xl border px-3.5 py-3', /error|failed|aborted/i.test(block.state) ? 'border-red-400/20 bg-red-400/[0.05]' : 'border-white/[0.08] bg-[#171b19]')}>
         <span className="mt-0.5 shrink-0 text-emerald-300">{/error|failed|aborted/i.test(block.state) ? <TriangleAlert className="h-4 w-4 text-red-300" /> : /finished|complete/i.test(block.state) ? <CheckCircle2 className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}</span>
         <div className="min-w-0 flex-1"><p className="break-words text-sm font-medium text-white">{hasQuestionnaireStatus && questionnaire ? 'Your answers will guide the build' : block.title}</p>{block.content.trim() && !(hasQuestionnaireStatus && questionnaire) ? <details className="mt-1 min-w-0 text-[13px] leading-5 text-white/55"><summary className="w-fit cursor-pointer select-none text-xs text-white/45 hover:text-white/75">Show details</summary><pre className="mt-2 max-h-64 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words font-sans [overflow-wrap:anywhere]">{block.content.trim()}</pre></details> : null}</div>
       </div>
-      if (block.kind === 'output') return <div key={`output-${index}`} className="my-3 min-w-0 rounded-xl border border-amber-300/20 bg-amber-300/[0.05] px-3.5 py-3"><p className="break-words text-sm font-medium text-amber-100">{block.title}</p>{block.content.trim() && <details className="mt-1 min-w-0 text-[13px] leading-5 text-white/60"><summary className="w-fit cursor-pointer select-none text-xs text-white/45 hover:text-white/75">Show error details</summary><pre className="mt-2 max-h-64 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words font-sans [overflow-wrap:anywhere]">{block.content.trim()}</pre></details>}</div>
+      if (block.kind === 'output') return compactStream ? null : <div key={`output-${index}`} className="my-3 min-w-0 rounded-xl border border-amber-300/20 bg-amber-300/[0.05] px-3.5 py-3"><p className="break-words text-sm font-medium text-amber-100">{block.title}</p>{block.content.trim() && <details className="mt-1 min-w-0 text-[13px] leading-5 text-white/60"><summary className="w-fit cursor-pointer select-none text-xs text-white/45 hover:text-white/75">Show error details</summary><pre className="mt-2 max-h-64 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words font-sans [overflow-wrap:anywhere]">{block.content.trim()}</pre></details>}</div>
       return <p key={`text-${index}`} className="my-2 min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{block.content.replace(/\n{3,}/g, '\n\n').trim()}</p>
     })}
     {previewBlocks.filter((block): block is Extract<MessageBlock, { kind: 'asset' }> => block.kind === 'asset').map((asset, index) => <GeneratedAssets key={`streaming-asset-${asset.prompt}-${index}`} assets={[asset]} loadAsset={loadAsset} />)}
     {blueprint && onBlueprintApprove && !hasBlueprintBlock ? <BlueprintCard blueprint={blueprint} onApprove={onBlueprintApprove} onNameChange={onBlueprintNameChange ?? (() => undefined)} /> : null}
-    {questionnaire && onQuestionnaireSubmit ? <QuestionCard key={questionnaire.requestId} questionnaire={questionnaire} onSubmit={onQuestionnaireSubmit} /> : null}
-    {todos?.length ? <CoreTodoProgress todos={todos} /> : null}
+    {questionnaire && onQuestionnaireSubmit ? <CoreQuestionnaireCard key={questionnaire.requestId} questionnaire={questionnaire} onSubmit={onQuestionnaireSubmit} /> : null}
+    {!compactStream && todos?.length ? <CoreTodoProgress todos={todos} /> : null}
   </div>
 }

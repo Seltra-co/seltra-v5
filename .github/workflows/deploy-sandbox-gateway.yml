@@ -8,6 +8,11 @@ on:
       - "seltra-web/edge/sandbox-gateway/**"
       - "seltra-web/core/src/db/**"
       - "seltra-web/core/src/web/**"
+      - "seltra-web/core/src/ipc/handlers/createFromTemplate.ts"
+      - "seltra-web/core/src/ipc/handlers/template_handlers.ts"
+      - "seltra-web/core/src/ipc/services/app_runtime_service.ts"
+      - "seltra-web/core/scaffold/package.json"
+      - "seltra-web/core/scaffold/pnpm-lock.yaml"
       - "seltra-web/core/src/pro/main/ipc/handlers/local_agent/tools/run_build.ts"
       - "seltra-web/core/src/pro/main/ipc/handlers/local_agent/tools/repair_app.ts"
       - "seltra-web/core/scripts/build-runtime.mjs"
@@ -54,6 +59,10 @@ jobs:
         run: |
           cd seltra-web/core
           npm ci
+          cd scaffold
+          npx --yes pnpm@9.15.9 install --frozen-lockfile
+          test -x node_modules/.bin/vite
+          cd ..
           node scripts/build-runtime.mjs
           npm prune --omit=dev --no-audit --no-fund
           node scripts/audit-runtime-dependencies.mjs
@@ -101,6 +110,7 @@ jobs:
           fi
           curl --fail --silent http://127.0.0.1:8788/__boot-status | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s);if(!x.runtimeHealthy||x.platform!=='linux'||x.arch!=='x64'||!x.glibc||x.envNamesMissing.length||x.files.runtimeBundle!=='present'||x.files.migrationJournal!=='present')process.exit(1);console.log(JSON.stringify({runtimeHealthy:x.runtimeHealthy,node:x.node,platform:x.platform,arch:x.arch,libc:x.glibc,files:x.files,missingEnvNames:x.envNamesMissing.length,logLines:x.logTail.length}))})"
           docker exec seltra-sandbox-runtime-ci node -e "const fs=require('node:fs');const p='/opt/dyad/scaffold';if(!fs.statSync(p).isDirectory())throw Error('scaffold directory missing');const entries=fs.readdirSync(p);if(!entries.length)throw Error('scaffold directory is empty');console.log(JSON.stringify({scaffold:'present',entryCount:entries.length}))"
+          docker exec seltra-sandbox-runtime-ci node -e "const fs=require('node:fs');const p='/opt/dyad/scaffold/node_modules/.bin/vite';if(!fs.existsSync(p))throw Error('preinstalled scaffold dependencies missing');console.log(JSON.stringify({scaffoldDependencies:'present'}))"
           docker exec seltra-sandbox-runtime-ci node -e "const fs=require('node:fs');const p='/opt/dyad/assets/icon/seltra-mark.png';if(!fs.statSync(p).isFile()||fs.statSync(p).size===0)throw Error('Seltra branding asset missing');console.log(JSON.stringify({brandingAsset:'present',bytes:fs.statSync(p).size}))"
           docker exec seltra-sandbox-runtime-ci node -e "process.stdout.write('runtime-exec-ok')" | grep -q runtime-exec-ok
           docker exec -d seltra-sandbox-runtime-ci node -e "require('node:http').createServer((q,s)=>{s.end('preview-smoke-ok')}).listen(4173,'0.0.0.0')"

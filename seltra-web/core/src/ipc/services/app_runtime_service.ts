@@ -100,6 +100,40 @@ import {
 
 const logger = log.scope("app_runtime_service");
 const pnpmVersionMigrationNotifiedAppIds = new Set<number>();
+const lastAppProcessExit = new Map<number, { exitCode: number | null; signal: NodeJS.Signals | null; command: string; cwd: string; expectedPort: number | null; stdout: string; stderr: string; dependencyInstallFinished: boolean }>();
+
+function redactProcessDiagnostic(value: string): string {
+  const environmentSecrets = Object.values(process.env).filter(
+    (item): item is string => typeof item === "string" && item.length >= 8,
+  );
+  let redacted = value;
+  for (const secret of environmentSecrets) {
+    redacted = redacted.split(secret).join("[redacted]");
+  }
+  return redacted
+    .replace(/\bBearer\s+[^\s"']+/gi, "Bearer [redacted]")
+    .replace(
+      /((?:authorization|token|secret|password|ticket|api[_-]?key)\s*[=:]\s*)(["']?)[^\s"'&,;]+/gi,
+      "$1[redacted]",
+    )
+    .replace(
+      /(--(?:token|secret|password|ticket|api[_-]?key|auth[_-]?token)\s+)[^\s]+/gi,
+      "$1[redacted]",
+    )
+    .replace(
+      /([?&](?:token|auth[_-]?token|api[_-]?key|key|secret|ticket|signature|password|authorization)=)[^&#\s]+/gi,
+      "$1[redacted]",
+    )
+    .replace(/(https?:\/\/)[^/@\s:]+:[^/@\s]+@/gi, "$1[redacted]@");
+}
+
+function lastProcessLines(value: string, count = 50): string {
+  return redactProcessDiagnostic(value)
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .slice(-count)
+    .join("\n") || "(empty)";
+}
 
 /**
  * Transport-neutral output boundary captured by a runtime producer.
@@ -206,6 +240,19 @@ async function getDefaultCommand({
     signal,
     pnpmAvailable: pnpmSupport.available,
   });
+
+  if (
+    process.env.DYAD_WEB_RUNTIME === "1" &&
+    fs.existsSync(path.join(appPath, "node_modules"))
+  ) {
+    return {
+      command: packageManager === "npm"
+        ? `npm run dev -- --port ${port}`
+        : `${getPnpmRunCommand()} --port ${port}`,
+      isCustom: false,
+      packageManager,
+    };
+  }
 
   // Only warn about pnpm when the app actually wants pnpm — including while
   // it temporarily falls back to npm because pnpm is missing/too old. Apps
@@ -955,6 +1002,18 @@ Details: ${details || "n/a"}
     );
   }
 
+  logger.info(JSON.stringify({
+    event: "app_process_started",
+    projectId: process.env.DYAD_WORKSPACE_ID ?? null,
+    appId,
+    pid: spawnedProcess.pid,
+    command: redactProcessDiagnostic(command.command),
+    cwd: redactProcessDiagnostic(appPath),
+    expectedPort: getAppPort(appId),
+    dependenciesPresentAtStart: fs.existsSync(path.join(appPath, "node_modules")),
+  }));
+  lastAppProcessExit.delete(appId);
+
   const currentProcessId = processCounter.increment();
   const appInfo: RunningAppInfo = {
     proxyAbortController: new AbortController(),
@@ -975,6 +1034,8 @@ Details: ${details || "n/a"}
     appPath,
     isNeon,
     output,
+    command: command.command,
+    expectedPort: getAppPort(appId),
     invocationRef,
     onPnpmIgnoredBuildsFailure:
       command.isCustom && !ignoredBuildsSelfHealAttempted
@@ -1106,6 +1167,8 @@ function listenToProcess({
   appPath,
   isNeon,
   output,
+  command,
+  expectedPort,
   invocationRef,
   onPnpmIgnoredBuildsFailure,
 }: {
@@ -1114,6 +1177,8 @@ function listenToProcess({
   appPath?: string;
   isNeon: boolean;
   output: AppRuntimeOutput;
+  command?: string;
+  expectedPort?: number;
   invocationRef?: AppRunInvocationRef;
   onPnpmIgnoredBuildsFailure?: (output: string) => Promise<boolean>;
 }) {
@@ -1123,6 +1188,9 @@ function listenToProcess({
   // install, so a bounded tail is sufficient for the close-handler check.
   const MAX_PROCESS_OUTPUT_TAIL_LENGTH = 64 * 1024;
   let processOutput = "";
+  let stdoutTail = "";
+  let stderrTail = "";
+  let dependencyInstallFinished = !/\b(?:npm|pnpm|yarn|bun)\s+(?:ci|install)\b/i.test(command ?? "");
   let ignoredBuildsRecordedAfterInstall = false;
   const appendProcessOutput = (message: string) => {
     if (!onPnpmIgnoredBuildsFailure) {
@@ -1132,12 +1200,18 @@ function listenToProcess({
       -MAX_PROCESS_OUTPUT_TAIL_LENGTH,
     );
   };
+  const appendTail = (previous: string, message: string) =>
+    (previous + message).slice(-MAX_PROCESS_OUTPUT_TAIL_LENGTH);
   spawnedProcess.stdout?.on("data", async (data) => {
     const message = util.stripVTControlCharacters(data.toString());
+    if (/\b(?:added \d+ packages?|up to date|done in \d+(?:\.\d+)?s)\b/i.test(message)) {
+      dependencyInstallFinished = true;
+    }
     const activeApp = runningApps.get(appId);
     if (activeApp?.process === spawnedProcess)
       activeApp.lastOutputAt = Date.now();
     appendProcessOutput(message);
+    stdoutTail = appendTail(stdoutTail, message);
     logger.debug(
       `App ${appId} (PID: ${spawnedProcess.pid}) stdout: ${message}`,
     );
@@ -1200,6 +1274,7 @@ function listenToProcess({
     if (activeApp?.process === spawnedProcess)
       activeApp.lastOutputAt = Date.now();
     appendProcessOutput(message);
+    stderrTail = appendTail(stderrTail, message);
     logger.error(
       `App ${appId} (PID: ${spawnedProcess.pid}) stderr: ${message}`,
     );
@@ -1222,15 +1297,39 @@ function listenToProcess({
   spawnedProcess.on("close", (code, signal) => {
     void (async () => {
       try {
-        logger.log(
-          `App ${appId} (PID: ${spawnedProcess.pid}) process closed with code ${code}, signal ${signal}.`,
-        );
+        logger.log(JSON.stringify({
+          event: "app_process_closed",
+          appId,
+          pid: spawnedProcess.pid,
+          exitCode: code,
+          signal,
+          command: redactProcessDiagnostic(command ?? "(unknown)"),
+          cwd: redactProcessDiagnostic(appPath ?? "(unknown)"),
+          expectedPort: expectedPort ?? null,
+          dependencyInstallFinished,
+          stdoutLast50Lines: lastProcessLines(stdoutTail),
+          stderrLast50Lines: lastProcessLines(stderrTail),
+        }));
         output.flush();
         const currentAppInfo = runningApps.get(appId);
         if (!currentAppInfo || currentAppInfo.process !== spawnedProcess) {
           removeAppIfCurrentProcess(appId, spawnedProcess);
           return;
         }
+        if (currentAppInfo.stopRequested) {
+          removeAppIfCurrentProcess(appId, spawnedProcess);
+          return;
+        }
+        lastAppProcessExit.set(appId, {
+          exitCode: code,
+          signal,
+          command: redactProcessDiagnostic(command ?? "(unknown)"),
+          cwd: redactProcessDiagnostic(appPath ?? "(unknown)"),
+          expectedPort: expectedPort ?? null,
+          stdout: lastProcessLines(stdoutTail),
+          stderr: lastProcessLines(stderrTail),
+          dependencyInstallFinished,
+        });
 
         if (
           code !== 0 &&
@@ -1429,6 +1528,15 @@ RUN npm install -g pnpm
   });
 
   const port = getAppPort(appId);
+  const dockerCommand = await getCommand({
+    runtimeMode: "docker",
+    appId,
+    appPath,
+    installCommand,
+    startCommand,
+    onPnpmMinimumReleaseAgeWarning: (message) =>
+      emitPnpmMinimumReleaseAgeWarning({ appId, output, message }),
+  });
   const process = spawn(
     "docker",
     [
@@ -1449,17 +1557,7 @@ RUN npm install -g pnpm
       `dyad-app-${appId}`,
       "sh",
       "-c",
-      (
-        await getCommand({
-          runtimeMode: "docker",
-          appId,
-          appPath,
-          installCommand,
-          startCommand,
-          onPnpmMinimumReleaseAgeWarning: (message) =>
-            emitPnpmMinimumReleaseAgeWarning({ appId, output, message }),
-        })
-      ).command,
+      dockerCommand.command,
     ],
     {
       stdio: "pipe",
@@ -1531,6 +1629,8 @@ ${errorOutput || "(empty)"}`,
     appPath,
     isNeon,
     output,
+    command: dockerCommand.command,
+    expectedPort: port,
     invocationRef,
     onPnpmIgnoredBuildsFailure:
       hasCustomCommands && !ignoredBuildsSelfHealAttempted
@@ -1957,7 +2057,7 @@ export interface ExternalAppRuntimeClaim {
 }
 
 const DEFAULT_APP_READY_TIMEOUT_MS = 2 * 60 * 1_000;
-const DEFAULT_WEB_APP_READY_TIMEOUT_MS = 10 * 60 * 1_000;
+const DEFAULT_WEB_APP_READY_TIMEOUT_MS = 45 * 1_000;
 const DEFAULT_WEB_APP_READY_NO_PROGRESS_MS = 2 * 60 * 1_000;
 const APP_READY_POLL_MS = 100;
 const MAX_RUNTIME_CANCELLATION_TOMBSTONES = 1_000;
@@ -2426,8 +2526,8 @@ async function waitForAppReady(
 ): Promise<void> {
   const webRuntime = process.env.DYAD_WEB_RUNTIME === "1";
   const hardTimeoutMs = webRuntime
-    ? positiveEnvInteger(
-        "WEB_APP_READY_TIMEOUT_MS",
+    ? Math.min(
+        positiveEnvInteger("WEB_APP_READY_TIMEOUT_MS", DEFAULT_WEB_APP_READY_TIMEOUT_MS),
         DEFAULT_WEB_APP_READY_TIMEOUT_MS,
       )
     : timeoutMs;
@@ -2441,8 +2541,15 @@ async function waitForAppReady(
   while (Date.now() - startedAt < hardTimeoutMs) {
     const appInfo = runningApps.get(appId);
     if (!appInfo) {
+      const exit = lastAppProcessExit.get(appId);
+      if (exit) {
+        throw new DyadError(
+          `APP_PROCESS_EXITED_BEFORE_PREVIEW: process exited (code ${exit.exitCode ?? "null"}, signal ${exit.signal ?? "none"}); command=${exit.command}; cwd=${exit.cwd}; expectedPort=${exit.expectedPort ?? "unknown"}; dependencyInstallFinished=${exit.dependencyInstallFinished}; stdout:\n${exit.stdout}\nstderr:\n${exit.stderr}`,
+          DyadErrorKind.External,
+        );
+      }
       throw new DyadError(
-        "The app process exited before the preview became ready",
+        "APP_PROCESS_EXITED_BEFORE_PREVIEW: The app process exited before the preview became ready",
         DyadErrorKind.External,
       );
     }
@@ -2471,7 +2578,7 @@ async function waitForAppReady(
   // ready URL can recover after a slow first install/build.
   throw new DyadError(
     webRuntime
-      ? `Preview startup exceeded ${Math.ceil(hardTimeoutMs / 1000)} seconds. Check the app runtime log for install and build output.`
+      ? `PREVIEW_READY_TIMEOUT: Preview startup exceeded ${Math.ceil(hardTimeoutMs / 1000)} seconds. Check the app runtime log for install and build output.`
       : "Timed out waiting for the app preview to become ready",
     DyadErrorKind.External,
   );

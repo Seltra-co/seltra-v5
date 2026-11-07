@@ -12,6 +12,7 @@ import { RunService } from '../build/run.service'
 import { RunController } from '../build/run.controller'
 import { ProjectController } from '../build/project.controller'
 import { CreditsService } from '../credits/credits.service'
+import { WorkspaceCleanupService } from './workspace-cleanup.service'
 
 @Module({
   imports: [
@@ -21,7 +22,7 @@ import { CreditsService } from '../credits/credits.service'
     }),
   ],
   controllers: [StoreController, ProductsController, CloudinaryController, StoreImageController, RunController, ProjectController],
-  providers: [StoreService, BuildEventsService, TenantEventsService, StoreImageService, RunService, CreditsService],
+  providers: [StoreService, BuildEventsService, TenantEventsService, StoreImageService, RunService, CreditsService, WorkspaceCleanupService],
   exports: [StoreService, StoreImageService, CreditsService],
 })
 export class StoreModule {}

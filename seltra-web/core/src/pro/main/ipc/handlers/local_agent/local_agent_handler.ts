@@ -205,7 +205,6 @@ export function shouldStopAfterAppBlueprintWrite(
 }
 
 const MAX_TERMINATED_STREAM_RETRIES = 3;
-const MAX_ERROR_RESPONSE_BODY_DEPTH = 5;
 const STREAM_RETRY_BASE_DELAY_MS = 400;
 const STREAM_CONTINUE_MESSAGE =
   "[System] Your previous response stream was interrupted by a transient network error. Continue from exactly where you left off and do not repeat text that has already been sent.";
@@ -2559,43 +2558,25 @@ export async function handleLocalAgentStream(
       return false; // Cancelled - don't consume quota
     }
 
-    logger.error("Local agent error:", error);
     const errorRecord =
       error && typeof error === "object"
         ? error as Record<string, unknown>
         : {};
-    const resolvedBaseUrl = String(process.env.MODEL_GATEWAY_URL ?? "").trim();
-    const modelId = String(process.env.AI_MODEL_DEFAULT ?? "").trim();
-    const url = typeof errorRecord.url === "string"
-      ? errorRecord.url
-      : undefined;
     const statusCode =
       typeof errorRecord.statusCode === "number"
         ? errorRecord.statusCode
         : typeof errorRecord.status === "number"
           ? errorRecord.status
           : undefined;
-    const responseBody =
-      typeof errorRecord.responseBody === "string"
-        ? errorRecord.responseBody.slice(0, 500)
-        : undefined;
-    const cause =
-      errorRecord.cause instanceof Error
-        ? errorRecord.cause.message
-        : undefined;
-    console.error(JSON.stringify({
-      level: "error",
+    logger.warn(JSON.stringify({
       event: "ai_call_failed",
       timestamp: new Date().toISOString(),
-      url,
       statusCode,
-      responseBody,
-      cause,
-      modelId: modelId || undefined,
-      role: "default",
       provider: process.env.AI_PROVIDER ?? "cloudflare",
-      baseUrl: resolvedBaseUrl || undefined,
-      error: JSON.stringify(error, Object.getOwnPropertyNames(error)),
+      errorClass: error instanceof Error ? error.name : "UnknownError",
+      causeCode: isRecord(errorRecord.cause) && typeof errorRecord.cause.code === "string" && /^[A-Z0-9_]{2,32}$/.test(errorRecord.cause.code)
+        ? errorRecord.cause.code
+        : undefined,
     }));
     safeSend(event.sender, "chat:response:error", {
       chatId: req.chatId,
@@ -2604,7 +2585,7 @@ export async function handleLocalAgentStream(
       error:
         error instanceof SubscriptionBillingError
           ? error.serialize()
-          : `Error: ${getErrorMessageWithDetails(error)}`,
+          : "Seltra could not reach the model provider. Check the Core connection and retry.",
       warningMessages:
         warningMessages.length > 0 ? [...new Set(warningMessages)] : undefined,
     });
@@ -2704,71 +2685,6 @@ function getErrorMessage(error: unknown): string {
   } catch {
     return String(error);
   }
-}
-
-function getErrorResponseBody(error: unknown, depth = 0): string | undefined {
-  if (!isRecord(error) || depth > MAX_ERROR_RESPONSE_BODY_DEPTH) {
-    return undefined;
-  }
-  if (typeof error.responseBody === "string" && error.responseBody.length > 0) {
-    return error.responseBody;
-  }
-  if ("error" in error) {
-    const nested = getErrorResponseBody(error.error, depth + 1);
-    if (nested) {
-      return nested;
-    }
-  }
-  if ("cause" in error) {
-    return getErrorResponseBody(error.cause, depth + 1);
-  }
-  return undefined;
-}
-
-// Markers that identify the engine's free-model quota error in a response
-// body. We only surface raw response bodies for this case so the renderer's
-// ChatErrorBox can recognize the quota error; other errors keep their normal
-// (non-verbose) message.
-const FREE_MODEL_QUOTA_MARKERS = [
-  "dyad_free_model_quota_exceeded",
-  "FREE_MODEL_QUOTA_EXCEEDED",
-  "Dyad Free has reached its daily limit.",
-  "Dyad Free limit",
-];
-
-function getErrorMessageWithDetails(error: unknown): string {
-  const message = getErrorMessage(error);
-  const responseBody = getErrorResponseBody(error);
-  const errorRecord =
-    error && typeof error === "object"
-      ? error as Record<string, unknown>
-      : {};
-  const url = typeof errorRecord.url === "string" ? errorRecord.url : undefined;
-  const statusCode =
-    typeof errorRecord.statusCode === "number"
-      ? errorRecord.statusCode
-      : typeof errorRecord.status === "number"
-        ? errorRecord.status
-        : undefined;
-  const modelId = process.env.AI_MODEL_DEFAULT?.trim() || undefined;
-  const baseUrl = process.env.MODEL_GATEWAY_URL?.trim() || undefined;
-  const diagnostic = [
-    url ? `URL: ${url}` : undefined,
-    statusCode !== undefined ? `HTTP: ${statusCode}` : undefined,
-    modelId ? `Model: ${modelId}` : undefined,
-    baseUrl ? `Base URL: ${baseUrl}` : undefined,
-  ].filter(Boolean).join("; ");
-  const baseMessage = diagnostic ? `${message}\n\nDiagnostics: ${diagnostic}` : message;
-  if (!responseBody || message.includes(responseBody)) {
-    return baseMessage;
-  }
-  const isFreeModelQuotaBody = FREE_MODEL_QUOTA_MARKERS.some((marker) =>
-    responseBody.includes(marker),
-  );
-  if (!isFreeModelQuotaBody) {
-    return baseMessage;
-  }
-  return `${baseMessage}\n\nDetails: ${responseBody.slice(0, 500)}`;
 }
 
 function isTerminatedStreamError(error: unknown): boolean {

@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "typecheck": "next typegen && tsc --noEmit",
+    "lint:core-globals": "eslint app/*/dashboard/page.tsx",
     "dev:backend": "cd backend && npm run start:dev",
     "dev:frontend": "next dev",
     "dev:all": "concurrently --names frontend,backend --prefix name --restart-tries -1 --restart-after 1000 \"npm run dev:frontend\" \"npm run dev:backend\""

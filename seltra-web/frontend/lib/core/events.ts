@@ -25,6 +25,8 @@ export class CoreEvents {
       url.searchParams.set('ticket', ticket)
       if (this.lastEventId) url.searchParams.set('cursor', this.lastEventId)
       const socket = new WebSocket(url)
+      const projectId = this.client.workspaceId ?? null
+      socket.onopen = () => console.info(JSON.stringify({ event: 'core_project_phase', projectId, phase: 'WS open', at: new Date().toISOString(), monotonicMs: Math.round(performance.now()) }))
       // The Core gateway preserves the runtime frame type. Browsers expose
       // binary websocket frames as Blob by default, so request ArrayBuffer and
       // still decode Blob for browsers that deliver it before this takes effect.

@@ -1,5 +1,5 @@
 //store/store.service.ts
-import { Injectable, NotFoundException, UnauthorizedException, BadRequestException, ConflictException } from '@nestjs/common'
+import { Injectable, Logger, NotFoundException, UnauthorizedException, BadRequestException, ConflictException } from '@nestjs/common'
 import { Prisma } from '@prisma/client'
 import { JwtService } from '@nestjs/jwt'
 import { generateBlueprint, generateProducts, classifyLayout, generateManifest, generateHeroNavSources } from '../ai'
@@ -14,6 +14,7 @@ import type { BuildContext } from './build-events.service'
 import { getStoreCreationError, planLimits } from '../common/plan-limits'
 import { CreditsService } from '../credits/credits.service'
 import { provisionEngineKey } from '../engine/engine-key'
+import { destroyCoreWorkspace } from './workspace-cleanup'
 import * as crypto from 'crypto'
 
 type PlannerAnswers = {
@@ -22,7 +23,6 @@ type PlannerAnswers = {
   delivery_tiers?: string
   product_variants?: string
 }
-
 type DeliveryTier = {
   id: string
   label: string
@@ -274,6 +274,7 @@ function coreWorkspaceTenantName(name: string | undefined, prompt: string) {
 
 @Injectable()
 export class StoreService {
+  private readonly logger = new Logger(StoreService.name)
   constructor(
     private readonly jwtService: JwtService,
     private readonly tenantEvents: TenantEventsService,
@@ -308,8 +309,12 @@ export class StoreService {
     const name = coreWorkspaceTenantName(input.name, prompt)
     const baseSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'new-store'
     const slug = await this.uniqueSlug(baseSlug)
+    const projectId = crypto.randomUUID()
+    const createStartedAt = Date.now()
+    this.logger.log(JSON.stringify({ event: 'core_project_phase', projectId, phase: 'project create request', at: new Date(createStartedAt).toISOString() }))
     const tenant = await prisma.tenant.create({
       data: {
+        id: projectId,
         ownerId,
         creditWorkspaceId: ownerId,
         name,
@@ -321,6 +326,7 @@ export class StoreService {
       include: this.storeInclude(),
     })
     await provisionEngineKey(tenant.id)
+    this.logger.log(JSON.stringify({ event: 'core_project_phase', projectId: tenant.id, phase: 'project create response', at: new Date().toISOString(), durationMs: Date.now() - createStartedAt }))
     return tenant
   }
 
@@ -989,6 +995,20 @@ export class StoreService {
     const tenant = await prisma.tenant.findUnique({ where: { id } })
     if (!tenant || tenant.ownerId !== ownerId) {
       throw new NotFoundException(`Store "${id}" not found`)
+    }
+
+    if (tenant.coreWorkspaceKey) {
+      try {
+        await destroyCoreWorkspace(tenant.coreWorkspaceKey)
+        await prisma.workspaceCleanup.deleteMany({ where: { workspaceKey: tenant.coreWorkspaceKey } })
+      } catch (error) {
+        const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'GATEWAY_DESTROY_FAILED'
+        await prisma.workspaceCleanup.upsert({
+          where: { workspaceKey: tenant.coreWorkspaceKey },
+          create: { projectId: tenant.id, workspaceKey: tenant.coreWorkspaceKey, attempts: 1, lastErrorCode: code, nextAttemptAt: new Date(Date.now() + 5_000) },
+          update: { projectId: tenant.id, attempts: { increment: 1 }, lastErrorCode: code, nextAttemptAt: new Date(Date.now() + 5_000) },
+        }).catch((recordError) => console.error('[Store] Could not persist sandbox cleanup request', recordError instanceof Error ? recordError.name : 'unknown'))
+      }
     }
 
     await prisma.$transaction(async (tx) => {

@@ -46,7 +46,10 @@ function unwrapCoreIpcEnvelope<T>(value: unknown): T {
 }
 
 export class CoreClient {
+  private workspaceIdValue?: string
   constructor(private readonly getSession: () => Promise<CoreSession>, private readonly refreshSession: () => Promise<CoreSession> = getSession) {}
+
+  get workspaceId() { return this.workspaceIdValue }
 
   private get baseUrl() {
     const url = process.env.NEXT_PUBLIC_CORE_URL
@@ -102,6 +105,7 @@ export class CoreClient {
   async wsTicket(): Promise<string> {
     const accessToken = localStorage.getItem('seltra:token')
     const session = await this.getSession()
+    this.workspaceIdValue = session.workspaceId
     const response = await fetchWithSeltraAuth('/api/v5/builder/ws-ticket', {
       method: 'POST', headers: { authorization: `Bearer ${accessToken || ''}`, 'content-type': 'application/json' },
       body: JSON.stringify({ tenantId: session.workspaceId }), cache: 'no-store',

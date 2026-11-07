@@ -5,6 +5,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { filterChildEnvironment } from './security.js'
 import { createWorkspaceExecutionProvider, type WorkspaceExecutionProvider } from './execution_provider.js'
+import { seltraEngineModelBaseUrl } from './model_gateway_url.js'
 
 export type WorkspaceRuntime = {
   workspaceId: string
@@ -32,6 +33,7 @@ type Options = {
   executionProvider?: WorkspaceExecutionProvider
   restoreBeforeStart?: (workspaceKey: string, workspaceRoot: string) => Promise<string | undefined>
   persistBeforeIdleStop?: (runtime: WorkspaceRuntime) => Promise<boolean>
+  onWorkspaceCleanupPending?: (workspaceId: string, workspaceKey: string) => Promise<void>
 }
 
 const RUNTIME_STARTUP_TIMEOUT_MS = 120_000
@@ -125,6 +127,7 @@ export class WorkspaceSupervisor {
     }
     const pending = this.starts.get(workspaceId)
     if (pending) return pending
+    console.info(JSON.stringify({ event: 'workspace_create_requested', projectId: workspaceId, at: new Date().toISOString() }))
     const start = this.start(workspaceId, workspaceKey, storeSlug, userId, engineApiKey)
     this.starts.set(workspaceId, start)
     try { return await start } finally { this.starts.delete(workspaceId) }
@@ -148,6 +151,36 @@ export class WorkspaceSupervisor {
   }
 
   listRuntimes(): WorkspaceRuntime[] { return [...this.runtimes.values()] }
+
+  async reapGatewayWorkspaces(activeWorkspaceKeys: Set<string>, idleMs: number) {
+    const provider = this.executionProvider as WorkspaceExecutionProvider & {
+      listWorkspaces?: () => Promise<Array<{ workspaceKey: string; lastSeenAt: number }>>
+      destroyWorkspace?: (workspaceKey: string) => Promise<void>
+    }
+    if (!provider.listWorkspaces || !provider.destroyWorkspace) return { scanned: 0, destroyed: 0 }
+    const workspaces = await provider.listWorkspaces()
+    let destroyed = 0
+    const activeRuntimeKeys = new Set([...this.runtimes.values()].map((runtime) => runtime.workspaceKey))
+    for (const workspace of workspaces) {
+      if (activeRuntimeKeys.has(workspace.workspaceKey)) continue
+      if (activeWorkspaceKeys.has(workspace.workspaceKey) && Date.now() - workspace.lastSeenAt < idleMs) continue
+      await provider.destroyWorkspace(workspace.workspaceKey)
+      destroyed++
+    }
+    return { scanned: workspaces.length, destroyed }
+  }
+
+  async destroyWorkspace(workspaceKey: string) {
+    const pending = [...this.runtimes.entries()].find(([, runtime]) => runtime.workspaceKey === workspaceKey)
+    const provider = this.executionProvider as WorkspaceExecutionProvider & { destroyWorkspace?: (key: string) => Promise<void> }
+    if (pending) {
+      this.runtimes.delete(pending[0])
+      await this.executionProvider.stop(pending[1].executionName, pending[1].child)
+      return
+    }
+    if (!provider.destroyWorkspace) return
+    await provider.destroyWorkspace(workspaceKey)
+  }
 
   private async start(workspaceId: string, workspaceKey: string, storeSlug: string, userId: string, engineApiKey: string): Promise<WorkspaceRuntime> {
     await this.executionProvider.assertReady()
@@ -188,7 +221,7 @@ export class WorkspaceSupervisor {
         SELTRA_ENGINE_API_KEY: engineApiKey,
         SELTRA_ENGINE_CREDIT_IDENTITY: `${creditIdentityPayload}.${creditIdentitySignature}`,
         MODEL_GATEWAY_URL: this.executionProvider.mode === 'cloudflare'
-          ? `${(this.options.env.CORE_PUBLIC_URL || '').replace(/\/$/, '')}/v1`
+          ? seltraEngineModelBaseUrl(this.options.publicApiUrl)
           : this.executionProvider.mode === 'docker'
           ? `http://host.docker.internal:${this.options.env.GATEWAY_PORT}/v1`
           : `http://127.0.0.1:${this.options.env.GATEWAY_PORT}/v1`,
@@ -198,17 +231,28 @@ export class WorkspaceSupervisor {
     const request = { name: executionName, workspaceRoot: root, hostPort: port, runtimeEnv,
       runtimeEntry: path.join(this.options.root, 'dist/runtime/runtime_main.js'),
       nativeHook: path.join(this.options.root, 'scripts/web/native-require-hook.cjs'), runtimeRoot: this.options.root }
-    const remote = this.executionProvider.startRemote ? await this.executionProvider.startRemote(request) : undefined
+    let remote: Awaited<ReturnType<NonNullable<WorkspaceExecutionProvider['startRemote']>>> | undefined
+    try {
+      remote = this.executionProvider.startRemote ? await this.executionProvider.startRemote(request) : undefined
+    } catch (error) {
+      if (this.executionProvider.mode === 'cloudflare') await this.options.onWorkspaceCleanupPending?.(workspaceId, workspaceKey).catch(() => undefined)
+      throw error
+    }
     const child = remote?.child ?? this.executionProvider.spawn(request)
     const runtime = { workspaceId, workspaceKey, storeSlug, userId, baseUrl: remote?.baseUrl ?? `http://127.0.0.1:${port}`, rpcSecret, runtimeSecretsKey: secretsKey, modelToken, signGatewayRequest: remote?.signRequest, syncFromExecution: remote?.syncFromExecution, child, executionName, touchedAt: Date.now() }
     this.runtimes.set(workspaceId, runtime)
+    console.info(JSON.stringify({ event: 'workspace_container_ready', projectId: workspaceId, at: new Date().toISOString(), provider: this.executionProvider.mode }))
     child.once('exit', () => { if (this.runtimes.get(workspaceId) === runtime) this.runtimes.delete(workspaceId) })
     try { if (!remote) await waitForRuntime(port, child) } catch (error) {
       console.error(JSON.stringify({
         event: 'workspace_runtime_start_failed',
         error: error instanceof Error ? error.message : String(error),
       }))
-      await this.executionProvider.stop(executionName, child)
+      try {
+        await this.executionProvider.stop(executionName, child)
+      } catch {
+        if (this.executionProvider.mode === 'cloudflare') await this.options.onWorkspaceCleanupPending?.(workspaceId, workspaceKey).catch(() => undefined)
+      }
       this.runtimes.delete(workspaceId)
       throw error
     }
@@ -227,6 +271,7 @@ export class WorkspaceSupervisor {
           }
         }
         this.runtimes.delete(id)
+        console.info(JSON.stringify({ event: 'workspace_idle_destroy_requested', projectId: id, at: new Date().toISOString() }))
         await this.executionProvider.stop(runtime.executionName, runtime.child)
       }
     }

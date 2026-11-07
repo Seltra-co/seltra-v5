@@ -18,6 +18,7 @@ import {
 import { queueCloudSandboxSnapshotSync } from "@/ipc/utils/cloud_sandbox_provider";
 import { withLock, getFileWriteKey } from "@/ipc/utils/lock_utils";
 import { isSupabaseFunctionSyncDeferred } from "@/supabase_admin/supabase_recording_deferred_sync";
+import { broadcastToRegisteredWindows } from "@/ipc/utils/window_broadcast";
 const logger = log.scope("write_file");
 
 const writeFileSchema = z.object({
@@ -71,6 +72,10 @@ export const writeFileTool: ToolDefinition<z.infer<typeof writeFileSchema>> = {
       // Write file content
       fs.writeFileSync(fullFilePath, args.content);
       logger.log(`Successfully wrote file: ${fullFilePath}`);
+      broadcastToRegisteredWindows(ctx.event.sender, "agent-tool:file-written", {
+        chatId: ctx.chatId,
+        appId: ctx.appId,
+      });
       queueCloudSandboxSnapshotSync({
         appId: ctx.appId,
         changedPaths: [operationPath],

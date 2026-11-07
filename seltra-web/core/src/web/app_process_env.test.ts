@@ -30,6 +30,20 @@ describe("generated app process environment", () => {
     expect(environment).not.toHaveProperty("MODEL_API_KEY");
     expect(environment).not.toHaveProperty("DATABASE_URL");
     expect(environment).not.toHaveProperty("SUPABASE_SERVICE_ROLE_KEY");
+    expect(environment).not.toHaveProperty("SWC_NATIVE_BINDING_CACHE_SKIP_SECURITY_CHECK");
+  });
+
+  it("uses the isolated SWC cache mode only in a signed gateway workspace", () => {
+    const environment = appProcessEnvironment(
+      { DYAD_WORKSPACE_ID: "workspace-id", SWC_NATIVE_BINDING_CACHE: "unsafe" },
+      true,
+    );
+
+    expect(environment).toMatchObject({
+      SWC_NATIVE_BINDING_CACHE: "/opt/dyad/tmp/swc-native-binding",
+      SWC_NATIVE_BINDING_CACHE_SKIP_SECURITY_CHECK: "1",
+    });
+    expect(environment).not.toHaveProperty("DYAD_WORKSPACE_ID");
   });
 
   it("leaves the desktop process environment unchanged", () => {

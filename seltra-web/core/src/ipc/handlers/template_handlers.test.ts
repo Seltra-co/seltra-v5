@@ -293,8 +293,8 @@ describe("apply-app-template", () => {
       );
     });
 
-    it("stops a running dev server and reports a restart is needed", async () => {
-      await writeTree(appPath, { "package.json": '{"name":"old"}' });
+    it("hot-swaps a template in place without stopping the running dev server", async () => {
+      await writeTree(appPath, { "package.json": '{"name":"old"}', "node_modules/.keep": "seeded" });
       const appId = seedApp("Imported App", appPath);
       runningAppsMock.set(appId, { processId: 42, mode: "host" });
       stageTemplateTree({ "package.json": '{"name":"template"}' });
@@ -304,9 +304,10 @@ describe("apply-app-template", () => {
         needsRestart: boolean;
       }>("apply-app-template", { appId, templateId: "react" });
 
-      expect(stopAppByInfoMock).toHaveBeenCalledTimes(1);
+      expect(stopAppByInfoMock).not.toHaveBeenCalled();
       expect(result.applied).toBe(true);
-      expect(result.needsRestart).toBe(true);
+      expect(result.needsRestart).toBe(false);
+      expect(readApp("node_modules/.keep", appPath)).toBe("seeded");
     });
 
     it("rejects when the working tree has uncommitted files", async () => {
