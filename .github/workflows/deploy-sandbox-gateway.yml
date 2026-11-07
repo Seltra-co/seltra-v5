@@ -66,6 +66,8 @@ jobs:
           cp package.json package-lock.json "$image/"
           cp -a node_modules drizzle "$image/"
           cp -a scaffold "$image/scaffold"
+          mkdir -p "$image/assets/icon"
+          cp assets/icon/seltra-mark.png "$image/assets/icon/seltra-mark.png"
           cp dist/runtime/runtime_main.js "$image/dist/runtime/runtime_main.js"
           du -sh "$image"
       - name: Build and smoke test Linux amd64 image
@@ -99,6 +101,7 @@ jobs:
           fi
           curl --fail --silent http://127.0.0.1:8788/__boot-status | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s);if(!x.runtimeHealthy||x.platform!=='linux'||x.arch!=='x64'||!x.glibc||x.envNamesMissing.length||x.files.runtimeBundle!=='present'||x.files.migrationJournal!=='present')process.exit(1);console.log(JSON.stringify({runtimeHealthy:x.runtimeHealthy,node:x.node,platform:x.platform,arch:x.arch,libc:x.glibc,files:x.files,missingEnvNames:x.envNamesMissing.length,logLines:x.logTail.length}))})"
           docker exec seltra-sandbox-runtime-ci node -e "const fs=require('node:fs');const p='/opt/dyad/scaffold';if(!fs.statSync(p).isDirectory())throw Error('scaffold directory missing');const entries=fs.readdirSync(p);if(!entries.length)throw Error('scaffold directory is empty');console.log(JSON.stringify({scaffold:'present',entryCount:entries.length}))"
+          docker exec seltra-sandbox-runtime-ci node -e "const fs=require('node:fs');const p='/opt/dyad/assets/icon/seltra-mark.png';if(!fs.statSync(p).isFile()||fs.statSync(p).size===0)throw Error('Seltra branding asset missing');console.log(JSON.stringify({brandingAsset:'present',bytes:fs.statSync(p).size}))"
           docker exec seltra-sandbox-runtime-ci node -e "process.stdout.write('runtime-exec-ok')" | grep -q runtime-exec-ok
           docker exec -d seltra-sandbox-runtime-ci node -e "require('node:http').createServer((q,s)=>{s.end('preview-smoke-ok')}).listen(4173,'0.0.0.0')"
           for attempt in $(seq 1 20); do curl --fail --silent http://127.0.0.1:4173/ | grep -q preview-smoke-ok && break; sleep 1; done
@@ -162,6 +165,8 @@ jobs:
           cp package.json package-lock.json "$image/"
           cp -a node_modules drizzle "$image/"
           cp -a scaffold "$image/scaffold"
+          mkdir -p "$image/assets/icon"
+          cp assets/icon/seltra-mark.png "$image/assets/icon/seltra-mark.png"
           cp dist/runtime/runtime_main.js "$image/dist/runtime/runtime_main.js"
       - name: Deploy Worker and container image
         working-directory: seltra-web/edge/sandbox-gateway

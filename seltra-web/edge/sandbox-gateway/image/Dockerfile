@@ -13,6 +13,7 @@ COPY bootstrap.mjs ./bootstrap.mjs
 COPY dist/runtime/runtime_main.js ./dist/runtime/runtime_main.js
 COPY drizzle ./drizzle
 COPY --chown=dyad:dyad scaffold ./scaffold
+COPY --chown=dyad:dyad assets/icon/seltra-mark.png ./assets/icon/seltra-mark.png
 USER dyad:dyad
 ENV RUNTIME_RPC_HOST=127.0.0.1
 ENV RUNTIME_RPC_PORT=8787
