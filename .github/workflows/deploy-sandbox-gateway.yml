@@ -65,6 +65,7 @@ jobs:
           mkdir -p "$image/dist/runtime"
           cp package.json package-lock.json "$image/"
           cp -a node_modules drizzle "$image/"
+          cp -a scaffold "$image/scaffold"
           cp dist/runtime/runtime_main.js "$image/dist/runtime/runtime_main.js"
           du -sh "$image"
       - name: Build and smoke test Linux amd64 image
@@ -97,6 +98,7 @@ jobs:
             exit 1
           fi
           curl --fail --silent http://127.0.0.1:8788/__boot-status | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s);if(!x.runtimeHealthy||x.platform!=='linux'||x.arch!=='x64'||!x.glibc||x.envNamesMissing.length||x.files.runtimeBundle!=='present'||x.files.migrationJournal!=='present')process.exit(1);console.log(JSON.stringify({runtimeHealthy:x.runtimeHealthy,node:x.node,platform:x.platform,arch:x.arch,libc:x.glibc,files:x.files,missingEnvNames:x.envNamesMissing.length,logLines:x.logTail.length}))})"
+          docker exec seltra-sandbox-runtime-ci node -e "const fs=require('node:fs');const p='/opt/dyad/scaffold';if(!fs.statSync(p).isDirectory())throw Error('scaffold directory missing');const entries=fs.readdirSync(p);if(!entries.length)throw Error('scaffold directory is empty');console.log(JSON.stringify({scaffold:'present',entryCount:entries.length}))"
           docker exec seltra-sandbox-runtime-ci node -e "process.stdout.write('runtime-exec-ok')" | grep -q runtime-exec-ok
           docker exec -d seltra-sandbox-runtime-ci node -e "require('node:http').createServer((q,s)=>{s.end('preview-smoke-ok')}).listen(4173,'0.0.0.0')"
           for attempt in $(seq 1 20); do curl --fail --silent http://127.0.0.1:4173/ | grep -q preview-smoke-ok && break; sleep 1; done
@@ -114,7 +116,7 @@ jobs:
         working-directory: seltra-web/edge/sandbox-gateway
         shell: bash
         run: printf '%s' "$SIGNING_SECRET" | npx --yes wrangler@4 secret put SANDBOX_GATEWAY_SIGNING_SECRET --config wrangler.jsonc --name "$WORKER_NAME"
-      - name: Signed dev create, runtime RPC body, execute, diagnostics, empty preview route, and destroy smoke
+      - name: Signed dev workspace, scaffold, runtime RPC body, real create-app, preview, and destroy smoke
         if: github.event_name == 'push' || inputs.environment == 'dev' || inputs.environment == 'prod'
         working-directory: seltra-web/edge/sandbox-gateway
         env:
@@ -159,6 +161,7 @@ jobs:
           mkdir -p "$image/dist/runtime"
           cp package.json package-lock.json "$image/"
           cp -a node_modules drizzle "$image/"
+          cp -a scaffold "$image/scaffold"
           cp dist/runtime/runtime_main.js "$image/dist/runtime/runtime_main.js"
       - name: Deploy Worker and container image
         working-directory: seltra-web/edge/sandbox-gateway

@@ -12,6 +12,7 @@ COPY node_modules ./node_modules
 COPY bootstrap.mjs ./bootstrap.mjs
 COPY dist/runtime/runtime_main.js ./dist/runtime/runtime_main.js
 COPY drizzle ./drizzle
+COPY --chown=dyad:dyad scaffold ./scaffold
 USER dyad:dyad
 ENV RUNTIME_RPC_HOST=127.0.0.1
 ENV RUNTIME_RPC_PORT=8787

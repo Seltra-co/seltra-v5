@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import WebSocket from "ws";
 import { request as httpRequest } from "node:http";
 import { ipcMain, resetForTesting } from "./electron-shim";
@@ -66,6 +69,53 @@ describe("web RPC server", () => {
       await rpc.close();
       if (previous === undefined) delete process.env.SELTRA_GATEWAY_SELF_TEST;
       else process.env.SELTRA_GATEWAY_SELF_TEST = previous;
+    }
+  });
+
+  it("runs the registered create-app handler only after finding a nonempty scaffold", async () => {
+    const previousFlag = process.env.SELTRA_GATEWAY_SELF_TEST;
+    const previousScaffold = process.env.DYAD_SCAFFOLD_DIR;
+    const scaffoldDir = await mkdtemp(path.join(os.tmpdir(), "gateway-scaffold-self-test-"));
+    await mkdir(path.join(scaffoldDir, "src"));
+    process.env.SELTRA_GATEWAY_SELF_TEST = "1";
+    process.env.DYAD_SCAFFOLD_DIR = scaffoldDir;
+    const invoke = vi.fn(async () => ({
+      __dyadIpcEnvelope: "dyad-ipc-envelope-v1",
+      ok: true,
+      value: { app: { id: 42 }, chatId: 84 },
+    }));
+    ipcMain.handle("create-app", invoke);
+    const rpc = createRpcServer({ secret: "gateway-self-test-secret", port: 0 });
+    try {
+      await new Promise<void>((resolve) => rpc.server.once("listening", resolve));
+      const address = rpc.address();
+      if (!address || typeof address === "string") throw new Error("No TCP address");
+      const args = [{ name: "Gateway Scaffold Smoke", initialChatMode: "local-agent" }];
+      const response = await post(
+        `http://127.0.0.1:${address.port}/rpc/__gateway-create-app-self-test`,
+        {
+          authorization: "Bearer gateway-self-test-secret",
+          "content-type": "application/json",
+        },
+        JSON.stringify({ args }),
+      );
+      expect(response.status).toBe(200);
+      expect(response.json).toEqual({
+        ok: true,
+        result: { appId: 42, chatId: 84, scaffoldEntryCount: 1 },
+      });
+      expect(invoke).toHaveBeenCalledWith(
+        expect.objectContaining({ senderFrame: expect.objectContaining({ url: "file:///seltra/index.html" }) }),
+        args[0],
+      );
+    } finally {
+      await rpc.close();
+      resetForTesting();
+      await rm(scaffoldDir, { recursive: true, force: true });
+      if (previousFlag === undefined) delete process.env.SELTRA_GATEWAY_SELF_TEST;
+      else process.env.SELTRA_GATEWAY_SELF_TEST = previousFlag;
+      if (previousScaffold === undefined) delete process.env.DYAD_SCAFFOLD_DIR;
+      else process.env.DYAD_SCAFFOLD_DIR = previousScaffold;
     }
   });
 

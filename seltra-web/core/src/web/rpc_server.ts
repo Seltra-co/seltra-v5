@@ -1,4 +1,6 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { readdir } from "node:fs/promises";
+import path from "node:path";
 import {
   createServer,
   type IncomingMessage,
@@ -155,6 +157,76 @@ export function createRpcServer(
             code: tooLarge ? "BODY_TOO_LARGE" : "INVALID_REQUEST",
             message: tooLarge ? "Request body exceeds the allowed size." : "Request body must be valid JSON.",
           },
+        });
+      }
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      request.url === "/rpc/__gateway-create-app-self-test" &&
+      process.env.SELTRA_GATEWAY_SELF_TEST === "1"
+    ) {
+      try {
+        const body = await readBody(request) as { args?: unknown[] };
+        if (!Array.isArray(body?.args) || body.args.length !== 1) {
+          sendJson(response, 400, {
+            ok: false,
+            error: { code: "INVALID_REQUEST", message: "Create-app arguments are required." },
+          });
+          return;
+        }
+        const scaffoldPath = path.resolve(
+          process.env.DYAD_SCAFFOLD_DIR?.trim() || "/opt/dyad/scaffold",
+        );
+        const scaffoldEntries = await readdir(scaffoldPath);
+        if (!scaffoldEntries.length) {
+          sendJson(response, 503, {
+            ok: false,
+            error: { code: "SCAFFOLD_EMPTY", message: "Runtime scaffold is empty." },
+          });
+          return;
+        }
+        const session = { id: randomUUID(), send: () => undefined };
+        const envelope = await ipcMain.invoke("create-app", body.args, { session }) as {
+          __dyadIpcEnvelope?: string;
+          ok?: boolean;
+          value?: { app?: { id?: unknown }; chatId?: unknown };
+          error?: { code?: string };
+        };
+        if (envelope?.__dyadIpcEnvelope === "dyad-ipc-envelope-v1" && !envelope.ok) {
+          sendJson(response, 500, {
+            ok: false,
+            error: { code: envelope.error?.code ?? "CREATE_APP_FAILED", message: "Runtime create-app failed." },
+          });
+          return;
+        }
+        const result = envelope?.__dyadIpcEnvelope === "dyad-ipc-envelope-v1"
+          ? envelope.value
+          : envelope as unknown as { app?: { id?: unknown }; chatId?: unknown };
+        const appId = result?.app?.id;
+        const chatId = result?.chatId;
+        if (typeof appId !== "number" || !Number.isInteger(appId) || typeof chatId !== "number" || !Number.isInteger(chatId)) {
+          sendJson(response, 500, {
+            ok: false,
+            error: { code: "CREATE_APP_INVALID_RESULT", message: "Runtime create-app returned an invalid result." },
+          });
+          return;
+        }
+        sendJson(response, 200, {
+          ok: true,
+          result: {
+            appId,
+            chatId,
+            scaffoldEntryCount: scaffoldEntries.length,
+          },
+        });
+      } catch (error) {
+        const code = (error as { code?: string }).code === "ENOENT"
+          ? "SCAFFOLD_MISSING"
+          : "CREATE_APP_SELF_TEST_FAILED";
+        sendJson(response, code === "SCAFFOLD_MISSING" ? 503 : 500, {
+          ok: false,
+          error: { code, message: "Runtime create-app self-test failed." },
         });
       }
       return;

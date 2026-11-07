@@ -342,7 +342,42 @@ export default {
         const rpcResponse = await handleSignedWorkspaceRequest(rpcRequest, env, new URL(rpcRequest.url));
         const rpcResult = await rpcResponse.json().catch(() => null);
         const ok = rpcResponse.status === 200 && rpcResult?.ok === true && rpcResult?.result?.echo?.args?.[0]?.probe === "gateway-runtime-rpc";
-        return json({ ok, phase: "runtime-rpc", code: ok ? "SELF_TEST_PASSED" : "SELF_TEST_RPC_FAILED" }, ok ? 200 : 503);
+        if (!ok) return json({ ok: false, phase: "runtime-rpc", code: "SELF_TEST_RPC_FAILED" }, 503);
+
+        const scaffoldCheck = await stub.fetch("https://sandbox/__exec", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            argv: ["node", "-e", "const fs=require('node:fs');const p='/opt/dyad/scaffold';if(!fs.statSync(p).isDirectory())process.exit(2);const entries=fs.readdirSync(p);if(!entries.length)process.exit(3);process.stdout.write(JSON.stringify({entryCount:entries.length}))"],
+            cwd: "/workspace",
+          }),
+        });
+        const scaffoldResult = await scaffoldCheck.json().catch(() => ({}));
+        let scaffoldEntryCount = 0;
+        try { scaffoldEntryCount = JSON.parse(scaffoldResult.stdout ?? "null")?.entryCount ?? 0; } catch {}
+        if (!scaffoldCheck.ok || scaffoldResult.exitCode !== 0 || !Number.isInteger(scaffoldEntryCount) || scaffoldEntryCount < 1)
+          return json({ ok: false, phase: "scaffold", code: "SELF_TEST_SCAFFOLD_FAILED" }, 503);
+
+        const createAppPath = `/v1/workspaces/${workspaceKey}/runtime/rpc/__gateway-create-app-self-test`;
+        const createTimestamp = String(Date.now());
+        const createNonce = random(18);
+        const createSignature = await signRequest(env.SANDBOX_GATEWAY_SIGNING_SECRET, "POST", createAppPath, createTimestamp, createNonce);
+        const createProbe = { args: [{ name: `Gateway Scaffold Smoke ${random(6)}`, initialChatMode: "local-agent" }] };
+        const createRequest = new Request(new URL(createAppPath, url.origin), {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${runtimeEnv.RUNTIME_RPC_SECRET}`,
+            "content-type": "application/json",
+            "x-sandbox-timestamp": createTimestamp,
+            "x-sandbox-nonce": createNonce,
+            "x-sandbox-signature": createSignature,
+          },
+          body: JSON.stringify(createProbe),
+        });
+        const createResponse = await handleSignedWorkspaceRequest(createRequest, env, new URL(createRequest.url));
+        const createResult = await createResponse.json().catch(() => null);
+        const createAppOk = createResponse.status === 200 && createResult?.ok === true && Number.isInteger(createResult?.result?.appId) && Number.isInteger(createResult?.result?.chatId) && createResult?.result?.scaffoldEntryCount > 0;
+        return json({ ok: createAppOk, phase: "create-app", code: createAppOk ? "SELF_TEST_PASSED" : "SELF_TEST_CREATE_APP_FAILED" }, createAppOk ? 200 : 503);
       } finally {
         if (created) await stub.fetch("https://sandbox/__destroy", { method: "POST" }).catch(() => {});
       }

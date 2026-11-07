@@ -32,6 +32,15 @@ try {
   };
   const create = await request(route("create"), "POST", { workspaceKey, env });
   if (!create.ok) throw new Error(`create failed (${create.status})`);
+  const scaffold = await request(route("exec"), "POST", {
+    argv: ["node", "-e", "const fs=require('node:fs');const p='/opt/dyad/scaffold';if(!fs.statSync(p).isDirectory())process.exit(2);const entries=fs.readdirSync(p);if(!entries.length)process.exit(3);process.stdout.write(JSON.stringify({entryCount:entries.length}))"],
+    cwd: "/workspace",
+  });
+  const scaffoldBody = await scaffold.json().catch(() => ({}));
+  let scaffoldResult;
+  try { scaffoldResult = JSON.parse(scaffoldBody.stdout ?? "null"); } catch {}
+  if (!scaffold.ok || scaffoldBody.exitCode !== 0 || !Number.isInteger(scaffoldResult?.entryCount) || scaffoldResult.entryCount < 1)
+    throw new Error(`workspace scaffold check failed (${scaffold.status})`);
   const exec = await request(route("exec"), "POST", { argv: ["node", "-e", "process.stdout.write('sandbox-exec-ok')"], cwd: "/workspace" });
   const result = await exec.json().catch(() => ({}));
   if (!exec.ok || result.exitCode !== 0 || result.stdout !== "sandbox-exec-ok") throw new Error(`exec failed (${exec.status}, exit ${result.exitCode ?? "unknown"})`);
@@ -44,6 +53,17 @@ try {
   const rpcBody = await rpc.json().catch(() => null);
   if (!rpc.ok || rpcBody?.ok !== true || JSON.stringify(rpcBody?.result?.echo) !== JSON.stringify(rpcProbe))
     throw new Error(`runtime RPC body probe failed (${rpc.status})`);
+  const createAppPath = route("runtime/rpc/__gateway-create-app-self-test");
+  const createAppProbe = {
+    args: [{ name: `Gateway Scaffold Smoke ${randomBytes(6).toString("hex")}`, initialChatMode: "local-agent" }],
+  };
+  const createApp = await request(createAppPath, "POST", createAppProbe, {
+    authorization: `Bearer ${env.RUNTIME_RPC_SECRET}`,
+    "x-runtime-session": "ci-gateway-create-app-self-test",
+  });
+  const createAppBody = await createApp.json().catch(() => null);
+  if (!createApp.ok || createAppBody?.ok !== true || !Number.isInteger(createAppBody?.result?.appId) || !Number.isInteger(createAppBody?.result?.chatId) || !Number.isInteger(createAppBody?.result?.scaffoldEntryCount) || createAppBody.result.scaffoldEntryCount < 1)
+    throw new Error(`runtime create-app probe failed (${createApp.status}, ${createAppBody?.error?.code ?? "unknown"})`);
   const diagPath = route("diag");
   const diag = await request(diagPath, "GET");
   const diagBody = await diag.json().catch(() => ({}));
@@ -53,7 +73,7 @@ try {
   const previewPath = route("preview/1/");
   const preview = await request(previewPath, "GET");
   if (preview.status !== 404) throw new Error(`empty-project preview probe returned ${preview.status}, expected 404`);
-  console.log(JSON.stringify({ attempt, create: "passed", exec: "passed", runtimeRpcBody: "passed", diagnostics: "passed", previewRoute: "reachable-empty-project-404", destroy: "pending" }));
+  console.log(JSON.stringify({ attempt, create: "passed", scaffold: "present", scaffoldEntryCount: scaffoldResult.entryCount, exec: "passed", runtimeRpcBody: "passed", createApp: "passed", diagnostics: "passed", previewRoute: "reachable-empty-project-404", destroy: "pending" }));
   lastError = undefined;
   break;
 } catch (error) {

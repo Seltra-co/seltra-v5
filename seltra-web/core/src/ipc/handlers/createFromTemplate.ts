@@ -22,10 +22,24 @@ export async function createFromTemplate({
   const templateId = requestedTemplateId ?? settings.selectedTemplateId;
 
   if (templateId === "react") {
-    const sourceScaffoldPath = path.join(__dirname, "..", "..", "scaffold");
-    const repoScaffoldPath = path.join(process.cwd(), "scaffold");
+    const configuredScaffoldPath = process.env.DYAD_SCAFFOLD_DIR?.trim();
+    const sourceScaffoldPath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "scaffold",
+    );
+    const repoScaffoldPath = path.resolve(process.cwd(), "scaffold");
+    const scaffoldPath = [
+      configuredScaffoldPath ? path.resolve(configuredScaffoldPath) : undefined,
+      sourceScaffoldPath,
+      repoScaffoldPath,
+    ].find((candidate) => candidate && fs.existsSync(candidate));
+    if (!scaffoldPath) {
+      throw new Error("The React scaffold directory is unavailable.");
+    }
     await copyDirectoryRecursive(
-      fs.existsSync(sourceScaffoldPath) ? sourceScaffoldPath : repoScaffoldPath,
+      scaffoldPath,
       fullAppPath,
     );
     if (process.env.DYAD_WEB_RUNTIME === "1")
