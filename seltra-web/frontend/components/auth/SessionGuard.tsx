@@ -66,7 +66,7 @@ export function SessionGuard({ children }: { children: React.ReactNode }) {
       if (loggingOut) return
       loggingOut = true
       void fetch('/api/v5/auth/logout', { method: 'POST', credentials: 'include' })
-        .catch((error) => console.error('[auth] Could not revoke the Seltra session.', error))
+        .catch(() => console.warn('[auth] Could not revoke the Seltra session.'))
       clearSeltraSession()
       AUTH_KEYS.forEach((key) => localStorage.removeItem(key))
       const next = `${window.location.pathname}${window.location.search}`

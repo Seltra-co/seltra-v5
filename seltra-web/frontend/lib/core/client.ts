@@ -108,7 +108,7 @@ export class CoreClient {
     this.workspaceIdValue = session.workspaceId
     const response = await fetchWithSeltraAuth('/api/v5/builder/ws-ticket', {
       method: 'POST', headers: { authorization: `Bearer ${accessToken || ''}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ tenantId: session.workspaceId }), cache: 'no-store',
+      body: JSON.stringify({ tenantId: session.workspaceId, coreToken: session.coreToken }), cache: 'no-store',
     })
     const payload = await response.json().catch(() => ({})) as { ticket?: string; message?: string }
     if (!response.ok || !payload.ticket) throw new Error(payload.message || 'Could not reconnect to the builder.')

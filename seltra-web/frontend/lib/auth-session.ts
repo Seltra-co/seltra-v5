@@ -57,7 +57,7 @@ export async function fetchWithSeltraAuth(input: RequestInfo | URL, init: Reques
   try {
     refreshedToken = await refreshSeltraAccessToken()
   } catch (error) {
-    console.error('[auth] Could not refresh the Seltra session.', error)
+    console.warn('[auth] Could not refresh the Seltra session.')
     throw error
   }
   if (!refreshedToken) {
