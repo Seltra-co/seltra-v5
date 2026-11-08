@@ -127,7 +127,7 @@ export class WorkspaceSupervisor {
     }
     const pending = this.starts.get(workspaceId)
     if (pending) return pending
-    console.info(JSON.stringify({ event: 'workspace_create_requested', projectId: workspaceId, at: new Date().toISOString() }))
+    console.info(JSON.stringify({ event: 'workspace_create_requested', projectId: workspaceId, workspaceKey, at: new Date().toISOString() }))
     const start = this.start(workspaceId, workspaceKey, storeSlug, userId, engineApiKey)
     this.starts.set(workspaceId, start)
     try { return await start } finally { this.starts.delete(workspaceId) }
@@ -175,10 +175,12 @@ export class WorkspaceSupervisor {
     const provider = this.executionProvider as WorkspaceExecutionProvider & { destroyWorkspace?: (key: string) => Promise<void> }
     if (pending) {
       this.runtimes.delete(pending[0])
+      console.info(JSON.stringify({ event: 'workspace_destroy_requested', projectId: pending[0], workspaceKey, reason: 'explicit_destroy', at: new Date().toISOString() }))
       await this.executionProvider.stop(pending[1].executionName, pending[1].child)
       return
     }
     if (!provider.destroyWorkspace) return
+    console.info(JSON.stringify({ event: 'workspace_destroy_requested', workspaceKey, reason: 'gateway_destroy', at: new Date().toISOString() }))
     await provider.destroyWorkspace(workspaceKey)
   }
 
@@ -241,8 +243,11 @@ export class WorkspaceSupervisor {
     const child = remote?.child ?? this.executionProvider.spawn(request)
     const runtime = { workspaceId, workspaceKey, storeSlug, userId, baseUrl: remote?.baseUrl ?? `http://127.0.0.1:${port}`, rpcSecret, runtimeSecretsKey: secretsKey, modelToken, signGatewayRequest: remote?.signRequest, syncFromExecution: remote?.syncFromExecution, child, executionName, touchedAt: Date.now() }
     this.runtimes.set(workspaceId, runtime)
-    console.info(JSON.stringify({ event: 'workspace_container_ready', projectId: workspaceId, at: new Date().toISOString(), provider: this.executionProvider.mode }))
-    child.once('exit', () => { if (this.runtimes.get(workspaceId) === runtime) this.runtimes.delete(workspaceId) })
+    console.info(JSON.stringify({ event: 'workspace_container_ready', projectId: workspaceId, workspaceKey, at: new Date().toISOString(), provider: this.executionProvider.mode }))
+    child.once('exit', (code, signal) => {
+      console.info(JSON.stringify({ event: 'workspace_container_stopped', projectId: workspaceId, workspaceKey, reason: 'runtime_process_exit', exitCode: code, signal, at: new Date().toISOString() }))
+      if (this.runtimes.get(workspaceId) === runtime) this.runtimes.delete(workspaceId)
+    })
     try { if (!remote) await waitForRuntime(port, child) } catch (error) {
       console.error(JSON.stringify({
         event: 'workspace_runtime_start_failed',
@@ -271,7 +276,7 @@ export class WorkspaceSupervisor {
           }
         }
         this.runtimes.delete(id)
-        console.info(JSON.stringify({ event: 'workspace_idle_destroy_requested', projectId: id, at: new Date().toISOString() }))
+        console.info(JSON.stringify({ event: 'workspace_idle_destroy_requested', projectId: id, workspaceKey: runtime.workspaceKey, reason: 'idle_timeout', at: new Date().toISOString() }))
         await this.executionProvider.stop(runtime.executionName, runtime.child)
       }
     }

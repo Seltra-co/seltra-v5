@@ -3,8 +3,20 @@ import {
   assertCorePublicUrlResolvable,
   assertModelProviderReachable,
 } from "../../server/src/startup_checks.js";
+import { deterministicPromptIntent, resolvePromptIntent } from "../../server/src/prompt_intent.js";
 
 describe("Core startup checks", () => {
+  it("returns a bounded intent from the fast model and falls back deterministically", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ name: "Services Catalog", intent: "Planning a services catalog for a small business." }) } }] }), { status: 200 }));
+    await expect(resolvePromptIntent({ prompt: "Build my service catalog", baseUrl: "https://provider.example.test/v1", model: "fast", apiKey: "test-key", fetchImpl }))
+      .resolves.toEqual({ name: "Services Catalog", intent: "Planning a services catalog for a small business." });
+    expect(fetchImpl).toHaveBeenCalledWith("https://provider.example.test/v1/chat/completions", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    await expect(resolvePromptIntent({ prompt: "Build my service catalog", baseUrl: "", model: "", fetchImpl }))
+      .resolves.toEqual(deterministicPromptIntent("Build my service catalog"));
+    await expect(resolvePromptIntent({ prompt: "Build my service catalog", baseUrl: "https://provider.example.test/v1", model: "fast", apiKey: "test-key", fetchImpl: vi.fn().mockRejectedValue(new Error("offline")) }))
+      .resolves.toEqual(deterministicPromptIntent("Build my service catalog"));
+  });
+
   it("requires a resolvable HTTPS callback URL", async () => {
     const lookup = vi.fn().mockResolvedValue([{ address: "192.0.2.1", family: 4 }]);
     await expect(assertCorePublicUrlResolvable("https://core.example.test", lookup)).resolves.toBeUndefined();

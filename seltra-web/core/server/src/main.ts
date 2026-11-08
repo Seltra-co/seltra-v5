@@ -15,7 +15,7 @@ import httpProxy from "http-proxy";
 import { SignJWT, jwtVerify } from "jose";
 import { GatewayModule } from "./app.module.js";
 import { loadConfig, type GatewayConfig } from "./config.js";
-import { assertCorePublicUrlResolvable, assertModelProviderReachable } from "./startup_checks.js";
+import { assertCorePublicUrlResolvable, assertModelProviderReachable, classifyModelStartupFailure } from "./startup_checks.js";
 import { redactSensitiveText } from "./security.js";
 import {
   FileControlStore,
@@ -41,6 +41,7 @@ import { WorkspaceDurability } from "./publish/snapshot.js";
 import { EditLeaseClient } from "./publish/edit_lease.js";
 import { VercelPublisher } from "./publish/vercel.js";
 import { PublishOrchestrator } from "./publish/orchestrator.js";
+import { resolvePromptIntent } from "./prompt_intent.js";
 
 const encoder = new TextEncoder();
 // Chat attachments are sent as base64 in the distributed-machine intent.
@@ -374,6 +375,7 @@ function modelContextWindow(model: string, configured: number): number {
 
 function providerErrorDetails(body: string): {
   code?: string | number;
+  type?: string;
   message?: string;
 } {
   let payload: unknown;
@@ -394,9 +396,11 @@ function providerErrorDetails(body: string): {
       ) as Record<string, unknown> | undefined
     : undefined;
   const code = error?.code ?? firstProviderError?.code;
+  const type = error?.type ?? firstProviderError?.type;
   const message = error?.message ?? firstProviderError?.message;
   return {
     ...(typeof code === "string" || typeof code === "number" ? { code } : {}),
+    ...(typeof type === "string" ? { type: redactSensitiveText(type).slice(0, 80) } : {}),
     ...(typeof message === "string"
       ? {
           message: redactSensitiveText(message).slice(0, 300),
@@ -405,14 +409,25 @@ function providerErrorDetails(body: string): {
   };
 }
 
-function statusMessage(status: number, role: string, model: string): string {
-  if (status === 401)
-    return "Seltra model gateway: the upstream model provider rejected the API key (401). Check MODEL_API_KEY and MODEL_ACCOUNT_ID.";
-  if (status === 400)
-    return `Seltra model provider rejected the ${role} request (400) for ${model}.`;
-  if (status === 404) return `Model not found: ${model}.`;
-  if (status === 429) return `Seltra model provider rate limited ${model} (429).`;
-  return `Seltra model gateway upstream failure (${status}) for ${model}.`;
+function statusMessage(_status: number, _role: string, _model: string): string {
+  return "Something went wrong on our side. Try again.";
+}
+
+function internalModelErrorCode(status: number, error: unknown): string {
+  const codes: string[] = [];
+  let current = error as { code?: unknown; name?: unknown; cause?: unknown } | undefined;
+  for (let depth = 0; current && depth < 4; depth++) {
+    if (typeof current.code === "string") codes.push(current.code.toUpperCase());
+    if (typeof current.name === "string") codes.push(current.name.toUpperCase());
+    current = current.cause as typeof current;
+  }
+  if (codes.some((code) => ["ENOTFOUND", "EAI_AGAIN", "ENODATA", "EAI_FAIL"].includes(code))) return "MODEL_DNS_FAILURE";
+  if (codes.some((code) => ["TIMEOUTERROR", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT"].includes(code))) return "MODEL_TIMEOUT";
+  if (status === 401) return "MODEL_PROVIDER_401";
+  if (status === 403) return "MODEL_PROVIDER_403";
+  if (status >= 500) return "MODEL_PROVIDER_5XX";
+  if (status === 0) return "MODEL_NETWORK_FAILURE";
+  return `MODEL_PROVIDER_HTTP_${status}`;
 }
 
 function utcDay(): string {
@@ -537,16 +552,16 @@ async function main(): Promise<void> {
         provider: config.AI_PROVIDER,
         baseUrl: config.modelBaseUrl,
         apiKey: config.MODEL_API_KEY,
-        model: config.AI_MODEL_DEFAULT,
+        model: config.AI_MODEL_REASONING?.trim() || config.AI_MODEL_DEFAULT,
         callbackUrl: config.CORE_PUBLIC_URL,
       });
-      console.info(JSON.stringify({ event: "ai_startup_selfcheck", status: "passed", role: "default" }));
+        console.info(JSON.stringify({ event: "ai_startup_selfcheck", status: "passed", role: "planner" }));
     } catch (error) {
       console.error(JSON.stringify({
         event: "ai_startup_selfcheck",
         status: "failed",
-        code: "MODEL_PROVIDER_UNREACHABLE",
-        message: error instanceof Error ? error.message : "Model provider check failed.",
+        code: classifyModelStartupFailure(error),
+        errorName: error instanceof Error ? error.name : typeof error,
       }));
       process.exitCode = 1;
       return;
@@ -1603,6 +1618,7 @@ async function main(): Promise<void> {
                   Object.assign(failure, {
                     status: result.status,
                     providerCode: details.code,
+                    providerErrorType: details.type,
                     retryAfter: result.headers.get("retry-after"),
                   });
                   throw failure;
@@ -1624,15 +1640,21 @@ async function main(): Promise<void> {
             candidateError = error;
             lastError = error;
             const status = (error as { status?: number }).status ?? 0;
+            const errorRecord = error && typeof error === "object" ? error as { name?: string; code?: string; providerCode?: string | number; providerErrorType?: string; cause?: { code?: string } } : {};
             logError("model_provider_attempt_failed", {
               requestId: request.headers["x-request-id"],
               model: candidateModel,
               role: mapping.role,
               status,
+              internalErrorCode: internalModelErrorCode(status, error),
               attempt: attempt + 1,
               streaming,
-              providerUrl: config.modelBaseUrl,
-            }, error);
+              providerHost: (() => { try { return new URL(config.modelBaseUrl).hostname } catch { return undefined } })(),
+              errorName: errorRecord.name ?? typeof error,
+              errorCode: errorRecord.code ?? errorRecord.cause?.code,
+              providerCode: errorRecord.providerCode,
+              providerErrorType: errorRecord.providerErrorType,
+            });
             const retryable = status === 429 || status >= 500 || status === 0;
             if (
               !retryable ||
@@ -1756,37 +1778,29 @@ async function main(): Promise<void> {
         error instanceof CircuitOpenError
           ? 503
           : ((error as { status?: number }).status ?? 502);
-      const retryAfter = Number((error as { retryAfter?: string }).retryAfter);
-      const message =
-        error instanceof CircuitOpenError
-          ? "Seltra model gateway is temporarily unavailable while the provider circuit recovers. Retry shortly."
-          : status === 401
-            ? "Model key rejected. Check MODEL_API_KEY and try again."
-            : status === 404
-              ? `Model not found: ${mapping.model}. Check ${mapping.setting} in .env.web and rerun npm run web:dev.`
-              : status === 429
-                ? "Rate limited, retry in " +
-                  (Number.isFinite(retryAfter) && retryAfter > 0
-                    ? Math.ceil(retryAfter)
-                    : 1) +
-                  "s."
-                : (error as Error).message || "Model provider request failed.";
+      const message = "Something went wrong on our side. Try again.";
       errorClass =
         status === 401 || status === 403 || status === 404
           ? "config"
           : status === 400
             ? "client_error"
             : "retryable";
+      const errorRecord = error && typeof error === "object" ? error as { name?: string; code?: string; providerCode?: string | number; providerErrorType?: string; cause?: { code?: string } } : {};
       logError("model_request_failed", {
         requestId: request.headers["x-request-id"],
         model: usedModel,
         role: mapping.role,
         status,
+        internalErrorCode: internalModelErrorCode(status, error),
         errorClass,
         streaming,
         latencyMs: Date.now() - startedAt,
         retryable: errorClass === "retryable",
-      }, error);
+        errorName: errorRecord.name ?? typeof error,
+        errorCode: errorRecord.code ?? errorRecord.cause?.code,
+        providerCode: errorRecord.providerCode,
+        providerErrorType: errorRecord.providerErrorType,
+      });
       if (!response.destroyed)
         openAiError(
           response,
@@ -2031,6 +2045,24 @@ async function main(): Promise<void> {
       const claims = await authenticate(request);
       if (!claims)
         throw new HttpError(401, "UNAUTHORIZED", "Authentication is required.");
+      if (request.method === "POST" && url.pathname === "/api/builder/intent") {
+        checkOrigin(request);
+        let body: { prompt?: unknown };
+        try { body = JSON.parse((await readBody(request, 8 * 1024)).toString("utf8")) as typeof body; }
+        catch { throw new HttpError(400, "INVALID_REQUEST", "A valid prompt is required."); }
+        if (typeof body.prompt !== "string" || !body.prompt.trim() || body.prompt.length > 4_000)
+          throw new HttpError(400, "INVALID_REQUEST", "A prompt between 1 and 4000 characters is required.");
+        const startedAt = Date.now();
+        const intent = await resolvePromptIntent({
+          prompt: body.prompt,
+          baseUrl: config.modelBaseUrl,
+          model: config.AI_MODEL_FAST?.trim() || config.AI_MODEL_DEFAULT,
+          apiKey: config.MODEL_API_KEY,
+        });
+        console.info(JSON.stringify({ event: "prompt_intent_resolved", projectId: claims.workspaceId, durationMs: Date.now() - startedAt, source: intent.intent ? "model" : "fallback" }));
+        sendJson(response, 200, intent);
+        return;
+      }
     if (url.pathname === "/api/auth/me" && request.method === "GET") {
         sendJson(response, 200, {
           user: { id: claims.sub, email: claims.email },

@@ -113,9 +113,11 @@ export class WorkspaceSandbox extends DurableObject {
     }
   }
 
-  onStart(instance) { console.info(JSON.stringify({ event: "sandbox_container_started", instance })); }
+  async onStart(instance, reason = "workspace_create") {
+    console.info(JSON.stringify({ event: "sandbox_container_started", workspaceKey: await this.ctx.storage.get("workspaceKey") ?? null, instance, reason }));
+  }
   async onStop(exitCode, reason) {
-    console.info(JSON.stringify({ event: "sandbox_container_stopped", exitCode, reason }));
+    console.info(JSON.stringify({ event: "sandbox_container_stopped", workspaceKey: await this.ctx.storage.get("workspaceKey") ?? null, exitCode, reason }));
     await this.ctx.storage.put("lastExit", { exitCode, reason, at: new Date().toISOString() });
   }
   async onError(code) {
@@ -159,12 +161,21 @@ export class WorkspaceSandbox extends DurableObject {
       if (!validateWorkspaceKey(input.workspaceKey) || !input.env || typeof input.env !== "object" || Array.isArray(input.env)) return json({ code: "REQUEST_INVALID" }, 400);
       const env = Object.fromEntries(Object.entries(input.env).filter(([name, value]) => ALLOWED_RUNTIME_ENV.has(name) && typeof value === "string"));
       if (Object.keys(env).length !== Object.keys(input.env).length || env.DYAD_WORKSPACE_ID !== input.workspaceKey) return json({ code: "RUNTIME_ENV_INVALID" }, 400);
+      const createRequestCount = await this.ctx.storage.transaction(async (txn) => {
+        const currentKey = await txn.get("workspaceKey");
+        const previous = currentKey === input.workspaceKey ? await txn.get("createRequestCount") ?? 0 : 0;
+        const next = previous + 1;
+        await txn.put("workspaceKey", input.workspaceKey);
+        await txn.put("createRequestCount", next);
+        return next;
+      });
+      console.info(JSON.stringify({ event: "sandbox_create_requested", workspaceKey: input.workspaceKey, createRequestCount, containerRunning: Boolean(container.running), at: new Date().toISOString() }));
       await this.ctx.storage.put("workspaceKey", input.workspaceKey);
       await this.ctx.storage.put("runtimeEnv", env);
       if (!container.running) {
         try {
           container.start({ image: container.images.base, env, enableInternet: true, instance: "standard-2" });
-          this.onStart("standard-2");
+          await this.onStart("standard-2", "workspace_create");
           this.observeContainer();
           await container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS);
           await this.ctx.storage.delete("lastExit");
@@ -186,7 +197,7 @@ export class WorkspaceSandbox extends DurableObject {
         } catch {}
         const reason = !container.running ? "CONTAINER_EXITED" : status?.exitCode !== null && status?.exitCode !== undefined ? "RUNTIME_CRASHED" : status ? "RUNTIME_TIMEOUT" : "PORT_NOT_LISTENING";
         await this.onError(reason);
-        console.error(JSON.stringify({ event: "sandbox_runtime_start_failed", code: reason, timeoutMs: PORT_READY_TIMEOUT_MS, instance: "standard-2", sleepAfterMs: INACTIVITY_TIMEOUT_MS, bootStatus: status }));
+        console.error(JSON.stringify({ event: "sandbox_runtime_start_failed", workspaceKey: input.workspaceKey, createRequestCount, code: reason, timeoutMs: PORT_READY_TIMEOUT_MS, instance: "standard-2", sleepAfterMs: INACTIVITY_TIMEOUT_MS, bootStatus: status }));
         await container.destroy().catch(() => {});
         await this.monitoring?.catch(() => {});
         await this.ctx.storage.deleteAll();
@@ -196,6 +207,8 @@ export class WorkspaceSandbox extends DurableObject {
     }
 
     if (url.pathname === "/__destroy" && request.method === "POST") {
+      const workspaceKey = await this.ctx.storage.get("workspaceKey") ?? null;
+      console.info(JSON.stringify({ event: "sandbox_destroy_requested", workspaceKey, reason: request.headers.get("x-sandbox-destroy-reason") ?? "gateway_destroy_rpc", containerRunning: Boolean(container.running), at: new Date().toISOString() }));
       if (container.running) await container.destroy();
       await this.monitoring?.catch(() => {});
       await this.ctx.storage.deleteAll();

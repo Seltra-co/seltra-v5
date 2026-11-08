@@ -2,6 +2,24 @@ import { lookup as dnsLookup } from "node:dns/promises";
 
 type Lookup = typeof dnsLookup;
 
+export function classifyModelStartupFailure(error: unknown): string {
+  let current = error as { code?: unknown; name?: unknown; status?: unknown; cause?: unknown } | undefined;
+  let status: number | undefined;
+  const codes: string[] = [];
+  for (let depth = 0; current && depth < 4; depth++) {
+    if (typeof current.status === "number") status = current.status;
+    if (typeof current.code === "string") codes.push(current.code.toUpperCase());
+    if (typeof current.name === "string") codes.push(current.name.toUpperCase());
+    current = current.cause as typeof current;
+  }
+  if (codes.some((code) => ["ENOTFOUND", "EAI_AGAIN", "ENODATA", "EAI_FAIL"].includes(code))) return "MODEL_DNS_FAILURE";
+  if (codes.some((code) => ["TIMEOUTERROR", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT"].includes(code))) return "MODEL_TIMEOUT";
+  if (status === 401) return "MODEL_PROVIDER_401";
+  if (status === 403) return "MODEL_PROVIDER_403";
+  if (status !== undefined && status >= 500) return "MODEL_PROVIDER_5XX";
+  return "MODEL_PROVIDER_CHECK_FAILED";
+}
+
 export async function assertCorePublicUrlResolvable(
   publicUrl: string | undefined,
   lookup: Lookup = dnsLookup,
@@ -68,28 +86,41 @@ export async function assertModelProviderReachable(input: {
         body: JSON.stringify({
           model: input.model,
           messages: [{ role: "user", content: "Reply with OK." }],
+          stream: true,
           max_tokens: 1,
         }),
         signal: AbortSignal.timeout(10_000),
       },
     );
-  } catch {
-    throw new Error(
+  } catch (cause) {
+    const error = new Error(
       `Model provider startup check failed for ${input.provider}; Core cannot reach the configured provider.`,
-    );
+    ) as Error & { code: string; cause?: unknown };
+    error.code = classifyModelStartupFailure(cause);
+    error.cause = cause;
+    throw error;
   }
   if (!response.ok) {
     await response.body?.cancel().catch(() => undefined);
-    throw new Error(
+    const error = new Error(
       `Model provider startup check failed for ${input.provider} (HTTP ${response.status}).`,
-    );
+    ) as Error & { code: string; status: number };
+    error.code = `MODEL_PROVIDER_HTTP_${response.status}`;
+    error.status = response.status;
+    throw error;
   }
-  const result = (await response.json().catch(() => null)) as
-    | { choices?: unknown[] }
-    | null;
-  if (!Array.isArray(result?.choices) || result.choices.length === 0) {
+  const reader = response.body?.getReader();
+  if (!reader) {
     throw new Error(
       `Model provider startup check failed for ${input.provider}; no model response was returned.`,
     );
+  }
+  try {
+    const first = await reader.read();
+    if (first.done || !first.value?.byteLength) throw new Error("MODEL_STREAM_EMPTY");
+  } catch {
+    throw new Error(`Model provider startup check failed for ${input.provider}; no model response was streamed.`);
+  } finally {
+    await reader.cancel().catch(() => undefined);
   }
 }

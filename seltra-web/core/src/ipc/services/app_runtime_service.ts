@@ -100,7 +100,7 @@ import {
 
 const logger = log.scope("app_runtime_service");
 const pnpmVersionMigrationNotifiedAppIds = new Set<number>();
-const lastAppProcessExit = new Map<number, { exitCode: number | null; signal: NodeJS.Signals | null; command: string; cwd: string; expectedPort: number | null; stdout: string; stderr: string; dependencyInstallFinished: boolean }>();
+const lastAppProcessExit = new Map<number, { exitCode: number | null; signal: NodeJS.Signals | null; command: string; cwd: string; expectedPort: number | null; stdout: string; stderr: string; dependencyInstallFinished: boolean; dependencyInstallDurationMs: number | null }>();
 
 function redactProcessDiagnostic(value: string): string {
   const environmentSecrets = Object.values(process.env).filter(
@@ -1191,6 +1191,8 @@ function listenToProcess({
   let stdoutTail = "";
   let stderrTail = "";
   let dependencyInstallFinished = !/\b(?:npm|pnpm|yarn|bun)\s+(?:ci|install)\b/i.test(command ?? "");
+  const dependencyInstallStartedAt = dependencyInstallFinished ? undefined : Date.now();
+  let dependencyInstallDurationMs: number | null = dependencyInstallFinished ? 0 : null;
   let ignoredBuildsRecordedAfterInstall = false;
   const appendProcessOutput = (message: string) => {
     if (!onPnpmIgnoredBuildsFailure) {
@@ -1206,6 +1208,7 @@ function listenToProcess({
     const message = util.stripVTControlCharacters(data.toString());
     if (/\b(?:added \d+ packages?|up to date|done in \d+(?:\.\d+)?s)\b/i.test(message)) {
       dependencyInstallFinished = true;
+      dependencyInstallDurationMs ??= dependencyInstallStartedAt === undefined ? 0 : Date.now() - dependencyInstallStartedAt;
     }
     const activeApp = runningApps.get(appId);
     if (activeApp?.process === spawnedProcess)
@@ -1307,6 +1310,7 @@ function listenToProcess({
           cwd: redactProcessDiagnostic(appPath ?? "(unknown)"),
           expectedPort: expectedPort ?? null,
           dependencyInstallFinished,
+          dependencyInstallDurationMs,
           stdoutLast50Lines: lastProcessLines(stdoutTail),
           stderrLast50Lines: lastProcessLines(stderrTail),
         }));
@@ -1329,6 +1333,7 @@ function listenToProcess({
           stdout: lastProcessLines(stdoutTail),
           stderr: lastProcessLines(stderrTail),
           dependencyInstallFinished,
+          dependencyInstallDurationMs,
         });
 
         if (
@@ -2544,7 +2549,7 @@ async function waitForAppReady(
       const exit = lastAppProcessExit.get(appId);
       if (exit) {
         throw new DyadError(
-          `APP_PROCESS_EXITED_BEFORE_PREVIEW: process exited (code ${exit.exitCode ?? "null"}, signal ${exit.signal ?? "none"}); command=${exit.command}; cwd=${exit.cwd}; expectedPort=${exit.expectedPort ?? "unknown"}; dependencyInstallFinished=${exit.dependencyInstallFinished}; stdout:\n${exit.stdout}\nstderr:\n${exit.stderr}`,
+          `APP_PROCESS_EXITED_BEFORE_PREVIEW: process exited (code ${exit.exitCode ?? "null"}, signal ${exit.signal ?? "none"}); command=${exit.command}; cwd=${exit.cwd}; expectedPort=${exit.expectedPort ?? "unknown"}; dependencyInstallFinished=${exit.dependencyInstallFinished}; dependencyInstallDurationMs=${exit.dependencyInstallDurationMs ?? "unknown"}; stdout:\n${exit.stdout}\nstderr:\n${exit.stderr}`,
           DyadErrorKind.External,
         );
       }
