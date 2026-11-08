@@ -135,7 +135,8 @@ test("preview route forwards the registered preview hostname to its mapped proxy
   assert.equal(response.status, 200);
   assert.equal(await response.text(), "preview-mapped-ok");
   assert.equal(upstreamRequests[1].port, 43127);
-  assert.equal(upstreamRequests[1].headers.get("host"), "app-7.localhost:43127");
+  assert.equal(upstreamRequests[1].headers.has("host"), false);
+  assert.equal(upstreamRequests[1].headers.get("x-seltra-preview-host"), "app-7.localhost:43127");
 });
 
 test("signed runtime RPC POST forwards identical JSON bytes and runtime headers", async () => {

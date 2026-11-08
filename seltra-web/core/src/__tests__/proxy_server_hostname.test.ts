@@ -178,6 +178,24 @@ describe("app preview authority and forwarding", () => {
     expect((await request("/api")).status).toBe(421);
   });
 
+  it("accepts the gateway's internal preview authority when container Host is fixed", async () => {
+    expect(
+      (
+        await request("/api", {
+          Host: `container:${port}`,
+        })
+      ).status,
+    ).toBe(421);
+    const result = await request("/api", {
+      Host: `container:${port}`,
+      "X-Seltra-Preview-Host": `app-42.localhost:${port}`,
+    });
+    expect(result.status).toBe(200);
+    const forwardedHeaders = JSON.parse(result.body).headers;
+    expect(forwardedHeaders.host).toBe(new URL(upstreamOrigin).host);
+    expect(forwardedHeaders["x-seltra-preview-host"]).toBeUndefined();
+  });
+
   it.each([
     "app-43.localhost",
     "localhost",

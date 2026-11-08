@@ -303,7 +303,8 @@ export class WorkspaceSandbox extends DurableObject {
       if (target.appId !== Number(appId) || target.host !== "127.0.0.1" || !validPreviewHost || !Number.isInteger(target.port) || target.port < 1024 || target.port > 65535) return json({ code: "PREVIEW_INVALID" }, 502);
       const previewPath = "/" + suffix.join("/") + new URL(request.url).search;
       const previewRequest = proxyRequest(`http://container${previewPath}`, request, bytes);
-      previewRequest.headers.set("host", `${target.previewHost}:${target.port}`);
+      // Container fetch owns Host; carry the app authority in an internal header instead.
+      previewRequest.headers.set("x-seltra-preview-host", `${target.previewHost}:${target.port}`);
       return container.getTcpPort(target.port).fetch(previewRequest);
     }
     if (url.pathname.startsWith("/__preview-diagnostic/") && container.running) {

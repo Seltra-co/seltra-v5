@@ -485,6 +485,7 @@ const server = http.createServer((clientReq, clientRes) => {
 
   /* Copy request headers but rewrite Host / Origin / Referer */
   const headers = { ...clientReq.headers, host: target.host, ...fixedHeaders };
+  delete headers["x-seltra-preview-host"];
   if (headers.origin) headers.origin = target.origin;
   if (headers.referer) {
     try {
@@ -610,6 +611,7 @@ server.on("upgrade", (req, socket, _head) => {
 
   const isTLS = target.protocol === "https:";
   const headers = { ...req.headers, host: target.host, ...fixedHeaders };
+  delete headers["x-seltra-preview-host"];
   if (headers.origin) headers.origin = target.origin;
 
   const upReq = (isTLS ? https : http).request({
@@ -684,9 +686,12 @@ listenWithFallback(LISTEN_PORT, FALLBACK_PORT_START, MAX_PORT_ATTEMPTS);
 function hasPreviewAuthority(req) {
   // Never forward cookies received through localhost, another app's name, or
   // a conflicting absolute-form request target.
+  const expectedAuthority = previewOrigin && new URL(previewOrigin).host;
+  const forwardedAuthority = req.headers["x-seltra-preview-host"]?.toLowerCase();
   if (
     !previewOrigin ||
-    req.headers.host?.toLowerCase() !== new URL(previewOrigin).host
+    (req.headers.host?.toLowerCase() !== expectedAuthority &&
+      forwardedAuthority !== expectedAuthority)
   ) {
     return false;
   }
