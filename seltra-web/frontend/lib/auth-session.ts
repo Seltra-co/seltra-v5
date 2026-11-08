@@ -1,4 +1,17 @@
 let refreshInFlight: Promise<string | null> | null = null
+let authMeCache: { token: string; promise: Promise<{ ok: boolean; status: number; data: unknown }> } | null = null
+
+export function fetchSeltraAuthMe<T = unknown>() {
+  const token = localStorage.getItem('seltra:token') ?? ''
+  if (authMeCache?.token === token) return authMeCache.promise as Promise<{ ok: boolean; status: number; data: T }>
+  const promise = fetchWithSeltraAuth('/api/v5/auth/me', { cache: 'no-store' })
+    .then(async (response) => ({ ok: response.ok, status: response.status, data: await response.json().catch(() => ({})) }))
+    .catch((error) => { if (authMeCache?.promise === promise) authMeCache = null; throw error })
+  authMeCache = { token, promise }
+  return promise as Promise<{ ok: boolean; status: number; data: T }>
+}
+
+function clearAuthMeCache() { authMeCache = null }
 
 export function storeSeltraSession(input: {
   access_token: string
@@ -7,6 +20,7 @@ export function storeSeltraSession(input: {
   if (!input.access_token) throw new Error('The server did not return an access token.')
   localStorage.setItem('seltra:token', input.access_token)
   localStorage.setItem('seltra:user', JSON.stringify(input.user))
+  clearAuthMeCache()
 }
 
 export function refreshSeltraAccessToken() {
@@ -27,6 +41,7 @@ export function refreshSeltraAccessToken() {
       const accessToken = body.access_token ?? body.token
       if (!accessToken) throw new Error('The server did not return a refreshed access token.')
       localStorage.setItem('seltra:token', accessToken)
+      clearAuthMeCache()
       return accessToken
     })().finally(() => {
       refreshInFlight = null
@@ -80,5 +95,6 @@ export async function fetchWithSeltraAuth(input: RequestInfo | URL, init: Reques
 }
 
 export function clearSeltraSession() {
+  clearAuthMeCache()
   ;['seltra:token', 'seltra:user', 'seltra:active_store'].forEach((key) => localStorage.removeItem(key))
 }

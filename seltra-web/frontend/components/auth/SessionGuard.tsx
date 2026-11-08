@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import { clearSeltraSession, fetchWithSeltraAuth } from '@/lib/auth-session'
+import { clearSeltraSession, fetchSeltraAuthMe } from '@/lib/auth-session'
 
 const AUTH_KEYS = ['seltra:token', 'seltra:user', 'seltra:active_store']
 
@@ -37,7 +37,7 @@ export function SessionGuard({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        const response = await fetchWithSeltraAuth('/api/v5/auth/me', { cache: 'no-store' })
+        const response = await fetchSeltraAuthMe()
         await new Promise((resolveDelay) => window.setTimeout(resolveDelay, Math.max(0, minimumLoader - (Date.now() - startedAt))))
         if (response.ok) {
           setAuthState('authenticated')

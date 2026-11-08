@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { ArrowRight, Bell, Check, Mic, Paperclip, Settings2, Sparkles, X } from 'lucide-react'
-import { fetchWithSeltraAuth } from '@/lib/auth-session'
+import { fetchSeltraAuthMe } from '@/lib/auth-session'
 
 const TOUR_VERSION = 'v2'
 
@@ -29,10 +29,10 @@ export function FirstRunTour() {
     if (!authToken) return
     let cancelled = false
     setToken(authToken)
-    void fetchWithSeltraAuth('/api/v5/auth/me', { cache: 'no-store' })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('Could not load onboarding status')
-        return response.json() as Promise<{ user?: { completedTours?: string[] } }>
+    void fetchSeltraAuthMe<{ user?: { completedTours?: string[] } }>()
+      .then((result) => {
+        if (!result.ok) throw new Error('Could not load onboarding status')
+        return result.data
       })
       .then((result) => {
         if (!cancelled) setOpen(!result.user?.completedTours?.includes(TOUR_VERSION))

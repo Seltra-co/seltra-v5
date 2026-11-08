@@ -30,7 +30,7 @@ import { useWorkspace } from '@/context/WorkspaceContext'
 import { CoreClient, type CoreSession } from '@/lib/core/client'
 import { CoreEvents } from '@/lib/core/events'
 import { takePendingBuild } from '@/lib/builder/pending'
-import { fetchWithSeltraAuth } from '@/lib/auth-session'
+import { fetchSeltraAuthMe, fetchWithSeltraAuth } from '@/lib/auth-session'
 import { CorePreviewAnnotator } from '@/components/dashboard/CorePreviewAnnotator'
 import { PublishPanel } from '@/components/dashboard/PublishPanel'
 import { CoreAgentMessage, CoreQuestionnaireCard, CoreTodoProgress, type CoreBlueprint, type CoreQuestionnaire, type CoreTodo } from '@/components/dashboard/CoreAgentMessage'
@@ -1936,10 +1936,10 @@ export default function DashboardPage() {
     }
 
     const init = async () => {
-      const profileResult = await apiFetch<{ user?: { merchantProfile?: typeof merchantProfile; dismissedAnnouncements?: string[] } }>('/api/v5/auth/me')
-      setAnnouncementVisible(Boolean(profileResult.data?.user && !profileResult.data.user.dismissedAnnouncements?.includes(CURRENT_ANNOUNCEMENT_VERSION)))
-      if (profileResult.data?.user?.merchantProfile) setMerchantProfile(profileResult.data.user.merchantProfile)
-      const profileUser = profileResult.data?.user as Partial<UserRecord> | null | undefined
+      const profileResult = await fetchSeltraAuthMe<{ user?: { merchantProfile?: typeof merchantProfile; dismissedAnnouncements?: string[] } & Partial<UserRecord> }>()
+      setAnnouncementVisible(Boolean(profileResult.data.user && !profileResult.data.user.dismissedAnnouncements?.includes(CURRENT_ANNOUNCEMENT_VERSION)))
+      if (profileResult.data.user?.merchantProfile) setMerchantProfile(profileResult.data.user.merchantProfile)
+      const profileUser = profileResult.data.user
       if (profileUser) {
         const metadata = profileUser.user_metadata ?? {}
         setUser({
@@ -2837,14 +2837,6 @@ export default function DashboardPage() {
     if (!store) {
       setSending(true)
       try {
-        const limitCheck = await apiFetch<{ allowed: boolean; reason?: string; currentStoreCount?: number; maxStores?: number; plan?: 'free' | 'premium' }>('/api/v5/seltra/store/check-limit')
-        if (limitCheck.error || !limitCheck.data) throw new Error(limitCheck.error || 'Could not check your project limit. Please try again.')
-        if (!limitCheck.data.allowed) {
-          setProjectLimitInfo(limitCheck.data ?? {})
-          setProjectLimitOpen(true)
-          setSending(false)
-          return
-        }
         const name = deterministicProjectName(prompt)
         logAgentTiming('project_create_requested')
         const result = await apiFetch<{ store: StoreData }>('/api/v5/seltra/store/core-workspace', {
@@ -2857,6 +2849,14 @@ export default function DashboardPage() {
         storeContext.setActiveStore(store)
       } catch (error) {
       console.warn('[agent-stream] project setup failed')
+        const message = error instanceof Error ? error.message : ''
+        if (message.includes('Free tier allows')) {
+          setProjectLimitInfo({ plan: 'free', maxStores: 1 })
+          setProjectLimitOpen(true)
+        } else if (message.includes('Premium allows up to')) {
+          setProjectLimitInfo({ plan: 'premium', maxStores: 3 })
+          setProjectLimitOpen(true)
+        }
         setAgentStreamPhase('error')
         setCorePreviewError('Seltra could not prepare the app preview.')
         toast.error('Seltra could not prepare this app. Retry your request.')
