@@ -33,7 +33,7 @@ async function openRuntimeSession(path, runtimeSecret) {
         try { frame = JSON.parse(data.toString()); } catch { return; }
         if (frame.channel !== "web:session" || typeof frame.payload?.id !== "string") return;
         clearTimeout(timer);
-        resolve({ id: frame.payload.id, socket });
+        resolve({ id: frame.payload.id, socket, openedAt: Date.now() });
       });
     });
   } catch (error) {
@@ -103,6 +103,7 @@ const route = (suffix) => `/v1/workspaces/${workspaceKey}/${suffix}`;
 let appSmokeReached = false;
 let diagnosticAppId;
 let diagnosticRuntimeSecret;
+let runtimeSession;
 try {
   const env = {
     NODE_ENV: "production", DYAD_WEB_RUNTIME: "1", DYAD_WEB_RUNTIME_ENTRY: "1",
@@ -150,14 +151,13 @@ try {
   const appId = createAppBody.result.appId;
   diagnosticAppId = appId;
   diagnosticRuntimeSecret = env.RUNTIME_RPC_SECRET;
-  const runtimeSession = await openRuntimeSession(route("runtime/events"), env.RUNTIME_RPC_SECRET);
+  runtimeSession = await openRuntimeSession(route("runtime/events"), env.RUNTIME_RPC_SECRET);
   const runApp = await request(route("runtime/rpc/run-app"), "POST", {
     args: [{ appId }], undefinedArgs: [],
   }, {
     authorization: `Bearer ${env.RUNTIME_RPC_SECRET}`,
     "x-runtime-session": runtimeSession.id,
   });
-  runtimeSession.socket.close();
   const runAppBody = await runApp.json().catch(() => null);
   if (!runApp.ok || runAppBody?.ok !== true)
     throw new Error(`runtime run-app probe failed (${runApp.status}, ${runAppBody?.error?.code ?? "unknown"})`);
@@ -179,7 +179,7 @@ try {
   }
   if (previewStatus !== 200) throw new Error(`app preview did not become ready (last status ${previewStatus})`);
   if (!/id=["']root["']/.test(previewHtml)) throw new Error("app preview returned 200 without the app root element");
-  console.log(JSON.stringify({ attempt, create: "passed", scaffold: "present", scaffoldEntryCount: scaffoldResult.entryCount, exec: "passed", runtimeRpcBody: "passed", createApp: "passed", appProcess: "started", previewRoute: "200", appRoot: "present", diagnostics: "passed", destroy: "pending" }));
+  console.log(JSON.stringify({ attempt, create: "passed", scaffold: "present", scaffoldEntryCount: scaffoldResult.entryCount, exec: "passed", runtimeRpcBody: "passed", createApp: "passed", appProcess: "started", previewRoute: "200", appRoot: "present", runtimeEventsHeldThroughPreview: true, runtimeEventsSessionMs: Date.now() - runtimeSession.openedAt, diagnostics: "passed", destroy: "pending" }));
   lastError = undefined;
   break;
 } catch (error) {
@@ -200,6 +200,7 @@ try {
   }
 } finally {
   const destroy = await request(route("destroy"), "POST", {});
+  runtimeSession?.socket.close();
   if (!destroy.ok) throw new Error(`destroy failed (${destroy.status})`);
   console.log(JSON.stringify({ attempt, destroy: "passed" }));
 }
