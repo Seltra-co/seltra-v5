@@ -45,15 +45,16 @@ function safeResponseHeaders(headers) {
   const allowed = ["content-type", "server", "location", "cf-ray", "x-powered-by"];
   return Object.fromEntries(allowed.flatMap((name) => headers.has(name) ? [[name, headers.get(name)]] : []));
 }
-function safeText(value, additionalSecrets = []) {
+function safeText(value, additionalSecrets = [], limit = 500) {
   let output = String(value ?? "");
   for (const secretValue of [...Object.values(process.env), ...additionalSecrets]) {
     if (typeof secretValue === "string" && secretValue.length >= 8) output = output.split(secretValue).join("[redacted]");
   }
-  return output.replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]").slice(0, 500);
+  return output.replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]").slice(0, limit);
 }
 async function diagnosePreview(workspaceKey, appId, runtimeSecret, previewPath) {
   const script = [
+    ";(async()=>{",
     "const {spawnSync}=require('node:child_process')",
     "const appId=Number(process.argv[1])",
     "const scrub=s=>{let v=String(s??'');for(const x of Object.values(process.env)){if(typeof x==='string'&&x.length>=8)v=v.split(x).join('[redacted]')}return v.replace(/Bearer\\s+[^\\s\"']+/gi,'Bearer [redacted]').replace(/((?:token|secret|password|authorization|api[_-]?key)\\s*[=:]\\s*)[^\\s,;]+/gi,'$1[redacted]')}",
@@ -67,6 +68,7 @@ async function diagnosePreview(workspaceKey, appId, runtimeSecret, previewPath) 
     "const ports=[...new Set(lines.map(line=>{const cols=line.trim().split(/\\s+/);const addr=cols[3]||cols[1]||'';const p=Number(addr.slice(addr.lastIndexOf(':')+1));return Number.isInteger(p)&&p>0&&p<65536?p:null}).filter(Boolean))]",
     "const portChecks=ports.map(port=>{const r=spawnSync('curl',['-sS','-i','--max-time','3','http://127.0.0.1:'+port+'/'],{encoding:'utf8',maxBuffer:65536});const raw=String(r.stdout||'')+'\\n'+String(r.stderr||'');const split=raw.indexOf('\\r\\n\\r\\n');const headers=split>=0?raw.slice(0,split):raw;const body=split>=0?raw.slice(split+4):'';const safeHeaders=headers.split(/\\r?\\n/).filter((line,i)=>i===0||/^(content-type|server|allow|vary):/i.test(line)).map(line=>trim(line,300));return {port,status:(headers.match(/HTTP\\/[^ ]+ ([0-9]{3})/)||[])[1]||'ERR',headers:safeHeaders,bodyFirst500:trim(body,500),error:trim(r.error?.message||'')}})",
     "process.stdout.write(JSON.stringify({diagnosticsStatus:diagRes.status,diagnostics,runtimeMappingStatus:mapRes.status,runtimeMapping,listening:trim(listeners.stdout||listeners.stderr||'',4000),portChecks}))",
+    "})().catch(error=>{process.stderr.write(String(error?.stack||error))})",
   ].join(";");
   const exec = await request(`/v1/workspaces/${workspaceKey}/exec`, "POST", {
     argv: ["node", "-e", script, String(appId)], cwd: "/workspace",
@@ -81,8 +83,8 @@ async function diagnosePreview(workspaceKey, appId, runtimeSecret, previewPath) 
   return {
     execStatus: exec.status,
     execExitCode: execBody.exitCode ?? null,
-    execOutput: safeText(execBody.stdout ?? "", [runtimeSecret]),
-    execError: safeText(execBody.stderr ?? "", [runtimeSecret]),
+    execOutput: safeText(execBody.stdout ?? "", [runtimeSecret], 5000),
+    execError: safeText(execBody.stderr ?? "", [runtimeSecret], 2500),
     container,
     gatewayMappingStatus: mappingResponse.status,
     gatewayMapping,
