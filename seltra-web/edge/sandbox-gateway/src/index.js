@@ -98,12 +98,13 @@ async function waitForPort(container, port, timeoutMs = PORT_READY_TIMEOUT_MS) {
     await new Promise((resolve) => setTimeout(resolve, delay));
     delay = Math.min(2000, Math.ceil(delay * 1.5));
   }
-  throw new Error("Runtime bootstrap did not report ready within 180 seconds.");
+  throw new Error("Runtime bootstrap did not report ready within 60 seconds.");
 }
 
 export class WorkspaceSandbox extends DurableObject {
-  constructor(ctx, env) {
+  constructor(ctx, env, readyTimeoutMs = PORT_READY_TIMEOUT_MS) {
     super(ctx, env);
+    this.readyTimeoutMs = readyTimeoutMs;
     this.monitoring = undefined;
     if (ctx.container?.running) {
       void ctx.blockConcurrencyWhile(async () => {
@@ -116,7 +117,7 @@ export class WorkspaceSandbox extends DurableObject {
   async onStart(instance, reason = "workspace_create") {
     const startedAt = Date.now();
     await this.ctx.storage.put("containerStartedAt", startedAt);
-    console.info(JSON.stringify({ event: "sandbox_container_started", workspaceKey: await this.ctx.storage.get("workspaceKey") ?? null, instance, reason, elapsedMs: 0 }));
+    console.info(JSON.stringify({ event: "sandbox_container_created", workspaceKey: await this.ctx.storage.get("workspaceKey") ?? null, createRequestCount: await this.ctx.storage.get("createRequestCount") ?? 1, instance, reason, elapsedMs: 0 }));
   }
   async onStop(exitCode, reason) {
     const startedAt = await this.ctx.storage.get("containerStartedAt");
@@ -192,7 +193,7 @@ export class WorkspaceSandbox extends DurableObject {
         }
       }
       try {
-        await waitForPort(container, 8788);
+        await waitForPort(container, 8788, this.readyTimeoutMs);
       } catch {
         let status = null;
         try {

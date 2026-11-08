@@ -32,6 +32,7 @@ async function createHarness() {
   const upstreamRequests = [];
   const container = {
     running: false,
+    images: { base: "test-image" },
     async destroy() { this.running = false; },
     getTcpPort(port) {
       assert.equal(port, 8787);
@@ -171,6 +172,55 @@ test("bad signatures return 401 without calling the runtime", async () => {
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { code: "AUTH_INVALID" });
   assert.equal(upstreamRequests.length, 0);
+});
+
+test("readiness timeout retains the same container and workspace state", async () => {
+  const worker = await loadWorkerModule();
+  const values = new Map();
+  let starts = 0;
+  let destroys = 0;
+  const container = {
+    running: false,
+    images: { base: "test-image" },
+    start() { starts++; this.running = true; },
+    monitor() { return new Promise(() => {}); },
+    async destroy() { destroys++; this.running = false; },
+    async setInactivityTimeout() {},
+    getTcpPort(port) {
+      assert.equal(port, 8788);
+      return { async fetch(request) {
+        if (new URL(typeof request === "string" ? request : request.url).pathname === "/__boot-status") return Response.json({ runtimeHealthy: false });
+        return new Response(null, { status: 503 });
+      } };
+    },
+  };
+  const storage = {
+    async get(key) { return values.get(key); },
+    async put(key, value) { values.set(key, value); },
+    async delete(key) { values.delete(key); },
+    async deleteAll() { values.clear(); },
+    async transaction(callback) { return callback({ get: storage.get, put: storage.put }); },
+  };
+  const context = { container, storage, waitUntil() {} };
+  const sandbox = new worker.WorkspaceSandbox(context, {}, 5);
+  const replayNamespace = { async fetch() { return Response.json({ ok: true }); } };
+  const env = {
+    SANDBOX_GATEWAY_SIGNING_SECRET: secret,
+    SANDBOXES: { idFromName(name) { return name; }, get(name) { return name === "seltra-gateway-auth-replay" ? { async fetch() { return Response.json({ ok: true }); } } : sandbox; } },
+    REGISTRY: { idFromName(name) { return name; }, get() { return { async fetch() { return Response.json({ ok: true }); } }; } },
+  };
+  const createPath = `/v1/workspaces/${workspaceKey}/create`;
+  const request = await signedRequest(createPath, { body: JSON.stringify({ workspaceKey, env: { DYAD_WORKSPACE_ID: workspaceKey } }) });
+  const response = await worker.default.fetch(request, env);
+
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "RUNTIME_TIMEOUT");
+  assert.equal(starts, 1);
+  assert.equal(destroys, 0);
+  assert.equal(container.running, true);
+  assert.equal(await storage.get("workspaceKey"), workspaceKey);
+  assert.equal(await storage.get("createRequestCount"), 1);
+  assert.equal(await storage.get("lastErrorCode"), "RUNTIME_TIMEOUT");
 });
 
 test("signed workspace destroy is idempotent and diag reports stopped", async () => {
