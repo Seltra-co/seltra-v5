@@ -2957,13 +2957,16 @@ const send = async () => {
     return [...current, { role: 'user', content: text || 'Use the attached files as context for my app.', attachments, createdAt }, { role: 'assistant', content: '' }]
   }))
   requestAnimationFrame(() => logAgentTiming('assistant_skeleton_visible'))
+  const intentStartedAt = performance.now()
+  const fallbackIntent = () => `I’ll use your request as the starting point: ${corePrompt.replace(/\s+/g, ' ').trim()}`.slice(0, 180)
   fastIntentPromiseRef.current = apiFetch<{ name?: unknown; intent?: unknown }>('/api/v5/builder/intent', {
     method: 'POST',
     body: JSON.stringify({ prompt: corePrompt }),
     signal: AbortSignal.timeout(1_500),
   }).then(({ data }) => {
     const name = typeof data?.name === 'string' && data.name ? data.name : deterministicProjectName(corePrompt)
-    const sentence = typeof data?.intent === 'string' ? data.intent : ''
+    const sentence = typeof data?.intent === 'string' && data.intent.trim() ? data.intent : fallbackIntent()
+    if (!data?.intent && process.env.NODE_ENV === 'development') console.debug('[builder-intent] deterministic fallback', { reason: 'intent_missing', durationMs: Math.round(performance.now() - intentStartedAt) })
     const event = { type: 'intent' as const, name, sentence }
     captureWorkbenchEvent(event)
     dispatchWorkbench(event)
@@ -2976,11 +2979,11 @@ const send = async () => {
     }
     return { name, intent: sentence }
   }).catch(() => {
-    const fallback = { name: deterministicProjectName(corePrompt), intent: '' }
-    const event = { type: 'intent' as const, name: fallback.name, sentence: '' }
+    const fallback = { name: deterministicProjectName(corePrompt), intent: fallbackIntent() }
+    const event = { type: 'intent' as const, name: fallback.name, sentence: fallback.intent }
     captureWorkbenchEvent(event)
     dispatchWorkbench(event)
-    if (process.env.NODE_ENV === 'development') console.debug('[builder-intent] Fast name request failed; using the deterministic title fallback.')
+    if (process.env.NODE_ENV === 'development') console.debug('[builder-intent] deterministic fallback', { reason: 'intent_request_failed', durationMs: Math.round(performance.now() - intentStartedAt) })
     return fallback
   })
   if (replayRequested) {
