@@ -13,7 +13,7 @@ const fs = require("fs");
 const path = require("path");
 
 /* ──────────────────────────── worker code ─────────────────────────────── */
-const LISTEN_HOST = "127.0.0.1";
+const LISTEN_HOST = workerData?.webRuntime ? "0.0.0.0" : "127.0.0.1";
 const LISTEN_PORT = workerData.port;
 const PREVIEW_HOSTNAME = workerData.hostname;
 // Keep this worker-side check aligned with shared/preview_hostname.ts's
@@ -677,6 +677,7 @@ function listenWithFallback(port, nextFallback, attemptsLeft) {
     server.removeListener("error", onError);
     const boundPort = server.address()?.port ?? port;
     previewOrigin = `http://${PREVIEW_HOSTNAME}:${boundPort}`;
+    parentPort?.postMessage(`proxy-server-bind address=${LISTEN_HOST} port=${boundPort}`);
     parentPort?.postMessage(`proxy-server-start url=${previewOrigin}`);
   });
 }

@@ -196,6 +196,38 @@ describe("app preview authority and forwarding", () => {
     expect(forwardedHeaders["x-seltra-preview-host"]).toBeUndefined();
   });
 
+  it("binds web-runtime preview ports on all interfaces for Cloudflare Containers", async () => {
+    await worker.terminate();
+    worker = new Worker(workerPath, {
+      workerData: {
+        targetOrigin: upstreamOrigin,
+        hostname: "app-42.localhost",
+        port: 0,
+        authBootstrapToken: "capability",
+        webRuntime: true,
+      },
+    });
+    const binding = await new Promise<string>((resolve, reject) => {
+      worker.on("error", reject);
+      worker.on("message", (message) => {
+        if (typeof message === "string" && message.startsWith("proxy-server-bind ")) resolve(message);
+      });
+    });
+    expect(binding).toMatch(/^proxy-server-bind address=0\.0\.0\.0 port=\d+$/);
+    const started = await new Promise<string>((resolve, reject) => {
+      worker.on("error", reject);
+      worker.on("message", (message) => {
+        if (typeof message === "string" && message.startsWith("proxy-server-start url=")) resolve(message);
+      });
+    });
+    port = Number(new URL(started.slice("proxy-server-start url=".length)).port);
+    const response = await request("/api", {
+      Host: `container:${port}`,
+      "X-Seltra-Preview-Host": `app-42.localhost:${port}`,
+    });
+    expect(response.status).toBe(200);
+  });
+
   it.each([
     "app-43.localhost",
     "localhost",

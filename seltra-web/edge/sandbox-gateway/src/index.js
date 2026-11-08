@@ -73,11 +73,13 @@ function proxyHeaders(source, { runtime = false } = {}) {
   return headers;
 }
 
-function proxyRequest(target, source, body, options) {
+function proxyRequest(target, source, body, options = {}) {
   const method = source.method.toUpperCase();
+  const headers = proxyHeaders(source.headers, options);
+  if (options.previewHost) headers.set("x-seltra-preview-host", options.previewHost);
   return new Request(target, {
     method,
-    headers: proxyHeaders(source.headers, options),
+    headers,
     ...(["GET", "HEAD"].includes(method) ? {} : { body }),
   });
 }
@@ -302,9 +304,10 @@ export class WorkspaceSandbox extends DurableObject {
       const validPreviewHost = target.previewHost === "localhost" || target.previewHost === `app-${appId}.localhost`;
       if (target.appId !== Number(appId) || target.host !== "127.0.0.1" || !validPreviewHost || !Number.isInteger(target.port) || target.port < 1024 || target.port > 65535) return json({ code: "PREVIEW_INVALID" }, 502);
       const previewPath = "/" + suffix.join("/") + new URL(request.url).search;
-      const previewRequest = proxyRequest(`http://container${previewPath}`, request, bytes);
-      // Container fetch owns Host; carry the app authority in an internal header instead.
-      previewRequest.headers.set("x-seltra-preview-host", `${target.previewHost}:${target.port}`);
+      // Container fetch owns Host; attach the preview authority before constructing its immutable request.
+      const previewRequest = proxyRequest(`http://container${previewPath}`, request, bytes, {
+        previewHost: `${target.previewHost}:${target.port}`,
+      });
       return container.getTcpPort(target.port).fetch(previewRequest);
     }
     if (url.pathname.startsWith("/__preview-diagnostic/") && container.running) {
