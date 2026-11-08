@@ -4,11 +4,19 @@ on:
   pull_request:
     paths:
       - "seltra-web/frontend/**"
+      - "seltra-web/core/src/ipc/services/app_runtime_service.ts"
+      - "seltra-web/core/src/ipc/services/dev_server_preview.*"
+      - "seltra-web/edge/sandbox-gateway/**"
       - ".github/workflows/frontend-checks.yml"
+      - ".github/workflows/deploy-sandbox-gateway.yml"
   push:
     paths:
       - "seltra-web/frontend/**"
+      - "seltra-web/core/src/ipc/services/app_runtime_service.ts"
+      - "seltra-web/core/src/ipc/services/dev_server_preview.*"
+      - "seltra-web/edge/sandbox-gateway/**"
       - ".github/workflows/frontend-checks.yml"
+      - ".github/workflows/deploy-sandbox-gateway.yml"
 
 permissions:
   contents: read
@@ -26,6 +34,6 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: seltra-web/frontend/package-lock.json
-      - run: npm ci
+      - run: bash ../edge/sandbox-gateway/scripts/npm-ci-retry.sh
       - run: npm run typecheck
       - run: npm run lint:core-globals

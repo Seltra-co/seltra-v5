@@ -58,18 +58,18 @@ jobs:
         shell: bash
         run: |
           cd seltra-web/core
-          npm ci
+          bash ../edge/sandbox-gateway/scripts/npm-ci-retry.sh
           cd scaffold
           npx --yes pnpm@9.15.9 install --frozen-lockfile
           test -x node_modules/.bin/vite
           cd ..
           node scripts/build-runtime.mjs
           npm prune --omit=dev --no-audit --no-fund
-          node scripts/audit-runtime-dependencies.mjs
-          npm ci --prefix runtime/native --no-audit --no-fund
+          bash ../edge/sandbox-gateway/scripts/npm-ci-retry.sh --prefix runtime/native --no-audit --no-fund
           npm rebuild --prefix runtime/native --no-audit --no-fund
           cp -a runtime/native/node_modules/. node_modules/
           node ../edge/sandbox-gateway/scripts/prune-runtime-image.mjs node_modules
+          node scripts/audit-runtime-dependencies.mjs
           image=../edge/sandbox-gateway/image
           mkdir -p "$image/dist/runtime"
           cp package.json package-lock.json "$image/"
@@ -109,6 +109,7 @@ jobs:
             exit 1
           fi
           curl --fail --silent http://127.0.0.1:8788/__boot-status | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s);if(!x.runtimeHealthy||x.platform!=='linux'||x.arch!=='x64'||!x.glibc||x.envNamesMissing.length||x.files.runtimeBundle!=='present'||x.files.migrationJournal!=='present')process.exit(1);console.log(JSON.stringify({runtimeHealthy:x.runtimeHealthy,node:x.node,platform:x.platform,arch:x.arch,libc:x.glibc,files:x.files,missingEnvNames:x.envNamesMissing.length,logLines:x.logTail.length}))})"
+          docker exec seltra-sandbox-runtime-ci git --version
           docker exec seltra-sandbox-runtime-ci node -e "const fs=require('node:fs');const p='/opt/dyad/scaffold';if(!fs.statSync(p).isDirectory())throw Error('scaffold directory missing');const entries=fs.readdirSync(p);if(!entries.length)throw Error('scaffold directory is empty');console.log(JSON.stringify({scaffold:'present',entryCount:entries.length}))"
           docker exec seltra-sandbox-runtime-ci node -e "const fs=require('node:fs');const p='/opt/dyad/scaffold/node_modules/.bin/vite';if(!fs.existsSync(p))throw Error('preinstalled scaffold dependencies missing');console.log(JSON.stringify({scaffoldDependencies:'present'}))"
           docker exec seltra-sandbox-runtime-ci node -e "const fs=require('node:fs');const p='/opt/dyad/assets/icon/seltra-mark.png';if(!fs.statSync(p).isFile()||fs.statSync(p).size===0)throw Error('Seltra branding asset missing');console.log(JSON.stringify({brandingAsset:'present',bytes:fs.statSync(p).size}))"
@@ -129,11 +130,27 @@ jobs:
         working-directory: seltra-web/edge/sandbox-gateway
         shell: bash
         run: printf '%s' "$SIGNING_SECRET" | npx --yes wrangler@4 secret put SANDBOX_GATEWAY_SIGNING_SECRET --config wrangler.jsonc --name "$WORKER_NAME"
-      - name: Signed dev workspace, scaffold, runtime RPC body, real create-app, preview, and destroy smoke
-        if: github.event_name == 'push' || inputs.environment == 'dev' || inputs.environment == 'prod'
+      - name: Signed dev workspace, scaffold, runtime RPC body, real create-app, preview, and destroy smoke (prod workflow only)
+        if: github.event_name == 'workflow_dispatch' && inputs.environment == 'prod'
         working-directory: seltra-web/edge/sandbox-gateway
-        env:
-          SIGNING_SECRET: ${{ secrets.SANDBOX_GATEWAY_SIGNING_SECRET_DEV }}
+        run: node scripts/dev-smoke.mjs
+
+  smoke-dev:
+    needs: deploy-dev
+    if: needs.deploy-dev.result == 'success' && (github.event_name == 'push' || inputs.environment == 'dev')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SIGNING_SECRET: ${{ secrets.SANDBOX_GATEWAY_SIGNING_SECRET_DEV }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install smoke dependencies
+        run: bash seltra-web/edge/sandbox-gateway/scripts/npm-ci-retry.sh --prefix seltra-web/edge/sandbox-gateway --no-audit --no-fund
+      - name: Signed dev workspace, scaffold, runtime RPC body, real create-app, preview, and destroy smoke
+        working-directory: seltra-web/edge/sandbox-gateway
         run: node scripts/dev-smoke.mjs
 
   deploy-prod:

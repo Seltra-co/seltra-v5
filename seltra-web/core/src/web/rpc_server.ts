@@ -258,6 +258,7 @@ export function createRpcServer(
     if (request.method === "GET" && previewDiagnostics && process.env.SELTRA_GATEWAY_SELF_TEST === "1") {
       const appId = Number(previewDiagnostics[1]);
       const appInfo = runningApps.get(appId);
+      const processDiagnostics = getAppProcessDiagnostics(appId);
       let mapping: { host: string; port: number; path: string } | null = null;
       if (appInfo?.proxyUrl) {
         try {
@@ -267,9 +268,13 @@ export function createRpcServer(
       }
       sendJson(response, 200, {
         appId,
-        process: getAppProcessDiagnostics(appId),
+        process: processDiagnostics,
         processPresent: Boolean(appInfo?.process && appInfo.process.exitCode === null),
         previewMapping: mapping,
+        devUrlDetected: processDiagnostics?.devUrlDetected ?? false,
+        mappingRegistered: Boolean(appInfo?.proxyUrl),
+        mappingSkipReason: processDiagnostics?.mappingSkipReason ?? "process_diagnostics_unavailable",
+        loopbackProbeAttempts: processDiagnostics?.loopbackProbeAttempts ?? [],
       });
       return;
     }

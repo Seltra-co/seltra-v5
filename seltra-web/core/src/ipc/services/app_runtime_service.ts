@@ -1,5 +1,6 @@
 //ipc/services/app_runtime_service.ts
 import { spawn, type ChildProcess } from "node:child_process";
+import type { Readable } from "node:stream";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -97,6 +98,11 @@ import {
   getPackageManagerSignal,
   signalPrefersPnpm,
 } from "@/ipc/utils/package_manager_selection";
+import {
+  DevServerUrlScanner,
+  listenForDevServerOutput,
+  probeDevServer,
+} from "./dev_server_preview";
 
 const logger = log.scope("app_runtime_service");
 const pnpmVersionMigrationNotifiedAppIds = new Set<number>();
@@ -104,6 +110,8 @@ const lastAppProcessExit = new Map<number, { exitCode: number | null; signal: No
 const appProcessDiagnostics = new Map<number, {
   pid: number | null; command: string; cwd: string; exitState: string; exitCode: number | null;
   signal: NodeJS.Signals | null; expectedPort: number | null; stdout: string; stderr: string;
+  devUrlDetected: boolean; detectedDevUrl: string | null; mappingRegistered: boolean;
+  mappingSkipReason: string | null; loopbackProbeAttempts: { host: string; status?: number; errorClass?: string }[];
 }>();
 
 export function getAppProcessDiagnostics(appId: number) {
@@ -1213,8 +1221,53 @@ function listenToProcess({
     expectedPort: expectedPort ?? null,
     stdout: "",
     stderr: "",
+    devUrlDetected: false,
+    detectedDevUrl: null as string | null,
+    mappingRegistered: false,
+    mappingSkipReason: "waiting_for_dev_url" as string | null,
+    loopbackProbeAttempts: [] as { host: string; status?: number; errorClass?: string }[],
   };
   appProcessDiagnostics.set(appId, diagnostic);
+  const urlScanner = new DevServerUrlScanner();
+  const handleDetectedDevUrl = async (originalUrl: string) => {
+    diagnostic.devUrlDetected = true;
+    diagnostic.detectedDevUrl = redactProcessDiagnostic(originalUrl);
+    diagnostic.mappingSkipReason = "probing_loopback";
+    logger.info(JSON.stringify({ event: "app_dev_url_detected", appId, url: diagnostic.detectedDevUrl }));
+    if (appPath && !ignoredBuildsRecordedAfterInstall) {
+      ignoredBuildsRecordedAfterInstall = true;
+      await recordIgnoredBuildsAfterInstall(appPath);
+    }
+    if (runningApps.get(appId)?.process !== spawnedProcess) {
+      diagnostic.mappingSkipReason = "process_replaced_before_proxy_start";
+      logger.warn(JSON.stringify({ event: "app_preview_mapping", appId, registered: false, reason: diagnostic.mappingSkipReason }));
+      return;
+    }
+    const probe = await probeDevServer(originalUrl);
+    diagnostic.loopbackProbeAttempts = probe.attempts;
+    if (!probe.targetUrl) {
+      diagnostic.mappingSkipReason = probe.reason ?? "loopback_probe_failed";
+      logger.warn(JSON.stringify({ event: "app_preview_mapping", appId, registered: false, reason: diagnostic.mappingSkipReason, attempts: probe.attempts }));
+      return;
+    }
+    diagnostic.mappingSkipReason = "waiting_for_proxy_ready_signal";
+    try {
+      await ensureProxyForRunningApp({ appId, output, originalUrl: probe.targetUrl, mode: "host", invocationRef });
+      const current = runningApps.get(appId);
+      diagnostic.mappingRegistered = Boolean(current?.proxyUrl);
+      diagnostic.mappingSkipReason = diagnostic.mappingRegistered
+        ? null
+        : current?.proxyStartupError
+          ? "proxy_startup_failed"
+          : current?.stopRequested
+            ? "app_stopping"
+            : "proxy_ready_signal_missing";
+    } catch (error) {
+      diagnostic.mappingSkipReason = error instanceof Error ? error.name : "proxy_startup_failed";
+    }
+    const current = runningApps.get(appId);
+    logger.info(JSON.stringify({ event: "app_preview_mapping", appId, registered: diagnostic.mappingRegistered, reason: diagnostic.mappingSkipReason, proxyUrl: current?.proxyUrl ?? null, probeHost: probe.host, probeStatus: probe.status }));
+  };
   const appendProcessOutput = (message: string) => {
     if (!onPnpmIgnoredBuildsFailure) {
       return;
@@ -1225,8 +1278,11 @@ function listenToProcess({
   };
   const appendTail = (previous: string, message: string) =>
     (previous + message).slice(-MAX_PROCESS_OUTPUT_TAIL_LENGTH);
-  spawnedProcess.stdout?.on("data", async (data) => {
-    const message = util.stripVTControlCharacters(data.toString());
+  if (spawnedProcess.stdout) listenForDevServerOutput(
+    spawnedProcess.stdout as Readable,
+    async (rawOutput) => {
+    const detectedDevUrls = urlScanner.push(rawOutput);
+    const message = util.stripVTControlCharacters(rawOutput);
     if (/\b(?:added \d+ packages?|up to date|done in \d+(?:\.\d+)?s)\b/i.test(message)) {
       dependencyInstallFinished = true;
       dependencyInstallDurationMs ??= dependencyInstallStartedAt === undefined ? 0 : Date.now() - dependencyInstallStartedAt;
@@ -1271,27 +1327,17 @@ function listenToProcess({
         appId,
       });
 
-      const urlMatch = message.match(/(https?:\/\/localhost:\d+\/?)/);
-      if (urlMatch) {
-        const originalUrl = urlMatch[1];
-        // The dev-server URL appearing means the install phase completed
-        // successfully — the one point in the `install && dev` chain where
-        // ignored builds can be read and recorded.
-        if (appPath && !ignoredBuildsRecordedAfterInstall) {
-          ignoredBuildsRecordedAfterInstall = true;
-          await recordIgnoredBuildsAfterInstall(appPath);
+      for (const url of detectedDevUrls) {
+        try {
+          await handleDetectedDevUrl(url);
+        } catch (error) {
+          diagnostic.mappingSkipReason = error instanceof Error ? error.name : "preview_detection_failed";
+          logger.error(JSON.stringify({ event: "app_preview_mapping", appId, registered: false, reason: diagnostic.mappingSkipReason }));
         }
-        if (runningApps.get(appId)?.process !== spawnedProcess) return;
-        await ensureProxyForRunningApp({
-          appId,
-          output,
-          originalUrl,
-          mode: "host",
-          invocationRef,
-        });
       }
     }
-  });
+    },
+  );
 
   spawnedProcess.stderr?.on("data", async (data) => {
     const message = util.stripVTControlCharacters(data.toString());
@@ -1326,6 +1372,10 @@ function listenToProcess({
         diagnostic.exitState = "exited";
         diagnostic.exitCode = code;
         diagnostic.signal = signal;
+        if (!diagnostic.devUrlDetected) {
+          diagnostic.mappingSkipReason = "process_exited_before_dev_url";
+          logger.warn(JSON.stringify({ event: "app_preview_mapping", appId, registered: false, reason: diagnostic.mappingSkipReason }));
+        }
         logger.log(JSON.stringify({
           event: "app_process_closed",
           appId,

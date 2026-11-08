@@ -25,6 +25,10 @@ test("runtime image pruning removes caches, maps, and incompatible platform buil
     await fs.mkdir(path.dirname(full), { recursive: true });
     await fs.writeFile(full, "x");
   }
+  await fs.mkdir(path.join(temp, "dist", "runtime"), { recursive: true });
+  await fs.writeFile(path.join(temp, "dist", "runtime", "runtime_main.js"), 'require("pkg"); require("@esbuild/linux-x64");');
+  await fs.writeFile(path.join(modules, "pkg", "package.json"), JSON.stringify({ name: "pkg", main: "index.js" }));
+  await fs.writeFile(path.join(modules, "@esbuild", "linux-x64", "package.json"), JSON.stringify({ name: "@esbuild/linux-x64", main: "bin.node" }));
   const result = spawnSync(process.execPath, [script, modules], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(await fs.access(path.join(modules, "@img/sharp-libvips-linuxmusl-x64")).then(() => true, () => false), false);

@@ -12,6 +12,7 @@ import {
   reconcileRunningSupabasePreview,
 } from "./app_runtime_service";
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import type { Worker } from "node:worker_threads";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
@@ -172,6 +173,7 @@ import {
   ensureProxyForRunningApp,
   appRuntimeService,
   executeApp,
+  getAppProcessDiagnostics,
   startCloudSandboxLogStream,
   type AppRuntimeOutput,
 } from "./app_runtime_service";
@@ -188,7 +190,7 @@ import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
 
 class FakeChildProcess extends EventEmitter {
   pid: number;
-  stdout = new EventEmitter();
+  stdout = new PassThrough();
   stderr = new EventEmitter();
   stdin = {
     write: vi.fn(),
@@ -335,6 +337,59 @@ describe("executeApp", () => {
       opts.onStarted(`http://${opts.hostname}:${opts.port}`);
       return { terminate: vi.fn() };
     });
+  });
+
+  it.each([
+    ["plain", "  VITE v8.0.10  ready in 581 ms\r\n  ➜  Local:   http://localhost:32101/\r\n"],
+    ["ANSI styled", "\u001b[1m  VITE v8.0.10\u001b[22m  ready in 581 ms\r\n  ➜  \u001b[36mLocal:\u001b[39m   \u001b[4mhttp://localhost:32101/\u001b[24m\r\n"],
+  ])("registers a preview from %s Vite output buffered before listeners attach", async (_style, readyOutput) => {
+    const process = new FakeChildProcess(101);
+    process.stdout.write(readyOutput);
+    spawnMock.mockImplementationOnce(() => process as never);
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("ready", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await executeApp({ appPath: "/tmp/app", appId: 1, output: createOutput(), isNeon: false });
+      await vi.waitFor(() => expect(runningApps.get(1)?.proxyUrl).toBe("http://app-1.localhost:42101"));
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(startProxyMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:32101/",
+        expect.objectContaining({ port: 42101, hostname: "app-1.localhost" }),
+      );
+      expect(getAppProcessDiagnostics(1)).toMatchObject({
+        devUrlDetected: true,
+        detectedDevUrl: "http://localhost:32101/",
+        mappingRegistered: true,
+        mappingSkipReason: null,
+        loopbackProbeAttempts: [
+          { host: "127.0.0.1", status: 200 },
+          { host: "::1", status: 200 },
+        ],
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      process.stdout.destroy();
+    }
+  });
+
+  it("detects a Vite URL split across node-pty-style output chunks", async () => {
+    const process = new FakeChildProcess(101);
+    process.stdout.write("  VITE v8.0.10 ready in 581 ms\r\n  ➜ Local: http://local");
+    process.stdout.write("host:32101/\r\n");
+    spawnMock.mockImplementationOnce(() => process as never);
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("ready", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await executeApp({ appPath: "/tmp/app", appId: 1, output: createOutput(), isNeon: false });
+      await vi.waitFor(() => expect(getAppProcessDiagnostics(1)?.mappingRegistered).toBe(true));
+      expect(getAppProcessDiagnostics(1)?.detectedDevUrl).toBe("http://localhost:32101/");
+    } finally {
+      vi.unstubAllGlobals();
+      process.stdout.destroy();
+    }
   });
 
   it("does not emit app-exit when a replaced process closes later", async () => {

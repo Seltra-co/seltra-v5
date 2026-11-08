@@ -1,8 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.url);
-const WebSocket = require("../../../core/node_modules/ws");
+import WebSocket from "ws";
 
 const gateway = "https://seltra-sandbox-gateway-dev.williamofosuparwar.workers.dev";
 const secret = process.env.SIGNING_SECRET;
