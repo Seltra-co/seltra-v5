@@ -81,6 +81,8 @@ async function diagnosePreview(workspaceKey, appId, runtimeSecret, previewPath) 
   return {
     execStatus: exec.status,
     execExitCode: execBody.exitCode ?? null,
+    execOutput: safeText(execBody.stdout ?? "", [runtimeSecret]),
+    execError: safeText(execBody.stderr ?? "", [runtimeSecret]),
     container,
     gatewayMappingStatus: mappingResponse.status,
     gatewayMapping,
