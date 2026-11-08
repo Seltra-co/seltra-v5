@@ -35,18 +35,20 @@ async function createHarness() {
     images: { base: "test-image" },
     async destroy() { this.running = false; },
     getTcpPort(port) {
-      assert.equal(port, 8787);
+      assert.ok(port === 8787 || port === 43127);
       return {
         async fetch(request) {
           const requestUrl = new URL(typeof request === "string" ? request : request.url);
           const body = request instanceof Request ? new Uint8Array(await request.arrayBuffer()) : new Uint8Array();
           upstreamRequests.push({
             method: request instanceof Request ? request.method : "GET",
+            port,
             url: requestUrl,
             headers: request instanceof Request ? request.headers : new Headers(),
             body,
           });
-          if (requestUrl.pathname === "/internal/preview-target/7") return Response.json({ appId: 7, host: "127.0.0.1", port: 43127 });
+          if (requestUrl.pathname === "/internal/preview-target/7") return Response.json({ appId: 7, host: "127.0.0.1", previewHost: "app-7.localhost", port: 43127 });
+          if (port === 43127) return new Response("preview-mapped-ok", { status: 200 });
           return Response.json({ ok: true, result: { apps: [] } });
         },
       };
@@ -119,10 +121,21 @@ test("signed preview diagnostics return the registered gateway mapping only for 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     targetStatus: 200,
-    mapping: { host: "127.0.0.1", port: 43127, path: "/" },
+    mapping: { host: "127.0.0.1", hostname: "app-7.localhost", port: 43127, path: "/" },
   });
   assert.equal(upstreamRequests[0].url.pathname, "/internal/preview-target/7");
   assert.equal(workspaceRecords.has(workspaceKey), false);
+});
+
+test("preview route forwards the registered preview hostname to its mapped proxy port", async () => {
+  const { worker, env, upstreamRequests } = await createHarness();
+  const pathname = `/v1/workspaces/${workspaceKey}/preview/7/`;
+  const response = await worker.default.fetch(await signedRequest(pathname, { method: "GET" }), env);
+
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), "preview-mapped-ok");
+  assert.equal(upstreamRequests[1].port, 43127);
+  assert.equal(upstreamRequests[1].headers.get("host"), "app-7.localhost:43127");
 });
 
 test("signed runtime RPC POST forwards identical JSON bytes and runtime headers", async () => {

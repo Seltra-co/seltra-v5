@@ -37,6 +37,9 @@ export function listenForDevServerOutput(
   stream: Readable,
   onChunk: (chunk: string) => void | Promise<void>,
 ): void {
+  // Child stdout can already contain the Vite ready line before this listener is attached.
+  const buffered = stream.read();
+  if (buffered !== null) void onChunk(String(buffered));
   stream.on("data", (chunk: Buffer | string) => {
     void onChunk(String(chunk));
   });
@@ -56,9 +59,47 @@ export type DevServerProbeResult = {
   reason?: "non_loopback_dev_url" | "loopback_probe_failed";
 };
 
+export type ProbeRetryOptions = {
+  attempts?: number;
+  delayMs?: number;
+  timeoutMs?: number;
+};
+
+export function expectedPortDevServerUrl(expectedPort: number): string | null {
+  if (!Number.isInteger(expectedPort) || expectedPort < 1 || expectedPort > 65535) return null;
+  return `http://localhost:${expectedPort}/`;
+}
+
+export async function probeExpectedDevServerPort(
+  expectedPort: number,
+  request: typeof fetch = fetch,
+  options: ProbeRetryOptions = {},
+): Promise<DevServerProbeResult> {
+  const url = expectedPortDevServerUrl(expectedPort);
+  if (!url) return { attempts: [], reason: "loopback_probe_failed" };
+  return probeDevServerUntilReady(url, request, options);
+}
+
+export async function probeDevServerUntilReady(
+  detectedUrl: string,
+  request: typeof fetch = fetch,
+  { attempts: maxAttempts = 8, delayMs = 300, timeoutMs = 2_500 }: ProbeRetryOptions = {},
+): Promise<DevServerProbeResult> {
+  let lastResult: DevServerProbeResult = { attempts: [], reason: "loopback_probe_failed" };
+  const allAttempts: LoopbackProbe[] = [];
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    lastResult = await probeDevServer(detectedUrl, request, timeoutMs);
+    allAttempts.push(...lastResult.attempts);
+    if (lastResult.targetUrl || attempt + 1 === maxAttempts) return { ...lastResult, attempts: allAttempts };
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return lastResult;
+}
+
 export async function probeDevServer(
   detectedUrl: string,
   request: typeof fetch = fetch,
+  timeoutMs = 1_000,
 ): Promise<DevServerProbeResult> {
   const original = new URL(detectedUrl);
   if (
@@ -74,7 +115,7 @@ export async function probeDevServer(
       try {
         const response = await request(target, {
           method: "GET",
-          signal: AbortSignal.timeout(1_000),
+          signal: AbortSignal.timeout(timeoutMs),
         });
         await response.body?.cancel().catch(() => undefined);
         return { host, status: response.status };

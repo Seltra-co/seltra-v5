@@ -6,6 +6,7 @@
     "ws": "^8.19.0"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "smoke:dev": "node scripts/dev-smoke.mjs"
   }
 }

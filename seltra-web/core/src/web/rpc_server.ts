@@ -259,11 +259,11 @@ export function createRpcServer(
       const appId = Number(previewDiagnostics[1]);
       const appInfo = runningApps.get(appId);
       const processDiagnostics = getAppProcessDiagnostics(appId);
-      let mapping: { host: string; port: number; path: string } | null = null;
+      let mapping: { host: string; hostname: string; port: number; path: string } | null = null;
       if (appInfo?.proxyUrl) {
         try {
           const proxy = new URL(appInfo.proxyUrl);
-          mapping = { host: "127.0.0.1", port: Number(proxy.port), path: proxy.pathname || "/" };
+          mapping = { host: "127.0.0.1", hostname: proxy.hostname, port: Number(proxy.port), path: proxy.pathname || "/" };
         } catch {}
       }
       sendJson(response, 200, {
@@ -273,7 +273,8 @@ export function createRpcServer(
         previewMapping: mapping,
         devUrlDetected: processDiagnostics?.devUrlDetected ?? false,
         mappingRegistered: Boolean(appInfo?.proxyUrl),
-        mappingSkipReason: processDiagnostics?.mappingSkipReason ?? "process_diagnostics_unavailable",
+        skipReason: processDiagnostics ? processDiagnostics.skipReason : "process_diagnostics_unavailable",
+        mappingSkipReason: processDiagnostics ? processDiagnostics.mappingSkipReason : "process_diagnostics_unavailable",
         loopbackProbeAttempts: processDiagnostics?.loopbackProbeAttempts ?? [],
       });
       return;
@@ -318,7 +319,7 @@ export function createRpcServer(
           });
           return;
         }
-        sendJson(response, 200, { appId, host: "127.0.0.1", port });
+        sendJson(response, 200, { appId, host: "127.0.0.1", previewHost: preview.hostname, port });
       } catch {
         sendJson(response, 404, {
           ok: false,

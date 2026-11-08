@@ -1,7 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 import WebSocket from "ws";
 
-const gateway = "https://seltra-sandbox-gateway-dev.williamofosuparwar.workers.dev";
+const gateway = (process.env.SANDBOX_GATEWAY_URL || "https://seltra-sandbox-gateway-dev.williamofosuparwar.workers.dev").replace(/\/$/, "");
 const secret = process.env.SIGNING_SECRET;
 if (!secret || secret.length < 32) throw new Error("Dev signing secret is unavailable or invalid.");
 function headers(method, pathname) {

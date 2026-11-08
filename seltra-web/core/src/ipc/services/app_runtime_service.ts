@@ -100,8 +100,10 @@ import {
 } from "@/ipc/utils/package_manager_selection";
 import {
   DevServerUrlScanner,
+  expectedPortDevServerUrl,
   listenForDevServerOutput,
-  probeDevServer,
+  probeDevServerUntilReady,
+  probeExpectedDevServerPort,
 } from "./dev_server_preview";
 
 const logger = log.scope("app_runtime_service");
@@ -111,7 +113,8 @@ const appProcessDiagnostics = new Map<number, {
   pid: number | null; command: string; cwd: string; exitState: string; exitCode: number | null;
   signal: NodeJS.Signals | null; expectedPort: number | null; stdout: string; stderr: string;
   devUrlDetected: boolean; detectedDevUrl: string | null; mappingRegistered: boolean;
-  mappingSkipReason: string | null; loopbackProbeAttempts: { host: string; status?: number; errorClass?: string }[];
+  skipReason: string | null; mappingSkipReason: string | null;
+  loopbackProbeAttempts: { host: string; status?: number; errorClass?: string }[];
 }>();
 
 export function getAppProcessDiagnostics(appId: number) {
@@ -1224,49 +1227,88 @@ function listenToProcess({
     devUrlDetected: false,
     detectedDevUrl: null as string | null,
     mappingRegistered: false,
+    skipReason: "waiting_for_dev_url" as string | null,
     mappingSkipReason: "waiting_for_dev_url" as string | null,
     loopbackProbeAttempts: [] as { host: string; status?: number; errorClass?: string }[],
   };
   appProcessDiagnostics.set(appId, diagnostic);
   const urlScanner = new DevServerUrlScanner();
-  const handleDetectedDevUrl = async (originalUrl: string) => {
-    diagnostic.devUrlDetected = true;
-    diagnostic.detectedDevUrl = redactProcessDiagnostic(originalUrl);
-    diagnostic.mappingSkipReason = "probing_loopback";
-    logger.info(JSON.stringify({ event: "app_dev_url_detected", appId, url: diagnostic.detectedDevUrl }));
+  let mappingAttempt: Promise<void> | undefined;
+  let expectedPortProbeTimer: NodeJS.Timeout | undefined;
+  const setSkipReason = (reason: string | null, source: string) => {
+    if (diagnostic.skipReason === reason) return;
+    diagnostic.skipReason = reason;
+    diagnostic.mappingSkipReason = reason;
+    logger.info(JSON.stringify({ event: "app_preview_mapping", transition: "skip_reason", appId, skipReason: reason, source }));
+  };
+  const clearExpectedPortProbe = () => {
+    if (expectedPortProbeTimer) clearTimeout(expectedPortProbeTimer);
+    expectedPortProbeTimer = undefined;
+  };
+  const scheduleExpectedPortProbe = (delayMs = 2_000) => {
+    if (!expectedPort || !expectedPortDevServerUrl(expectedPort) || diagnostic.mappingRegistered) return;
+    clearExpectedPortProbe();
+    expectedPortProbeTimer = setTimeout(() => {
+      expectedPortProbeTimer = undefined;
+      if (runningApps.get(appId)?.process !== spawnedProcess || diagnostic.mappingRegistered) return;
+      void handleDetectedDevUrl(expectedPortDevServerUrl(expectedPort)!, "expected_port_probe").finally(() => {
+        if (runningApps.get(appId)?.process === spawnedProcess && !diagnostic.mappingRegistered && diagnostic.skipReason === "loopback_probe_failed")
+          scheduleExpectedPortProbe(1_000);
+      });
+    }, delayMs);
+    expectedPortProbeTimer.unref?.();
+  };
+  const handleDetectedDevUrl = (originalUrl: string, source = "stdout") => {
+    if (source === "stdout" && !diagnostic.devUrlDetected) {
+      diagnostic.devUrlDetected = true;
+      diagnostic.detectedDevUrl = redactProcessDiagnostic(originalUrl);
+      logger.info(JSON.stringify({ event: "app_dev_url_detected", transition: "detected", appId, source, url: diagnostic.detectedDevUrl }));
+    }
+    if (diagnostic.mappingRegistered || mappingAttempt) return mappingAttempt ?? Promise.resolve();
+    const attempt = (async () => {
+    setSkipReason("probing_loopback", source);
     if (appPath && !ignoredBuildsRecordedAfterInstall) {
       ignoredBuildsRecordedAfterInstall = true;
       await recordIgnoredBuildsAfterInstall(appPath);
     }
     if (runningApps.get(appId)?.process !== spawnedProcess) {
-      diagnostic.mappingSkipReason = "process_replaced_before_proxy_start";
-      logger.warn(JSON.stringify({ event: "app_preview_mapping", appId, registered: false, reason: diagnostic.mappingSkipReason }));
+      setSkipReason("process_replaced_before_proxy_start", source);
       return;
     }
-    const probe = await probeDevServer(originalUrl);
+    const probe = source === "expected_port_probe" && expectedPort
+      ? await probeExpectedDevServerPort(expectedPort)
+      : await probeDevServerUntilReady(originalUrl);
     diagnostic.loopbackProbeAttempts = probe.attempts;
     if (!probe.targetUrl) {
-      diagnostic.mappingSkipReason = probe.reason ?? "loopback_probe_failed";
-      logger.warn(JSON.stringify({ event: "app_preview_mapping", appId, registered: false, reason: diagnostic.mappingSkipReason, attempts: probe.attempts }));
+      setSkipReason(probe.reason ?? "loopback_probe_failed", source);
+      logger.warn(JSON.stringify({ event: "app_preview_mapping", transition: "probe_failed", appId, source, skipReason: diagnostic.skipReason, attempts: probe.attempts }));
       return;
     }
-    diagnostic.mappingSkipReason = "waiting_for_proxy_ready_signal";
+    setSkipReason("waiting_for_proxy_ready_signal", source);
     try {
       await ensureProxyForRunningApp({ appId, output, originalUrl: probe.targetUrl, mode: "host", invocationRef });
       const current = runningApps.get(appId);
-      diagnostic.mappingRegistered = Boolean(current?.proxyUrl);
-      diagnostic.mappingSkipReason = diagnostic.mappingRegistered
+      const registered = Boolean(current?.proxyUrl);
+      if (diagnostic.mappingRegistered !== registered) {
+        diagnostic.mappingRegistered = registered;
+        logger.info(JSON.stringify({ event: "app_preview_mapping", transition: "registered", appId, registered, source, proxyUrl: current?.proxyUrl ?? null }));
+      }
+      setSkipReason(registered
         ? null
         : current?.proxyStartupError
           ? "proxy_startup_failed"
           : current?.stopRequested
             ? "app_stopping"
-            : "proxy_ready_signal_missing";
+            : "proxy_ready_signal_missing", source);
     } catch (error) {
-      diagnostic.mappingSkipReason = error instanceof Error ? error.name : "proxy_startup_failed";
+      setSkipReason(error instanceof Error ? error.name : "proxy_startup_failed", source);
     }
     const current = runningApps.get(appId);
-    logger.info(JSON.stringify({ event: "app_preview_mapping", appId, registered: diagnostic.mappingRegistered, reason: diagnostic.mappingSkipReason, proxyUrl: current?.proxyUrl ?? null, probeHost: probe.host, probeStatus: probe.status }));
+    logger.info(JSON.stringify({ event: "app_preview_mapping", transition: "attempt_complete", appId, source, registered: diagnostic.mappingRegistered, skipReason: diagnostic.skipReason, proxyUrl: current?.proxyUrl ?? null, probeHost: probe.host, probeStatus: probe.status, attempts: probe.attempts }));
+    if (diagnostic.mappingRegistered) clearExpectedPortProbe();
+    })();
+    mappingAttempt = attempt;
+    return attempt.finally(() => { if (mappingAttempt === attempt) mappingAttempt = undefined; });
   };
   const appendProcessOutput = (message: string) => {
     if (!onPnpmIgnoredBuildsFailure) {
@@ -1331,8 +1373,8 @@ function listenToProcess({
         try {
           await handleDetectedDevUrl(url);
         } catch (error) {
-          diagnostic.mappingSkipReason = error instanceof Error ? error.name : "preview_detection_failed";
-          logger.error(JSON.stringify({ event: "app_preview_mapping", appId, registered: false, reason: diagnostic.mappingSkipReason }));
+          setSkipReason(error instanceof Error ? error.name : "preview_detection_failed", "stdout");
+          logger.error(JSON.stringify({ event: "app_preview_mapping", transition: "attempt_error", appId, registered: false, skipReason: diagnostic.skipReason }));
         }
       }
     }
@@ -1366,15 +1408,19 @@ function listenToProcess({
     });
   });
 
+  logger.info(JSON.stringify({ event: "app_preview_mapping", transition: "initialized", appId, expectedPort: expectedPort ?? null, skipReason: diagnostic.skipReason }));
+  // Retry by the app's assigned port even when its ready output is absent or unrecognized.
+  scheduleExpectedPortProbe();
+
   spawnedProcess.on("close", (code, signal) => {
     void (async () => {
       try {
+        clearExpectedPortProbe();
         diagnostic.exitState = "exited";
         diagnostic.exitCode = code;
         diagnostic.signal = signal;
         if (!diagnostic.devUrlDetected) {
-          diagnostic.mappingSkipReason = "process_exited_before_dev_url";
-          logger.warn(JSON.stringify({ event: "app_preview_mapping", appId, registered: false, reason: diagnostic.mappingSkipReason }));
+          setSkipReason("process_exited_before_dev_url", "process_exit");
         }
         logger.log(JSON.stringify({
           event: "app_process_closed",

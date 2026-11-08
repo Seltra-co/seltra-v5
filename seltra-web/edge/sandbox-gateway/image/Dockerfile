@@ -11,6 +11,7 @@ COPY package.json package-lock.json ./
 COPY node_modules ./node_modules
 COPY bootstrap.mjs ./bootstrap.mjs
 COPY dist/runtime/runtime_main.js ./dist/runtime/runtime_main.js
+COPY --chown=dyad:dyad worker ./worker
 COPY drizzle ./drizzle
 COPY --chown=dyad:dyad scaffold ./scaffold
 COPY --chown=dyad:dyad assets/icon/seltra-mark.png ./assets/icon/seltra-mark.png

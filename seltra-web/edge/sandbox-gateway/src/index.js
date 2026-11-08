@@ -299,9 +299,12 @@ export class WorkspaceSandbox extends DurableObject {
       const targetResponse = await container.getTcpPort(8787).fetch(`http://container/internal/preview-target/${appId}`, { headers: { authorization: `Bearer ${env?.RUNTIME_RPC_SECRET ?? ""}` } });
       if (!targetResponse.ok) return new Response("Preview not found", { status: 404 });
       const target = await targetResponse.json();
-      if (target.appId !== Number(appId) || target.host !== "127.0.0.1" || !Number.isInteger(target.port) || target.port < 1024 || target.port > 65535) return json({ code: "PREVIEW_INVALID" }, 502);
+      const validPreviewHost = target.previewHost === "localhost" || target.previewHost === `app-${appId}.localhost`;
+      if (target.appId !== Number(appId) || target.host !== "127.0.0.1" || !validPreviewHost || !Number.isInteger(target.port) || target.port < 1024 || target.port > 65535) return json({ code: "PREVIEW_INVALID" }, 502);
       const previewPath = "/" + suffix.join("/") + new URL(request.url).search;
-      return container.getTcpPort(target.port).fetch(proxyRequest(`http://container${previewPath}`, request, bytes));
+      const previewRequest = proxyRequest(`http://container${previewPath}`, request, bytes);
+      previewRequest.headers.set("host", `${target.previewHost}:${target.port}`);
+      return container.getTcpPort(target.port).fetch(previewRequest);
     }
     if (url.pathname.startsWith("/__preview-diagnostic/") && container.running) {
       const rest = url.pathname.slice("/__preview-diagnostic/".length);
@@ -311,7 +314,7 @@ export class WorkspaceSandbox extends DurableObject {
       const targetResponse = await container.getTcpPort(8787).fetch(`http://container/internal/preview-target/${appId}`, { headers: { authorization: `Bearer ${env.RUNTIME_RPC_SECRET ?? ""}` } });
       if (!targetResponse.ok) return json({ targetStatus: targetResponse.status, mapping: null });
       const target = await targetResponse.json();
-      return json({ targetStatus: targetResponse.status, mapping: { host: target.host, port: target.port, path: `/${suffix.join("/")}` } });
+      return json({ targetStatus: targetResponse.status, mapping: { host: target.host, hostname: target.previewHost, port: target.port, path: `/${suffix.join("/")}` } });
     }
     return json({ code: "NOT_FOUND" }, 404);
   }

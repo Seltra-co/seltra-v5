@@ -362,6 +362,7 @@ describe("executeApp", () => {
         devUrlDetected: true,
         detectedDevUrl: "http://localhost:32101/",
         mappingRegistered: true,
+        skipReason: null,
         mappingSkipReason: null,
         loopbackProbeAttempts: [
           { host: "127.0.0.1", status: 200 },
