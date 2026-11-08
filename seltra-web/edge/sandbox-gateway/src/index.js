@@ -4,7 +4,7 @@ import { sandboxId, signRequest, verifyRequest } from "../auth.mjs";
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 export const MAX_CONTROL_BODY = 24 * 1024 * 1024;
 const MAX_COMMAND_OUTPUT = 256 * 1024;
-const PORT_READY_TIMEOUT_MS = 180_000;
+const PORT_READY_TIMEOUT_MS = 60_000;
 const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
 const ALLOWED_RUNTIME_ENV = new Set([
   "NODE_ENV", "DYAD_WEB_RUNTIME", "DYAD_WEB_RUNTIME_ENTRY", "DYAD_WORKSPACE_ID",
@@ -114,10 +114,13 @@ export class WorkspaceSandbox extends DurableObject {
   }
 
   async onStart(instance, reason = "workspace_create") {
-    console.info(JSON.stringify({ event: "sandbox_container_started", workspaceKey: await this.ctx.storage.get("workspaceKey") ?? null, instance, reason }));
+    const startedAt = Date.now();
+    await this.ctx.storage.put("containerStartedAt", startedAt);
+    console.info(JSON.stringify({ event: "sandbox_container_started", workspaceKey: await this.ctx.storage.get("workspaceKey") ?? null, instance, reason, elapsedMs: 0 }));
   }
   async onStop(exitCode, reason) {
-    console.info(JSON.stringify({ event: "sandbox_container_stopped", workspaceKey: await this.ctx.storage.get("workspaceKey") ?? null, exitCode, reason }));
+    const startedAt = await this.ctx.storage.get("containerStartedAt");
+    console.info(JSON.stringify({ event: "sandbox_container_stopped", workspaceKey: await this.ctx.storage.get("workspaceKey") ?? null, exitCode, reason, elapsedMs: Number.isFinite(startedAt) ? Date.now() - startedAt : null }));
     await this.ctx.storage.put("lastExit", { exitCode, reason, at: new Date().toISOString() });
   }
   async onError(code) {
@@ -169,6 +172,7 @@ export class WorkspaceSandbox extends DurableObject {
         await txn.put("createRequestCount", next);
         return next;
       });
+      const createStartedAt = Date.now();
       console.info(JSON.stringify({ event: "sandbox_create_requested", workspaceKey: input.workspaceKey, createRequestCount, containerRunning: Boolean(container.running), at: new Date().toISOString() }));
       await this.ctx.storage.put("workspaceKey", input.workspaceKey);
       await this.ctx.storage.put("runtimeEnv", env);
@@ -197,12 +201,10 @@ export class WorkspaceSandbox extends DurableObject {
         } catch {}
         const reason = !container.running ? "CONTAINER_EXITED" : status?.exitCode !== null && status?.exitCode !== undefined ? "RUNTIME_CRASHED" : status ? "RUNTIME_TIMEOUT" : "PORT_NOT_LISTENING";
         await this.onError(reason);
-        console.error(JSON.stringify({ event: "sandbox_runtime_start_failed", workspaceKey: input.workspaceKey, createRequestCount, code: reason, timeoutMs: PORT_READY_TIMEOUT_MS, instance: "standard-2", sleepAfterMs: INACTIVITY_TIMEOUT_MS, bootStatus: status }));
-        await container.destroy().catch(() => {});
-        await this.monitoring?.catch(() => {});
-        await this.ctx.storage.deleteAll();
+        console.error(JSON.stringify({ event: "sandbox_runtime_start_failed", workspaceKey: input.workspaceKey, createRequestCount, code: reason, timeoutMs: PORT_READY_TIMEOUT_MS, elapsedMs: Date.now() - createStartedAt, instance: "standard-2", sleepAfterMs: INACTIVITY_TIMEOUT_MS, bootStatus: status, retainedRunningContainer: Boolean(container.running) }));
         return json({ code: reason, diagnostics: status }, 503);
       }
+      console.info(JSON.stringify({ event: "sandbox_runtime_ready", workspaceKey: input.workspaceKey, createRequestCount, elapsedMs: Date.now() - createStartedAt }));
       return json({ sandboxId: sandboxId(input.workspaceKey), ready: true });
     }
 
