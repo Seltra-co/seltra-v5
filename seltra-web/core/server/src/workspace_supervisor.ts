@@ -223,7 +223,7 @@ export class WorkspaceSupervisor {
         SELTRA_ENGINE_API_KEY: engineApiKey,
         SELTRA_ENGINE_CREDIT_IDENTITY: `${creditIdentityPayload}.${creditIdentitySignature}`,
         MODEL_GATEWAY_URL: this.executionProvider.mode === 'cloudflare'
-          ? seltraEngineModelBaseUrl(this.options.publicApiUrl)
+          ? seltraEngineModelBaseUrl(this.options.env.CORE_PUBLIC_URL ?? '')
           : this.executionProvider.mode === 'docker'
           ? `http://host.docker.internal:${this.options.env.GATEWAY_PORT}/v1`
           : `http://127.0.0.1:${this.options.env.GATEWAY_PORT}/v1`,

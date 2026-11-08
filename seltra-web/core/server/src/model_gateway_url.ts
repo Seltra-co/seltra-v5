@@ -1,10 +1,9 @@
-/** Build the stable Seltra Engine URL used by remote workspaces. */
-export function seltraEngineModelBaseUrl(publicApiUrl: string): string {
-  const apiUrl = new URL(publicApiUrl);
-  apiUrl.pathname = apiUrl.pathname
-    .replace(/\/(?:api\/v1|api\/v5)\/?$/i, "")
-    .replace(/\/+$/, "") + "/v1";
-  apiUrl.search = "";
-  apiUrl.hash = "";
-  return apiUrl.toString().replace(/\/$/, "");
+/** Build the Core model gateway URL used by isolated Cloudflare workspaces. */
+export function seltraEngineModelBaseUrl(corePublicUrl: string): string {
+  const coreUrl = new URL(corePublicUrl);
+  const path = coreUrl.pathname.replace(/\/+$/, "").replace(/\/v1$/i, "");
+  coreUrl.pathname = path + "/v1";
+  coreUrl.search = "";
+  coreUrl.hash = "";
+  return coreUrl.toString().replace(/\/$/, "");
 }
