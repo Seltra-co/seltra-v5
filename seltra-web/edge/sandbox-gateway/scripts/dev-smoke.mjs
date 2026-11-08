@@ -59,7 +59,7 @@ async function diagnosePreview(workspaceKey, appId, runtimeSecret, previewPath) 
     "const appId=Number(process.argv[1])",
     "const scrub=s=>{let v=String(s??'');for(const x of Object.values(process.env)){if(typeof x==='string'&&x.length>=8)v=v.split(x).join('[redacted]')}return v.replace(/Bearer\\s+[^\\s\"']+/gi,'Bearer [redacted]').replace(/((?:token|secret|password|authorization|api[_-]?key)\\s*[=:]\\s*)[^\\s,;]+/gi,'$1[redacted]')}",
     "const trim=(s,n=500)=>scrub(s).slice(0,n)",
-    "const auth={authorization:'Bearer '+process.env.RUNTIME_RPC_SECRET}",
+    "const auth={authorization:'Bearer '+process.argv[2]}",
     "const [diagRes,mapRes]=await Promise.all([fetch('http://127.0.0.1:8787/internal/diagnostics/app/'+appId,{headers:auth}),fetch('http://127.0.0.1:8787/internal/preview-target/'+appId,{headers:auth})])",
     "const diagnostics=await diagRes.json().catch(()=>null)",
     "const runtimeMapping=await mapRes.json().catch(()=>null)",
@@ -71,7 +71,7 @@ async function diagnosePreview(workspaceKey, appId, runtimeSecret, previewPath) 
     "})().catch(error=>{process.stderr.write(String(error?.stack||error))})",
   ].join(";");
   const exec = await request(`/v1/workspaces/${workspaceKey}/exec`, "POST", {
-    argv: ["node", "-e", script, String(appId)], cwd: "/workspace",
+    argv: ["node", "-e", script, String(appId), runtimeSecret], cwd: "/workspace",
   });
   const execBody = await exec.json().catch(() => ({}));
   let container = null;
