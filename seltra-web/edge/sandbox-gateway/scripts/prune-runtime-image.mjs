@@ -67,6 +67,15 @@ function packageDirectoryFromFile(filename, expectedName) {
   return null;
 }
 
+function packageDirectoryAtRoot(name) {
+  const candidate = path.join(root, name);
+  try {
+    const pkg = JSON.parse(fsSync.readFileSync(path.join(candidate, "package.json"), "utf8"));
+    if (pkg.name === name) return candidate;
+  } catch {}
+  return null;
+}
+
 function resolvePackageFrom(name, fromDirectory) {
   try {
     const resolver = createRequire(path.join(fromDirectory, "__runtime_prune__.cjs"));
@@ -77,21 +86,31 @@ function resolvePackageFrom(name, fromDirectory) {
 }
 
 async function pruneUnusedPackages() {
-  const required = new Set([
+  const required = new Map([
+    ...[
     "better-sqlite3", "node-pty", "dugite", "@vscode/ripgrep", "ssh2", "dyad-keychain-reader",
+    ].map((name) => [name, [name]]),
   ]);
   for (const specifier of imports) {
-    if (!specifier.startsWith(".") && !specifier.startsWith("/") && !builtins.has(specifier))
-      required.add(packageName(specifier));
+    if (!specifier.startsWith(".") && !specifier.startsWith("/") && !builtins.has(specifier)) {
+      const name = packageName(specifier);
+      required.set(name, [...(required.get(name) ?? []), specifier]);
+    }
   }
 
   const keepNames = new Set();
   const visitedDirectories = new Set();
   const queue = [];
-  for (const name of required) {
-    let resolved;
-    try { resolved = resolve.resolve(name); } catch { continue; }
-    const directory = packageDirectoryFromFile(resolved, name);
+  for (const [name, specifiers] of required) {
+    let directory = packageDirectoryAtRoot(name);
+    if (!directory) {
+      for (const specifier of specifiers) {
+        let resolved;
+        try { resolved = resolve.resolve(specifier); } catch { continue; }
+        directory = packageDirectoryFromFile(resolved, name);
+        if (directory) break;
+      }
+    }
     if (directory) queue.push({ name, directory });
   }
   while (queue.length) {
