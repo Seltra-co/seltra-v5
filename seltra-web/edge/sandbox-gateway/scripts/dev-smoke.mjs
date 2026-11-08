@@ -98,6 +98,7 @@ const workspaceKey = randomBytes(16).toString("hex");
 const route = (suffix) => `/v1/workspaces/${workspaceKey}/${suffix}`;
 let appSmokeReached = false;
 let diagnosticAppId;
+let diagnosticRuntimeSecret;
 try {
   const env = {
     NODE_ENV: "production", DYAD_WEB_RUNTIME: "1", DYAD_WEB_RUNTIME_ENTRY: "1",
@@ -144,6 +145,7 @@ try {
   appSmokeReached = true;
   const appId = createAppBody.result.appId;
   diagnosticAppId = appId;
+  diagnosticRuntimeSecret = env.RUNTIME_RPC_SECRET;
   const runtimeSession = await openRuntimeSession(route("runtime/events"), env.RUNTIME_RPC_SECRET);
   const runApp = await request(route("runtime/rpc/run-app"), "POST", {
     args: [{ appId }], undefinedArgs: [],
@@ -180,9 +182,9 @@ try {
   lastError = error;
   if (appSmokeReached && diagnosticAppId) {
     try {
-      console.error(JSON.stringify({ event: "preview_failure_diagnostic", attempt, details: await diagnosePreview(workspaceKey, diagnosticAppId, env.RUNTIME_RPC_SECRET, route(`preview/${diagnosticAppId}/`)) }));
+      console.error(JSON.stringify({ event: "preview_failure_diagnostic", attempt, details: await diagnosePreview(workspaceKey, diagnosticAppId, diagnosticRuntimeSecret, route(`preview/${diagnosticAppId}/`)) }));
     } catch (diagnosticError) {
-      console.error(JSON.stringify({ event: "preview_failure_diagnostic", attempt, errorClass: diagnosticError instanceof Error ? diagnosticError.name : "UNKNOWN" }));
+      console.error(JSON.stringify({ event: "preview_failure_diagnostic", attempt, errorClass: diagnosticError instanceof Error ? diagnosticError.name : "UNKNOWN", error: safeText(diagnosticError instanceof Error ? diagnosticError.message : "") }));
     }
   }
   try {
