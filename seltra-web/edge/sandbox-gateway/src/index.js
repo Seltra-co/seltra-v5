@@ -303,6 +303,16 @@ export class WorkspaceSandbox extends DurableObject {
       const previewPath = "/" + suffix.join("/") + new URL(request.url).search;
       return container.getTcpPort(target.port).fetch(proxyRequest(`http://container${previewPath}`, request, bytes));
     }
+    if (url.pathname.startsWith("/__preview-diagnostic/") && container.running) {
+      const rest = url.pathname.slice("/__preview-diagnostic/".length);
+      const [appId, ...suffix] = rest.split("/");
+      const env = await this.ctx.storage.get("runtimeEnv");
+      if (env?.SELTRA_GATEWAY_SELF_TEST !== "1" || !/^\d+$/.test(appId)) return json({ code: "NOT_FOUND" }, 404);
+      const targetResponse = await container.getTcpPort(8787).fetch(`http://container/internal/preview-target/${appId}`, { headers: { authorization: `Bearer ${env.RUNTIME_RPC_SECRET ?? ""}` } });
+      if (!targetResponse.ok) return json({ targetStatus: targetResponse.status, mapping: null });
+      const target = await targetResponse.json();
+      return json({ targetStatus: targetResponse.status, mapping: { host: target.host, port: target.port, path: `/${suffix.join("/")}` } });
+    }
     return json({ code: "NOT_FOUND" }, 404);
   }
 }
@@ -425,7 +435,7 @@ export default {
         if (created) await stub.fetch("https://sandbox/__destroy", { method: "POST" }).catch(() => {});
       }
     }
-    const match = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/(create|exec|files|destroy|runtime|preview)(?:\/(.*))?$/i);
+    const match = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/(create|exec|files|destroy|runtime|preview|preview-diagnostic)(?:\/(.*))?$/i);
     const diagnostic = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/diag$/i);
     if (url.pathname === "/v1/workspaces" && request.method === "GET") {
       const body = await readBodyLimited(request);
@@ -442,7 +452,7 @@ export default {
   },
 };
 
-async function handleSignedWorkspaceRequest(request, env, url, match = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/(create|exec|files|destroy|runtime|preview)(?:\/(.*))?$/i), diagnostic = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/diag$/i)) {
+async function handleSignedWorkspaceRequest(request, env, url, match = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/(create|exec|files|destroy|runtime|preview|preview-diagnostic)(?:\/(.*))?$/i), diagnostic = url.pathname.match(/^\/v1\/workspaces\/([a-f0-9]{12,128})\/diag$/i)) {
   const body = await readBodyLimited(request);
   if (!body) return json({ code: "BODY_TOO_LARGE" }, 413);
   const auth = await authenticate(request, env, body);
@@ -455,7 +465,7 @@ async function handleSignedWorkspaceRequest(request, env, url, match = url.pathn
   const doId = env.SANDBOXES.idFromName(await sandboxId(workspaceKey));
   const stub = env.SANDBOXES.get(doId);
   const registry = env.REGISTRY.get(env.REGISTRY.idFromName("workspace-registry"));
-  const internalPath = operation === "create" ? "/__create" : operation === "exec" ? "/__exec" : operation === "files" ? "/__files" : operation === "destroy" ? "/__destroy" : operation === "runtime" ? `/__runtime/${match[3] ?? ""}` : operation === "preview" ? `/__preview/${match[3] ?? ""}` : "/__diag";
+  const internalPath = operation === "create" ? "/__create" : operation === "exec" ? "/__exec" : operation === "files" ? "/__files" : operation === "destroy" ? "/__destroy" : operation === "runtime" ? `/__runtime/${match[3] ?? ""}` : operation === "preview" ? `/__preview/${match[3] ?? ""}` : operation === "preview-diagnostic" ? `/__preview-diagnostic/${match[3] ?? ""}` : "/__diag";
   const headers = proxyHeaders(request.headers, { runtime: operation === "runtime" });
   const internal = new Request(`https://sandbox${internalPath}${url.search}`, {
     method: request.method,
@@ -463,7 +473,7 @@ async function handleSignedWorkspaceRequest(request, env, url, match = url.pathn
     ...(["GET", "HEAD"].includes(request.method.toUpperCase()) ? {} : { body }),
   });
   const response = await stub.fetch(internal);
-  if (response.ok && operation !== "diag") {
+  if (response.ok && operation !== "diag" && operation !== "preview-diagnostic") {
     const registryPath = operation === "destroy" ? "/__remove" : "/__touch";
     await registry.fetch(`https://registry${registryPath}`, {
       method: "POST", headers: { "content-type": "application/json" },

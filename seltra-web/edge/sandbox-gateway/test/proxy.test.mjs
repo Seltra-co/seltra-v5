@@ -38,21 +38,30 @@ async function createHarness() {
       assert.equal(port, 8787);
       return {
         async fetch(request) {
-          const body = new Uint8Array(await request.arrayBuffer());
+          const requestUrl = new URL(typeof request === "string" ? request : request.url);
+          const body = request instanceof Request ? new Uint8Array(await request.arrayBuffer()) : new Uint8Array();
           upstreamRequests.push({
-            method: request.method,
-            url: new URL(request.url),
-            headers: request.headers,
+            method: request instanceof Request ? request.method : "GET",
+            url: requestUrl,
+            headers: request instanceof Request ? request.headers : new Headers(),
             body,
           });
+          if (requestUrl.pathname === "/internal/preview-target/7") return Response.json({ appId: 7, host: "127.0.0.1", port: 43127 });
           return Response.json({ ok: true, result: { apps: [] } });
         },
       };
     },
   };
+  const values = new Map();
+  const storage = {
+    async get(key) { return values.get(key); },
+    async put(key, value) { values.set(key, value); },
+    async deleteAll() { values.clear(); },
+    async delete(key) { values.delete(key); },
+  };
   const context = {
     container,
-    storage: { async get() { return undefined; }, async deleteAll() {}, async delete() {} },
+    storage,
   };
   const sandbox = new worker.WorkspaceSandbox(context, {});
   container.running = true;
@@ -81,7 +90,7 @@ async function createHarness() {
     },
     REGISTRY: { idFromName(name) { return name; }, get() { return registryNamespace; } },
   };
-  return { worker, env, upstreamRequests, container, workspaceRecords };
+  return { worker, env, upstreamRequests, container, workspaceRecords, storage };
 }
 
 async function signedRequest(pathname, { body, signingSecret = secret, headers = {}, method = "POST" } = {}) {
@@ -101,6 +110,20 @@ async function signedRequest(pathname, { body, signingSecret = secret, headers =
 }
 
 const runtimePath = `/v1/workspaces/${workspaceKey}/runtime/rpc/list-apps`;
+
+test("signed preview diagnostics return the registered gateway mapping only for self-test workspaces", async () => {
+  const { worker, env, storage, upstreamRequests, workspaceRecords } = await createHarness();
+  await storage.put("runtimeEnv", { SELTRA_GATEWAY_SELF_TEST: "1", RUNTIME_RPC_SECRET: "runtime-secret-for-test" });
+  const pathname = `/v1/workspaces/${workspaceKey}/preview-diagnostic/7/`;
+  const response = await worker.default.fetch(await signedRequest(pathname, { method: "GET" }), env);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    targetStatus: 200,
+    mapping: { host: "127.0.0.1", port: 43127, path: "/" },
+  });
+  assert.equal(upstreamRequests[0].url.pathname, "/internal/preview-target/7");
+  assert.equal(workspaceRecords.has(workspaceKey), false);
+});
 
 test("signed runtime RPC POST forwards identical JSON bytes and runtime headers", async () => {
   const { worker, env, upstreamRequests } = await createHarness();

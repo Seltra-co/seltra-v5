@@ -101,6 +101,15 @@ import {
 const logger = log.scope("app_runtime_service");
 const pnpmVersionMigrationNotifiedAppIds = new Set<number>();
 const lastAppProcessExit = new Map<number, { exitCode: number | null; signal: NodeJS.Signals | null; command: string; cwd: string; expectedPort: number | null; stdout: string; stderr: string; dependencyInstallFinished: boolean; dependencyInstallDurationMs: number | null }>();
+const appProcessDiagnostics = new Map<number, {
+  pid: number | null; command: string; cwd: string; exitState: string; exitCode: number | null;
+  signal: NodeJS.Signals | null; expectedPort: number | null; stdout: string; stderr: string;
+}>();
+
+export function getAppProcessDiagnostics(appId: number) {
+  const diagnostic = appProcessDiagnostics.get(appId);
+  return diagnostic ? { ...diagnostic } : null;
+}
 
 function redactProcessDiagnostic(value: string): string {
   const environmentSecrets = Object.values(process.env).filter(
@@ -1194,6 +1203,18 @@ function listenToProcess({
   const dependencyInstallStartedAt = dependencyInstallFinished ? undefined : Date.now();
   let dependencyInstallDurationMs: number | null = dependencyInstallFinished ? 0 : null;
   let ignoredBuildsRecordedAfterInstall = false;
+  const diagnostic = {
+    pid: spawnedProcess.pid ?? null,
+    command: redactProcessDiagnostic(command ?? "(unknown)"),
+    cwd: redactProcessDiagnostic(appPath ?? "(unknown)"),
+    exitState: "running",
+    exitCode: null as number | null,
+    signal: null as NodeJS.Signals | null,
+    expectedPort: expectedPort ?? null,
+    stdout: "",
+    stderr: "",
+  };
+  appProcessDiagnostics.set(appId, diagnostic);
   const appendProcessOutput = (message: string) => {
     if (!onPnpmIgnoredBuildsFailure) {
       return;
@@ -1215,6 +1236,7 @@ function listenToProcess({
       activeApp.lastOutputAt = Date.now();
     appendProcessOutput(message);
     stdoutTail = appendTail(stdoutTail, message);
+    diagnostic.stdout = redactProcessDiagnostic(lastProcessLines(stdoutTail));
     logger.debug(
       `App ${appId} (PID: ${spawnedProcess.pid}) stdout: ${message}`,
     );
@@ -1278,6 +1300,7 @@ function listenToProcess({
       activeApp.lastOutputAt = Date.now();
     appendProcessOutput(message);
     stderrTail = appendTail(stderrTail, message);
+    diagnostic.stderr = redactProcessDiagnostic(lastProcessLines(stderrTail));
     logger.error(
       `App ${appId} (PID: ${spawnedProcess.pid}) stderr: ${message}`,
     );
@@ -1300,6 +1323,9 @@ function listenToProcess({
   spawnedProcess.on("close", (code, signal) => {
     void (async () => {
       try {
+        diagnostic.exitState = "exited";
+        diagnostic.exitCode = code;
+        diagnostic.signal = signal;
         logger.log(JSON.stringify({
           event: "app_process_closed",
           appId,

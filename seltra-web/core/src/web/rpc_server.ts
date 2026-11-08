@@ -16,6 +16,7 @@ import { isWebChannelAllowed } from "./channel_policy";
 import { guardRpcPathArguments } from "./rpc_path_guard";
 import { rewritePreviewUrls } from "./preview_urls";
 import { runningApps } from "../ipc/utils/process_manager";
+import { getAppProcessDiagnostics } from "../ipc/services/app_runtime_service";
 import { closeWebSession, ipcMain, type WebSession } from "./electron-shim";
 
 export type RpcServerOptions = {
@@ -251,6 +252,27 @@ export function createRpcServer(
     const previewTarget = request.url?.match(
       /^\/internal\/preview-target\/(\d+)$/,
     );
+    const previewDiagnostics = request.url?.match(
+      /^\/internal\/diagnostics\/app\/(\d+)$/,
+    );
+    if (request.method === "GET" && previewDiagnostics && process.env.SELTRA_GATEWAY_SELF_TEST === "1") {
+      const appId = Number(previewDiagnostics[1]);
+      const appInfo = runningApps.get(appId);
+      let mapping: { host: string; port: number; path: string } | null = null;
+      if (appInfo?.proxyUrl) {
+        try {
+          const proxy = new URL(appInfo.proxyUrl);
+          mapping = { host: "127.0.0.1", port: Number(proxy.port), path: proxy.pathname || "/" };
+        } catch {}
+      }
+      sendJson(response, 200, {
+        appId,
+        process: getAppProcessDiagnostics(appId),
+        processPresent: Boolean(appInfo?.process && appInfo.process.exitCode === null),
+        previewMapping: mapping,
+      });
+      return;
+    }
     if (request.method === "GET" && previewTarget) {
       const appId = Number(previewTarget[1]);
       const appInfo = runningApps.get(appId);
