@@ -1953,6 +1953,33 @@ async function main(): Promise<void> {
     response: ServerResponse,
   ): Promise<void> {
     const url = new URL(request.url ?? "/", "http://gateway.invalid");
+    if (request.method === "POST" && url.pathname === "/internal/diag/workspace-model-token") {
+      const remoteAddress = request.socket.remoteAddress ?? "";
+      if (config.NODE_ENV === "production" || config.RENDER !== undefined || process.env.SELTRA_LOCAL_DIAGNOSTICS !== "1" || !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(remoteAddress))
+        throw new HttpError(404, "NOT_FOUND", "Not found.");
+      const supplied = Buffer.from(request.headers["x-core-service-secret"] ?? "");
+      const expected = Buffer.from(config.CORE_SERVICE_SECRET);
+      if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected))
+        throw new HttpError(401, "UNAUTHORIZED", "Core service authentication is required.");
+      let body: { workspaceId?: unknown };
+      try { body = JSON.parse((await readBody(request, 4096)).toString("utf8")) as typeof body; }
+      catch { throw new HttpError(400, "INVALID_REQUEST", "A valid diagnostic workspace request is required."); }
+      if (typeof body.workspaceId !== "string" || !/^[a-f0-9-]{36}$/i.test(body.workspaceId))
+        throw new HttpError(400, "INVALID_REQUEST", "A valid workspace ID is required.");
+      const entitlementResponse = await fetch(`${config.NEST_INTERNAL_URL.replace(/\/+$/, "")}/api/v5/internal/core/entitlement/${encodeURIComponent(body.workspaceId)}`, {
+        headers: { "x-core-service-secret": config.CORE_SERVICE_SECRET },
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!entitlementResponse.ok) throw new HttpError(503, "ENTITLEMENT_UNAVAILABLE", "Workspace access could not be verified.");
+      const entitlement = await entitlementResponse.json() as { active?: boolean; userId?: string; creditWorkspaceId?: string; coreWorkspaceKey?: string; storeSlug?: string; email?: string; plan?: string; engineApiKey?: string };
+      if (!entitlement.active || !entitlement.userId || !entitlement.coreWorkspaceKey || !entitlement.storeSlug || !entitlement.email || !entitlement.plan || !entitlement.engineApiKey)
+        throw new HttpError(403, "WORKSPACE_INACTIVE", "Workspace is not available for diagnostics.");
+      const claims: SessionClaims = { workspaceId: body.workspaceId, creditWorkspaceId: entitlement.creditWorkspaceId, sub: entitlement.userId, coreWorkspaceKey: entitlement.coreWorkspaceKey, storeSlug: entitlement.storeSlug, email: entitlement.email, plan: entitlement.plan };
+      entitlementCache.set(body.workspaceId, { active: true, engineApiKey: entitlement.engineApiKey, expiresAt: Date.now() + 60_000 });
+      const runtime = await runtimeFor(claims);
+      sendJson(response, 200, { token: runtime.modelToken });
+      return;
+    }
     if (request.method === 'POST' && url.pathname === '/internal/workspaces/destroy') {
       const supplied = Buffer.from(request.headers['x-core-service-secret'] ?? '');
       const expected = Buffer.from(config.CORE_SERVICE_SECRET);
