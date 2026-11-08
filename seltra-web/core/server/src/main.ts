@@ -16,6 +16,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { GatewayModule } from "./app.module.js";
 import { loadConfig, type GatewayConfig } from "./config.js";
 import { assertCorePublicUrlResolvable, assertModelProviderReachable, classifyModelStartupFailure } from "./startup_checks.js";
+import { seltraEngineModelBaseUrl } from "./model_gateway_url.js";
 import { redactSensitiveText } from "./security.js";
 import {
   FileControlStore,
@@ -546,6 +547,8 @@ async function main(): Promise<void> {
   }
   if (process.env.NODE_ENV === "test") {
     console.info(JSON.stringify({ event: "ai_startup_selfcheck", status: "skipped", reason: "test environment" }));
+  } else if (config.EXECUTION_PROVIDER === "cloudflare") {
+    console.info(JSON.stringify({ event: "ai_startup_selfcheck", status: "deferred", role: "planner", reason: "requires an active runtime-scoped workspace token" }));
   } else {
     try {
       await assertModelProviderReachable({
@@ -706,6 +709,7 @@ async function main(): Promise<void> {
   const entitlementCache = new Map<string, { expiresAt: number; active: boolean; reason?: string; engineApiKey: string }>();
   const sessionOwners = new Map<string, SessionClaims>();
   const modelTokens = new Map<string, SessionClaims>();
+  let runtimeModelSelfCheck: Promise<void> | undefined;
   const eventSessions = new Set<EventSession>();
   const budgetStates = new Map<string, BudgetState>();
   const breakerRegistry = createBreakerRegistry({
@@ -972,6 +976,21 @@ async function main(): Promise<void> {
       throw new HttpError(status, String((error as { code?: string }).code ?? "WORKSPACE_RUNTIME_UNAVAILABLE"), (error as Error).message || "Workspace runtime is unavailable.");
     }
     modelTokens.set(runtime.modelToken, claims);
+    if (config.EXECUTION_PROVIDER === "cloudflare" && !runtimeModelSelfCheck) {
+      runtimeModelSelfCheck = assertModelProviderReachable({
+        provider: config.AI_PROVIDER,
+        baseUrl: seltraEngineModelBaseUrl(config.CORE_PUBLIC_URL!),
+        apiKey: runtime.modelToken,
+        model: "seltra-planner",
+      }).then(() => {
+        console.info(JSON.stringify({ event: "ai_startup_selfcheck", status: "passed", role: "planner", path: "core_public_workspace_token" }));
+      }).catch((error) => {
+        runtimeModelSelfCheck = undefined;
+        console.error(JSON.stringify({ event: "ai_startup_selfcheck", status: "failed", role: "planner", path: "core_public_workspace_token", code: classifyModelStartupFailure(error), errorName: error instanceof Error ? error.name : typeof error }));
+        throw error;
+      });
+    }
+    await runtimeModelSelfCheck;
     return runtime;
   }
 
@@ -1957,7 +1976,8 @@ async function main(): Promise<void> {
       const remoteAddress = request.socket.remoteAddress ?? "";
       if (config.NODE_ENV === "production" || config.RENDER !== undefined || process.env.SELTRA_LOCAL_DIAGNOSTICS !== "1" || !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(remoteAddress))
         throw new HttpError(404, "NOT_FOUND", "Not found.");
-      const supplied = Buffer.from(request.headers["x-core-service-secret"] ?? "");
+      const suppliedHeader = request.headers["x-core-service-secret"];
+      const supplied = Buffer.from(Array.isArray(suppliedHeader) ? suppliedHeader[0] ?? "" : suppliedHeader ?? "");
       const expected = Buffer.from(config.CORE_SERVICE_SECRET);
       if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected))
         throw new HttpError(401, "UNAUTHORIZED", "Core service authentication is required.");
@@ -1981,7 +2001,8 @@ async function main(): Promise<void> {
       return;
     }
     if (request.method === 'POST' && url.pathname === '/internal/workspaces/destroy') {
-      const supplied = Buffer.from(request.headers['x-core-service-secret'] ?? '');
+      const suppliedHeader = request.headers['x-core-service-secret'];
+      const supplied = Buffer.from(Array.isArray(suppliedHeader) ? suppliedHeader[0] ?? '' : suppliedHeader ?? '');
       const expected = Buffer.from(config.CORE_SERVICE_SECRET);
       if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new HttpError(401, 'UNAUTHORIZED', 'Core service authentication is required.');
       let body: { workspaceKey?: unknown };
@@ -2545,13 +2566,19 @@ async function main(): Promise<void> {
         const claims: SessionClaims = { workspaceId: redeemed.workspaceId, creditWorkspaceId: redeemed.creditWorkspaceId, sub: redeemed.userId, coreWorkspaceKey: redeemed.coreWorkspaceKey, storeSlug: redeemed.storeSlug, email: redeemed.email, plan: redeemed.plan };
         console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "ticket redeemed", at: new Date().toISOString(), durationMs: Date.now() - redeemStartedAt }));
         entitlementCache.set(redeemed.workspaceId, { active: true, engineApiKey: redeemed.engineApiKey, expiresAt: Date.now() + 60_000 });
-        await assertEntitlement(claims, true);
-        console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "workspace lookup requested", at: new Date().toISOString() }));
-        const workspaceRuntime = await runtimeFor(claims);
-        console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "workspace runtime ready", at: new Date().toISOString() }));
         url.searchParams.delete("ticket");
         request.url = url.pathname + url.search;
-        wss.handleUpgrade(request, socket, head, (browser) => {
+        wss.handleUpgrade(request, socket, head, async (browser) => {
+          let workspaceRuntime: WorkspaceRuntime;
+          try {
+            console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "browser WS accepted", at: new Date().toISOString() }));
+            console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "workspace lookup requested", at: new Date().toISOString() }));
+            workspaceRuntime = await runtimeFor(claims);
+            console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "workspace runtime ready", at: new Date().toISOString() }));
+          } catch {
+            browser.close(1011, "Workspace runtime unavailable");
+            return;
+          }
           const eventsUrl = new URL(workspaceRuntime.baseUrl + "/events");
           eventsUrl.protocol = eventsUrl.protocol === "https:" ? "wss:" : "ws:";
           const runtime = new WebSocket(eventsUrl, {
@@ -2562,7 +2589,6 @@ async function main(): Promise<void> {
           });
           const pair: EventSession = { userId: claims.sub, workspaceId: claims.workspaceId, browser, runtime };
           browser.once("open", () => console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "browser WS open", at: new Date().toISOString() })));
-          console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "browser WS accepted", at: new Date().toISOString() }));
           eventSessions.add(pair);
           const openedAt = Date.now();
           let runtimeSessionId: string | undefined;

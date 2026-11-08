@@ -299,9 +299,11 @@ export class StoreService {
 
   async createCoreWorkspace(input: { name?: string; prompt?: string }, authorization?: string) {
     const ownerId = await this.getUserIdFromAuth(authorization, true)
-    const user = await prisma.user.findUnique({ where: { id: ownerId }, select: { plan: true } })
-    await this.credits.ensureAccount(ownerId, user?.plan)
-    const storeCount = await prisma.tenant.count({ where: { ownerId } })
+    const [user, storeCount] = await Promise.all([
+      prisma.user.findUnique({ where: { id: ownerId }, select: { plan: true } }),
+      prisma.tenant.count({ where: { ownerId } }),
+    ])
+    await this.credits.getAccountSnapshot(ownerId, user?.plan)
     const limitError = getStoreCreationError(user?.plan, storeCount)
     if (limitError) throw new BadRequestException(limitError)
 

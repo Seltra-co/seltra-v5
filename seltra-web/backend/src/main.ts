@@ -8,6 +8,7 @@ import type { NextFunction, Request, Response } from 'express'
 import { InternalOpsModule } from './internal-ops/internal-ops.module'
 import { randomUUID } from 'node:crypto'
 import { GlobalExceptionFilter } from './common/global-exception.filter'
+import { requestDatabaseMetrics } from './db'
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap')
@@ -41,7 +42,15 @@ async function bootstrap() {
     req.headers['x-request-id'] = requestId
     res.setHeader('X-Request-ID', requestId)
     const startedAt = Date.now()
+    const dbMetrics = { queryCount: 0, sequentialRounds: 0, totalDbMs: 0, active: 0, cache: new Map<string, unknown>() }
+    const measuredPaths = new Set([
+      '/api/v5/seltra/store/core-workspace',
+      '/api/v5/builder/session',
+      '/api/v5/internal/core/ws-ticket/redeem',
+      '/api/v5/auth/me',
+    ])
     res.on('finish', () => {
+      if (measuredPaths.has(req.path)) console.info(JSON.stringify({ event: 'request_db_metrics', requestId, method: req.method, path: req.path, status: res.statusCode, queryCount: dbMetrics.queryCount, sequentialRounds: dbMetrics.sequentialRounds, totalDbMs: Math.round(dbMetrics.totalDbMs) }))
       if (req.path === '/health' || req.path === '/api/v5/health') return
       if (res.statusCode >= 400 || process.env.NODE_ENV !== 'production') {
         console.error(JSON.stringify({
@@ -56,7 +65,7 @@ async function bootstrap() {
         }))
       }
     })
-    next()
+    requestDatabaseMetrics.run(dbMetrics, next)
   })
   app.use((req: Request, res: Response, next: NextFunction) => {
     const requestedUrl = req.url

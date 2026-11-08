@@ -3,7 +3,7 @@
 import { Suspense, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AuthFlowModal } from '@/components/marketing/AuthFlowModal'
-import { clearSeltraSession, fetchWithSeltraAuth } from '@/lib/auth-session'
+import { clearSeltraSession, fetchSeltraAuthMe, fetchWithSeltraAuth } from '@/lib/auth-session'
 
 function AuthContent() {
   const router = useRouter()
@@ -17,7 +17,7 @@ function AuthContent() {
     let cancelled = false
     const restoreSession = async () => {
       try {
-        const profile = await fetchWithSeltraAuth('/api/v5/auth/me', { cache: 'no-store' })
+        const profile = await fetchSeltraAuthMe()
         if (cancelled) return
         if (!profile.ok) {
           if (profile.status === 401) clearSeltraSession()

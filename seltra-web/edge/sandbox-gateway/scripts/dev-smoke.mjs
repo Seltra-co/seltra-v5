@@ -1,4 +1,8 @@
 import { createHmac, randomBytes } from "node:crypto";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const WebSocket = require("../../../core/node_modules/ws");
 
 const gateway = "https://seltra-sandbox-gateway-dev.williamofosuparwar.workers.dev";
 const secret = process.env.SIGNING_SECRET;
@@ -15,6 +19,27 @@ async function request(path, method, body, extraHeaders = {}) {
     headers: { ...headers(method, path), ...(body ? { "content-type": "application/json" } : {}), ...extraHeaders },
     ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(210_000),
   });
+}
+async function openRuntimeSession(path, runtimeSecret) {
+  const socket = new WebSocket(`${gateway}${path}`, {
+    headers: { ...headers("GET", path), authorization: `Bearer ${runtimeSecret}` },
+  });
+  try {
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("runtime events session timed out")), 20_000);
+      socket.once("error", (error) => { clearTimeout(timer); reject(error); });
+      socket.on("message", (data) => {
+        let frame;
+        try { frame = JSON.parse(data.toString()); } catch { return; }
+        if (frame.channel !== "web:session" || typeof frame.payload?.id !== "string") return;
+        clearTimeout(timer);
+        resolve({ id: frame.payload.id, socket });
+      });
+    });
+  } catch (error) {
+    socket.close();
+    throw error;
+  }
 }
 const deadline = Date.now() + 10 * 60_000;
 let lastError;
@@ -67,12 +92,14 @@ try {
     throw new Error(`runtime create-app probe failed (${createApp.status}, ${createAppBody?.error?.code ?? "unknown"})`);
   appSmokeReached = true;
   const appId = createAppBody.result.appId;
+  const runtimeSession = await openRuntimeSession(route("runtime/events"), env.RUNTIME_RPC_SECRET);
   const runApp = await request(route("runtime/rpc/run-app"), "POST", {
-    args: [{ appId }],
+    args: [{ appId }], undefinedArgs: [],
   }, {
     authorization: `Bearer ${env.RUNTIME_RPC_SECRET}`,
-    "x-runtime-session": "ci-gateway-preview-smoke",
+    "x-runtime-session": runtimeSession.id,
   });
+  runtimeSession.socket.close();
   const runAppBody = await runApp.json().catch(() => null);
   if (!runApp.ok || runAppBody?.ok !== true)
     throw new Error(`runtime run-app probe failed (${runApp.status}, ${runAppBody?.error?.code ?? "unknown"})`);

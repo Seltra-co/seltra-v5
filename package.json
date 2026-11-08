@@ -1,0 +1,7 @@
+{
+  "name": "seltra-v5-verify",
+  "private": true,
+  "scripts": {
+    "verify": "npm --prefix seltra-web/frontend run typecheck && npm --prefix seltra-web/frontend run lint:core-globals && npm --prefix seltra-web/backend test && npm --prefix seltra-web/backend run build:compile && npm --prefix seltra-web/core run ts && npm --prefix seltra-web/core/server run typecheck && npm --prefix seltra-web/edge/sandbox-gateway test"
+  }
+}

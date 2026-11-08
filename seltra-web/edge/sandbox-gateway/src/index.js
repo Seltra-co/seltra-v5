@@ -4,7 +4,7 @@ import { sandboxId, signRequest, verifyRequest } from "../auth.mjs";
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 export const MAX_CONTROL_BODY = 24 * 1024 * 1024;
 const MAX_COMMAND_OUTPUT = 256 * 1024;
-const PORT_READY_TIMEOUT_MS = 60_000;
+export const PORT_READY_TIMEOUT_MS = 60_000;
 const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
 const ALLOWED_RUNTIME_ENV = new Set([
   "NODE_ENV", "DYAD_WEB_RUNTIME", "DYAD_WEB_RUNTIME_ENTRY", "DYAD_WORKSPACE_ID",
@@ -117,7 +117,8 @@ export class WorkspaceSandbox extends DurableObject {
   async onStart(instance, reason = "workspace_create") {
     const startedAt = Date.now();
     await this.ctx.storage.put("containerStartedAt", startedAt);
-    console.info(JSON.stringify({ event: "sandbox_container_created", workspaceKey: await this.ctx.storage.get("workspaceKey") ?? null, createRequestCount: await this.ctx.storage.get("createRequestCount") ?? 1, instance, reason, elapsedMs: 0 }));
+    const requestedAt = await this.ctx.storage.get("containerCreateRequestedAt");
+    console.info(JSON.stringify({ event: "sandbox_container_created", workspaceKey: await this.ctx.storage.get("workspaceKey") ?? null, createRequestCount: await this.ctx.storage.get("createRequestCount") ?? 1, instance, reason, elapsedMs: Number.isFinite(requestedAt) ? startedAt - requestedAt : 0 }));
   }
   async onStop(exitCode, reason) {
     const startedAt = await this.ctx.storage.get("containerStartedAt");
@@ -179,7 +180,8 @@ export class WorkspaceSandbox extends DurableObject {
       await this.ctx.storage.put("runtimeEnv", env);
       if (!container.running) {
         try {
-          container.start({ image: container.images.base, env, enableInternet: true, instance: "standard-2" });
+          await this.ctx.storage.put("containerCreateRequestedAt", createStartedAt);
+          await container.start({ image: container.images.base, env, enableInternet: true, instance: "standard-2" });
           await this.onStart("standard-2", "workspace_create");
           this.observeContainer();
           await container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS);

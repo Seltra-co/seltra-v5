@@ -176,19 +176,21 @@ test("bad signatures return 401 without calling the runtime", async () => {
 
 test("readiness timeout retains the same container and workspace state", async () => {
   const worker = await loadWorkerModule();
+  assert.equal(worker.PORT_READY_TIMEOUT_MS, 60_000);
   const values = new Map();
   let starts = 0;
   let destroys = 0;
   const container = {
     running: false,
     images: { base: "test-image" },
-    start() { starts++; this.running = true; },
+    async start() { await new Promise((resolve) => setTimeout(resolve, 1)); starts++; this.running = true; },
     monitor() { return new Promise(() => {}); },
     async destroy() { destroys++; this.running = false; },
     async setInactivityTimeout() {},
     getTcpPort(port) {
       assert.equal(port, 8788);
       return { async fetch(request) {
+        assert.equal(starts, 1, "readiness polling must start only after container.start resolves");
         if (new URL(typeof request === "string" ? request : request.url).pathname === "/__boot-status") return Response.json({ runtimeHealthy: false });
         return new Response(null, { status: 503 });
       } };

@@ -55,7 +55,16 @@ async function measureModel(label, endpoint, token, plannerModel) {
 
 async function main() {
   const databaseHost = hostOnly(process.env.DATABASE_URL ?? '')
-  console.log(`DB host=${databaseHost}`)
+let databaseConfig = { pooler: 'unknown', connectionLimit: 'default', poolTimeout: 'default' }
+try {
+  const databaseUrl = new URL(process.env.DATABASE_URL ?? '')
+  databaseConfig = {
+    pooler: /pooler/i.test(databaseUrl.hostname) ? 'yes' : 'no',
+    connectionLimit: databaseUrl.searchParams.get('connection_limit') ?? 'default',
+    poolTimeout: databaseUrl.searchParams.get('pool_timeout') ?? 'default',
+  }
+} catch {}
+console.log(`DB host=${databaseHost} pooler=${databaseConfig.pooler} connectionLimit=${databaseConfig.connectionLimit} poolTimeout=${databaseConfig.poolTimeout}`)
   try {
     const samples = []
     for (let index = 0; index < 5; index++) {
@@ -82,7 +91,9 @@ async function main() {
     let token
     const tokenStarted = performance.now()
     try {
-      const response = await fetch(`${localCore}/internal/diag/workspace-model-token`, {
+      const modelTokenPath = '/internal/diag/workspace-model-token'
+      console.log(`MODEL_TOKEN route=${modelTokenPath} hostPort=${hostPort(localCore)}`)
+      const response = await fetch(`${localCore}${modelTokenPath}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-core-service-secret': process.env.CORE_SERVICE_SECRET ?? '' },
         body: JSON.stringify({ workspaceId: tenant.id }),

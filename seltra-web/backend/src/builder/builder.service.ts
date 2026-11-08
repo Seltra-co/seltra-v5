@@ -345,8 +345,10 @@ export class BuilderService {
     if (!tenant) return { active: false, reason: 'workspace_not_found' }
     if (!tenant.ownerId) return { active: false, reason: 'workspace_owner_missing' }
     const plan = tenant.owner?.plan ?? 'free'
-    const account = await this.credits.ensureAccount(tenant.ownerId, plan)
-    const engineApiKey = await provisionEngineKey(tenantId)
+    const [account, engineApiKey] = await Promise.all([
+      this.credits.getAccountSnapshot(tenant.ownerId, plan),
+      provisionEngineKey(tenantId),
+    ])
     const used = Math.max(0, account.windowAllowance - Math.min(account.balance, account.windowAllowance))
     const exhausted = account.balance <= 0
     return { active: tenant.status === 'active', reason: exhausted ? 'credits_exhausted' : tenant.status !== 'active' ? 'workspace_inactive' : undefined, tenantId, creditWorkspaceId: tenant.ownerId, userId: tenant.ownerId, coreWorkspaceKey: tenant.coreWorkspaceKey, storeSlug: tenant.slug, email: tenant.owner?.email ?? '', plan, engineApiKey, credits: { used, limit: account.windowAllowance, balance: account.balance, resetsAt: nextUtcCreditReset().toISOString() } }

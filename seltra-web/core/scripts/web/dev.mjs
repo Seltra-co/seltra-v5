@@ -488,6 +488,8 @@ try {
   ]) {
     if (config[name]?.trim()) gatewayEnv[name] = config[name].trim();
   }
+  if (config.SELTRA_LOCAL_DIAGNOSTICS === "1")
+    gatewayEnv.SELTRA_LOCAL_DIAGNOSTICS = "1";
   if (config.FIGMA_ACCESS_TOKEN?.trim())
     gatewayEnv.FIGMA_ACCESS_TOKEN = config.FIGMA_ACCESS_TOKEN;
   if (config.DATABASE_URL) gatewayEnv.DATABASE_URL = config.DATABASE_URL;

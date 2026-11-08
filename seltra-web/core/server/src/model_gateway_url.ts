@@ -1,4 +1,4 @@
-/** Build the Core model gateway URL used by isolated Cloudflare workspaces. */
+/** Build the Core /v1 model URL used by isolated Cloudflare workspaces. */
 export function seltraEngineModelBaseUrl(corePublicUrl: string): string {
   const coreUrl = new URL(corePublicUrl);
   const path = coreUrl.pathname.replace(/\/+$/, "").replace(/\/v1$/i, "");

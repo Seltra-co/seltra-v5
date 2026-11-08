@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { ArrowRight, Bell, Check, Mic, Paperclip, Settings2, Sparkles, X } from 'lucide-react'
-import { fetchSeltraAuthMe } from '@/lib/auth-session'
+import { fetchSeltraAuthMe, fetchWithSeltraAuth } from '@/lib/auth-session'
 
 const TOUR_VERSION = 'v2'
 
