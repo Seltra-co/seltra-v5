@@ -8,6 +8,7 @@ import { planLimits } from '../common/plan-limits'
 import { CreditsService } from '../credits/credits.service'
 import { creditAllowanceForPlan, nextUtcCreditReset } from '../common/credit-plan'
 import { provisionEngineKey } from '../engine/engine-key'
+import { deterministicPromptIntent, resolvePromptIntent } from './prompt-intent'
 
 function workspaceFileMime(filePath: string) {
   const extension = filePath.toLowerCase().split('.').pop()
@@ -27,24 +28,32 @@ export class BuilderService {
     return secret
   }
 
+  private async measureSessionStage<T>(projectId: string, requestId: string, stage: string, work: () => Promise<T>): Promise<T> {
+    const startedAt = Date.now()
+    try { return await work() }
+    finally { this.logger.log(JSON.stringify({ event: 'core_project_session_stage', requestId, projectId, stage, durationMs: Date.now() - startedAt })) }
+  }
+
   async createSession(authorization: string | undefined, tenantId: string) {
     const requestStartedAt = Date.now()
-    this.logger.log(JSON.stringify({ event: 'core_project_phase', projectId: tenantId, phase: 'project session request', at: new Date(requestStartedAt).toISOString() }))
-    const userId = await resolveUserIdFromAuthorization(authorization, this.jwt)
+    const requestId = randomUUID()
+    this.logger.log(JSON.stringify({ event: 'core_project_phase', requestId, projectId: tenantId, phase: 'project session request', at: new Date(requestStartedAt).toISOString() }))
+    const userId = await this.measureSessionStage(tenantId, requestId, 'authorization', () => resolveUserIdFromAuthorization(authorization, this.jwt))
     if (!userId) throw new ForbiddenException('Authentication is required to start a builder session.')
-    const tenant = await prisma.tenant.findFirst({
+    const tenant = await this.measureSessionStage(tenantId, requestId, 'tenant lookup', () => prisma.tenant.findFirst({
       where: { id: tenantId, ownerId: userId },
       include: { owner: { select: { plan: true, email: true } } },
-    })
+    }))
     if (!tenant) throw new ForbiddenException('You do not have access to this workspace.')
     if (tenant.status !== 'active') throw new ForbiddenException('This workspace is not active.')
     const plan = tenant.owner?.plan ?? 'free'
-    const creditAccount = await this.credits.ensureAccount(userId, plan)
+    const creditAccount = await this.measureSessionStage(tenantId, requestId, 'credit snapshot', () => this.credits.getAccountSnapshot(userId, plan))
 
     let coreWorkspaceKey = tenant.coreWorkspaceKey
     if (!coreWorkspaceKey) {
       // Stable short path/hostname key. Retry only on the extremely unlikely
       // unique collision; the tenant UUID remains the signed workspace id.
+      await this.measureSessionStage(tenantId, requestId, 'workspace key allocation', async () => {
       for (let attempt = 0; attempt < 4 && !coreWorkspaceKey; attempt += 1) {
         const candidate = randomBytes(9).toString('hex').slice(0, 12)
         const result = await prisma.tenant.updateMany({
@@ -54,14 +63,15 @@ export class BuilderService {
         if (result.count) coreWorkspaceKey = candidate
         else coreWorkspaceKey = (await prisma.tenant.findUnique({ where: { id: tenant.id }, select: { coreWorkspaceKey: true } }))?.coreWorkspaceKey ?? null
       }
+      })
       if (!coreWorkspaceKey) throw new Error('Could not allocate a workspace key')
     }
 
     const used = Math.max(0, creditAccount.windowAllowance - Math.min(creditAccount.balance, creditAccount.windowAllowance))
-    const coreToken = await this.jwt.signAsync(
+    const coreToken = await this.measureSessionStage(tenantId, requestId, 'core token signing', () => this.jwt.signAsync(
       { workspaceId: tenant.id, creditWorkspaceId: userId, coreWorkspaceKey: coreWorkspaceKey!, storeSlug: tenant.slug, plan, email: tenant.owner?.email ?? '', jti: randomUUID() },
       { secret: this.coreSecret(), algorithm: 'HS256', issuer: 'seltra-api', audience: 'seltra-core', subject: userId!, expiresIn: '10m' },
-    )
+    ))
     const response = {
       coreToken,
       expiresIn: 600,
@@ -72,8 +82,23 @@ export class BuilderService {
       plan,
       limits: { ...planLimits(plan), aiCredits: { used, limit: creditAccount.windowAllowance, balance: creditAccount.balance, resetsAt: nextUtcCreditReset().toISOString() } },
     }
-    this.logger.log(JSON.stringify({ event: 'core_project_phase', projectId: tenantId, phase: 'project session response', at: new Date().toISOString(), durationMs: Date.now() - requestStartedAt }))
+    this.logger.log(JSON.stringify({ event: 'core_project_phase', requestId, projectId: tenantId, phase: 'project session response', at: new Date().toISOString(), durationMs: Date.now() - requestStartedAt }))
     return response
+  }
+
+  async promptIntent(authorization: string | undefined, prompt: string) {
+    const userId = await resolveUserIdFromAuthorization(authorization, this.jwt)
+    if (!userId) throw new ForbiddenException('Authentication is required to name a project.')
+    const startedAt = Date.now()
+    const account = process.env.MODEL_ACCOUNT_ID ?? process.env.CLOUDFLARE_ACCOUNT_ID
+    const apiKey = process.env.MODEL_API_KEY ?? process.env.CLOUDFLARE_API_TOKEN
+    const baseUrl = account
+      ? `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/ai/v1`
+      : (process.env.MODEL_BASE_URL ?? '')
+    const model = process.env.AI_MODEL_FAST ?? process.env.AI_MODEL_DEFAULT ?? ''
+    const result = await resolvePromptIntent({ prompt, baseUrl, model, apiKey, timeoutMs: 1_200 })
+    this.logger.log(JSON.stringify({ event: 'builder_intent_ready', durationMs: Date.now() - startedAt, modelConfigured: Boolean(model && apiKey && baseUrl), source: result.intent ? 'model' : 'fallback' }))
+    return result ?? deterministicPromptIntent(prompt)
   }
 
   async getCredits(authorization: string | undefined, tenantId?: string) {
@@ -89,7 +114,7 @@ export class BuilderService {
       if (!user) throw new ForbiddenException('User account was not found.')
       plan = user.plan
     }
-    const account = await this.credits.ensureAccount(userId, plan ?? 'free')
+    const account = await this.credits.getAccountSnapshot(userId, plan ?? 'free')
     const used = Math.max(0, account.windowAllowance - Math.min(account.balance, account.windowAllowance))
     return { used, limit: account.windowAllowance, balance: account.balance, resetsAt: nextUtcCreditReset().toISOString(), plan: account.plan }
   }
@@ -101,14 +126,21 @@ export class BuilderService {
     return prisma.tenantApp.findMany({ where: { tenantId }, orderBy: { updatedAt: 'desc' } })
   }
 
-  async createWsTicket(authorization: string | undefined, tenantId: string) {
+  async createWsTicket(authorization: string | undefined, tenantId: string, coreToken?: string) {
     const startedAt = Date.now()
-    const session = await this.createSession(authorization, tenantId)
+    const session = coreToken
+      ? await this.jwt.verifyAsync<{ workspaceId?: string }>(coreToken, {
+          secret: this.coreSecret(), algorithms: ['HS256'], issuer: 'seltra-api', audience: 'seltra-core',
+        }).then((claims) => {
+          if (claims.workspaceId !== tenantId) throw new UnauthorizedException('Invalid Core session.')
+          return { workspaceId: claims.workspaceId }
+        })
+      : await this.createSession(authorization, tenantId)
     const ticket = await this.jwt.signAsync(
       { workspaceId: session.workspaceId, jti: randomUUID() },
       { secret: this.coreSecret(), algorithm: 'HS256', issuer: 'seltra-api', audience: 'seltra-core-ws', subject: session.workspaceId, expiresIn: '30s' },
     )
-    this.logger.log(JSON.stringify({ event: 'core_project_phase', projectId: tenantId, phase: 'ticket issued', at: new Date().toISOString(), durationMs: Date.now() - startedAt }))
+    this.logger.log(JSON.stringify({ event: 'core_project_phase', projectId: tenantId, phase: 'ticket issued', at: new Date().toISOString(), durationMs: Date.now() - startedAt, reusedCoreSession: Boolean(coreToken) }))
     return { ticket, expiresIn: 30 }
   }
 

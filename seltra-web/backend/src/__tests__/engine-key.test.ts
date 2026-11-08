@@ -57,6 +57,7 @@ describe('workspace Engine keys', () => {
     const jwt = new JwtService()
     const credits = {
       ensureAccount: jest.fn(async () => ({ windowAllowance: 100, balance: 100 })),
+      getAccountSnapshot: jest.fn(async () => ({ windowAllowance: 100, balance: 100 })),
     }
     const builder = new BuilderService(jwt, credits as never)
     const sessionToken = await jwt.signAsync(

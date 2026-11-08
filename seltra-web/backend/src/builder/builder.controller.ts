@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Headers, Post, Query, UseGuards } from '@nestjs/common'
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger'
-import { BuilderSessionDto, SyncCoreAppStateDto, SyncTenantAppDto } from './builder.dto'
+import { BuilderIntentDto, BuilderSessionDto, SyncCoreAppStateDto, SyncTenantAppDto } from './builder.dto'
 import { BuilderService } from './builder.service'
 import { CoreServiceGuard } from '../core-internal/core-service.guard'
 
@@ -15,6 +15,11 @@ export class BuilderController {
     return this.builder.createSession(authorization, body.tenantId)
   }
 
+  @Post('intent')
+  promptIntent(@Headers('authorization') authorization: string | undefined, @Body() body: BuilderIntentDto) {
+    return this.builder.promptIntent(authorization, body.prompt)
+  }
+
   @Get('credits')
   getCredits(@Headers('authorization') authorization: string | undefined, @Query('tenantId') tenantId?: string) {
     return this.builder.getCredits(authorization, tenantId)
@@ -22,7 +27,7 @@ export class BuilderController {
 
   @Post('ws-ticket')
   createWsTicket(@Headers('authorization') authorization: string | undefined, @Body() body: BuilderSessionDto) {
-    return this.builder.createWsTicket(authorization, body.tenantId)
+    return this.builder.createWsTicket(authorization, body.tenantId, body.coreToken)
   }
 
   @Get('apps')

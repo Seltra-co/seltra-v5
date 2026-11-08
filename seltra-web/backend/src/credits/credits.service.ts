@@ -53,6 +53,19 @@ export class CreditsService {
     return account
   }
 
+  async getAccountSnapshot(userId: string, plan?: string | null) {
+    const normalizedPlan = canonicalPlan(plan)
+    const allowance = creditAllowanceForPlan(normalizedPlan)
+    const account = await prisma.userCredit.findUnique({ where: { userId } })
+    if (!account) return this.ensureAccount(userId, normalizedPlan)
+    if (isCreditWindowExpired(account.windowStartedAt) || account.plan !== normalizedPlan || account.windowAllowance !== allowance) {
+      return this.grant(userId, allowance, isCreditWindowExpired(account.windowStartedAt) ? 'daily_utc_reset' : 'plan_allowance_changed', 'reset', normalizedPlan)
+    }
+    // Reads for the session/credits UI do not need to rewrite the legacy
+    // workspace mirror. Usage commits and plan grants keep that mirror fresh.
+    return account
+  }
+
   async commitUsage(input: { userId: string; runId?: string; projectId?: string; role: ModelRole; tokensIn: number; tokensOut: number; reason?: string }) {
     const charge = creditCost(input.tokensIn, input.tokensOut, input.role)
     return prisma.$transaction(async (tx) => {

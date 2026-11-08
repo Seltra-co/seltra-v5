@@ -3,6 +3,15 @@ import { IsInt, IsOptional, IsString, IsUrl, IsIn, Min, IsObject, IsBoolean } fr
 export class BuilderSessionDto {
   @IsString()
   tenantId!: string
+
+  @IsOptional()
+  @IsString()
+  coreToken?: string
+}
+
+export class BuilderIntentDto {
+  @IsString()
+  prompt!: string
 }
 
 export class SyncTenantAppDto {
