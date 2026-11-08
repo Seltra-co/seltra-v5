@@ -48,6 +48,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: seltra-web/core/package-lock.json
       - name: Validate deployment secrets
         shell: bash
         run: |
@@ -147,6 +149,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: seltra-web/edge/sandbox-gateway/package-lock.json
       - name: Install smoke dependencies
         run: bash seltra-web/edge/sandbox-gateway/scripts/npm-ci-retry.sh --prefix seltra-web/edge/sandbox-gateway --no-audit --no-fund
       - name: Signed dev workspace, scaffold, runtime RPC body, real create-app, preview, and destroy smoke
