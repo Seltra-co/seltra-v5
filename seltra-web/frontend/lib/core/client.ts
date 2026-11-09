@@ -47,10 +47,34 @@ function unwrapCoreIpcEnvelope<T>(value: unknown): T {
 
 export class CoreClient {
   private workspaceIdValue?: string
+  private coreSessionValue?: CoreSession
+  private coreSessionToken?: string
+  private coreSessionExpiresAt = 0
+  private coreSessionRefresh?: Promise<CoreSession>
   readonly traceId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
   constructor(private readonly getSession: () => Promise<CoreSession>, private readonly refreshSession: () => Promise<CoreSession> = getSession) {}
 
   get workspaceId() { return this.workspaceIdValue }
+
+  private async currentSession(): Promise<CoreSession> {
+    const session = this.coreSessionValue ?? await this.getSession()
+    if (!this.coreSessionValue || session.coreToken !== this.coreSessionToken) {
+      this.coreSessionValue = session
+      this.coreSessionToken = session.coreToken
+      this.coreSessionExpiresAt = Date.now() + Math.max(1, session.expiresIn) * 1_000
+    }
+    if (Date.now() + 30_000 < this.coreSessionExpiresAt) return session
+
+    if (!this.coreSessionRefresh) {
+      this.coreSessionRefresh = this.refreshSession().then((refreshed) => {
+        this.coreSessionValue = refreshed
+        this.coreSessionToken = refreshed.coreToken
+        this.coreSessionExpiresAt = Date.now() + Math.max(1, refreshed.expiresIn) * 1_000
+        return refreshed
+      }).finally(() => { this.coreSessionRefresh = undefined })
+    }
+    return this.coreSessionRefresh
+  }
 
   private get baseUrl() {
     const url = process.env.NEXT_PUBLIC_CORE_URL
@@ -67,7 +91,7 @@ export class CoreClient {
   }
 
   async invoke<T>(channel: string, args: unknown[] = [], runtimeSession?: string): Promise<T> {
-    let session = await this.getSession()
+    let session = await this.currentSession()
     const body = JSON.stringify({ args, undefinedArgs: args.flatMap((arg, i) => arg === undefined ? [i] : []) })
     const send = () => fetch(`${this.baseUrl}/api/rpc/${encodeURIComponent(channel)}`, {
       method: 'POST', headers: {
@@ -93,6 +117,9 @@ export class CoreClient {
     if (!response) throw new Error('Builder request did not return a response.')
     if (response.status === 401) {
       session = await this.refreshSession()
+      this.coreSessionValue = session
+      this.coreSessionToken = session.coreToken
+      this.coreSessionExpiresAt = Date.now() + Math.max(1, session.expiresIn) * 1_000
       response = await send()
     }
     const result = await response.json().catch(() => ({})) as { ok?: boolean; result?: T; error?: { message?: string; code?: string } }
@@ -105,7 +132,7 @@ export class CoreClient {
   }
 
   async probePreview(appId: number): Promise<{ ready: boolean; status: number }> {
-    const session = await this.getSession()
+    const session = await this.currentSession()
     const response = await fetch(`${this.baseUrl}/api/preview/probe`, {
       method: 'POST',
       headers: { authorization: `Bearer ${session.coreToken}`, 'content-type': 'application/json' },
@@ -118,7 +145,7 @@ export class CoreClient {
   }
 
   async prewarm(intent: 'user_send' | 'user_approve' | 'restore' = 'user_send'): Promise<void> {
-    const session = await this.getSession()
+    const session = await this.currentSession()
     const response = await fetch(`${this.baseUrl}/api/workspace/prewarm`, {
       method: 'POST',
       headers: { authorization: `Bearer ${session.coreToken}`, 'content-type': 'application/json' },
@@ -130,7 +157,7 @@ export class CoreClient {
 
   async wsTicket(): Promise<string> {
     const accessToken = localStorage.getItem('seltra:token')
-    const session = await this.getSession()
+    const session = await this.currentSession()
     this.workspaceIdValue = session.workspaceId
     const response = await fetchWithSeltraAuth('/api/v5/builder/ws-ticket', {
       method: 'POST', headers: { authorization: `Bearer ${accessToken || ''}`, 'content-type': 'application/json', 'x-seltra-run-id': this.traceId },

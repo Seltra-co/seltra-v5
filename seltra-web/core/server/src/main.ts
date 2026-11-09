@@ -31,7 +31,7 @@ import { isWebChannelAllowed } from "../../src/web/channel_policy.js";
 import { isPrimaryGatewayHost } from "../../src/web/primary_gateway_host.js";
 import { rewritePreviewUrls } from "../../src/web/preview_urls.js";
 import { WorkspaceSupervisor, type WorkspaceRuntime } from "./workspace_supervisor.js";
-import { probeBrowserPreview } from "./preview_probe.js";
+import { browserPreviewProbeUrl, probeBrowserPreview } from "./preview_probe.js";
 import {
   parseFigmaFileUrl,
   retrieveFigmaReference,
@@ -2158,8 +2158,13 @@ async function main(): Promise<void> {
         const appId = Number(body.appId);
         const label = `ws-${claims.coreWorkspaceKey}-app-${appId}`;
         const previewToken = await issuePreviewToken(label, claims);
-        const port = config.previewPort ?? config.GATEWAY_PORT;
-        const probeUrl = `${config.previewScheme}://${label}:${port}/?preview_token=${encodeURIComponent(previewToken)}`;
+        const probeUrl = browserPreviewProbeUrl({
+          label,
+          baseDomain: config.PREVIEW_BASE_DOMAIN,
+          scheme: config.previewScheme,
+          port: config.previewPort,
+          token: previewToken,
+        });
         let probe: Awaited<ReturnType<typeof probeBrowserPreview>>;
         try {
           probe = await probeBrowserPreview(probeUrl);

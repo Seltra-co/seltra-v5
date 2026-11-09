@@ -1,5 +1,18 @@
 export type BrowserPreviewProbe = { ready: boolean; status: number; redactedBodyPrefix?: string }
 
+export function browserPreviewProbeUrl(input: {
+  label: string
+  baseDomain: string
+  scheme: "http" | "https"
+  port?: number
+  token: string
+}): string {
+  const url = new URL(`${input.scheme}://${input.label}.${input.baseDomain}/`)
+  if (input.port !== undefined) url.port = String(input.port)
+  url.searchParams.set("preview_token", input.token)
+  return url.toString()
+}
+
 export async function probeBrowserPreview(url: string, fetchImpl: typeof fetch = fetch): Promise<BrowserPreviewProbe> {
   const response = await fetchImpl(url, {
     headers: { accept: "text/html" },

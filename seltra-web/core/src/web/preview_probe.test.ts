@@ -1,7 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
-import { probeBrowserPreview } from "../../server/src/preview_probe";
+import { browserPreviewProbeUrl, probeBrowserPreview } from "../../server/src/preview_probe";
 
 describe("browser path preview probe", () => {
+  it("probes the same fully qualified preview host and port that the browser opens", () => {
+    expect(browserPreviewProbeUrl({
+      label: "ws-0123456789ab-app-1",
+      baseDomain: "localhost",
+      scheme: "http",
+      port: 8080,
+      token: "preview-token",
+    })).toBe("http://ws-0123456789ab-app-1.localhost:8080/?preview_token=preview-token");
+  });
+
+  it("uses the default HTTPS port for public preview probes", () => {
+    expect(browserPreviewProbeUrl({
+      label: "ws-0123456789ab-app-1",
+      baseDomain: "preview.example.test",
+      scheme: "https",
+      token: "preview-token",
+    })).toBe("https://ws-0123456789ab-app-1.preview.example.test/?preview_token=preview-token");
+  });
+
   it("reports ready only for HTTP 200", async () => {
     const fetchImpl = vi.fn(async () => new Response("ok", { status: 200 }));
     await expect(probeBrowserPreview("http://ws-project-app-1.localhost:8080/", fetchImpl))
