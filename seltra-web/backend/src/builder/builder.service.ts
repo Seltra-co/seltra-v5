@@ -133,6 +133,7 @@ export class BuilderService {
 
   async listApps(authorization: string | undefined, tenantId: string) {
     const userId = await resolveUserIdFromAuthorization(authorization, this.jwt)
+    if (typeof tenantId !== 'string' || !tenantId.trim()) throw new NotFoundException('Workspace not found.')
     const tenant = await prisma.tenant.findFirst({ where: { id: tenantId, ownerId: userId }, select: { id: true } })
     if (!tenant) throw new NotFoundException('Workspace not found.')
     return prisma.tenantApp.findMany({ where: { tenantId }, orderBy: { updatedAt: 'desc' } })
@@ -203,6 +204,7 @@ export class BuilderService {
 
   async syncCoreAppState(authorization: string | undefined, input: { tenantId: string; coreAppId: number; name?: string; corePath?: string; status?: string; previewUrl?: string; eventType?: string; blueprint?: Record<string, unknown>; approved?: boolean }) {
     const userId = await resolveUserIdFromAuthorization(authorization, this.jwt)
+    if (typeof input.tenantId !== 'string' || !input.tenantId.trim()) throw new NotFoundException('Workspace not found.')
     const tenant = await prisma.tenant.findFirst({ where: { id: input.tenantId, ownerId: userId }, select: { id: true } })
     if (!tenant) throw new NotFoundException('Workspace not found.')
     const eventType = input.eventType && /^[a-z0-9._-]{1,80}$/i.test(input.eventType) ? input.eventType : 'app.state.updated'

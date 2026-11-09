@@ -32,6 +32,10 @@ export class CoreEvents {
     this.opening = false
     const previous = this.socket
     this.socket = undefined
+    // The Core server invalidates the runtime session as soon as this socket
+    // closes. Clear consumers' cached runtime ID before opening the replacement
+    // socket so an RPC cannot race with that invalidation and get a 403.
+    this.onStatus(false)
     if (previous) {
       previous.onclose = null
       previous.onerror = null

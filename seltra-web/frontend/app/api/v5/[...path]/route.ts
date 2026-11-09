@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomUUID } from 'node:crypto'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -31,12 +32,15 @@ async function proxy(req: NextRequest, path: string[]) {
   const contentType = req.headers.get('content-type')
   const authorization = req.headers.get('authorization')
   const cookie = req.headers.get('cookie')
+  const suppliedRequestId = req.headers.get('x-request-id')
+  const requestId = suppliedRequestId && /^[A-Za-z0-9._:-]{1,128}$/.test(suppliedRequestId) ? suppliedRequestId : randomUUID()
   const idempotencyKey = req.headers.get('idempotency-key')
   const lastEventId = req.headers.get('last-event-id')
   const runId = req.headers.get('x-seltra-run-id')
   if (contentType) headers.set('content-type', contentType)
   if (authorization) headers.set('authorization', authorization)
   if (cookie) headers.set('cookie', cookie)
+  headers.set('x-request-id', requestId)
   if (idempotencyKey) headers.set('idempotency-key', idempotencyKey)
   if (lastEventId) headers.set('last-event-id', lastEventId)
   if (runId && /^[a-f0-9-]{36}$/i.test(runId)) headers.set('x-seltra-run-id', runId)
@@ -58,8 +62,11 @@ async function proxy(req: NextRequest, path: string[]) {
       const responseHeaders = new Headers()
       const upstreamType = upstream.headers.get('content-type')
       const setCookie = upstream.headers.get('set-cookie')
+      const upstreamRequestId = upstream.headers.get('x-request-id')
       if (upstreamType) responseHeaders.set('content-type', upstreamType)
       if (setCookie) responseHeaders.set('set-cookie', setCookie)
+      responseHeaders.set('x-request-id', upstreamRequestId && /^[A-Za-z0-9._:-]{1,128}$/.test(upstreamRequestId) ? upstreamRequestId : requestId)
+      if (upstream.status >= 400) console.warn(JSON.stringify({ event: 'backend_api_proxy_error', requestId, path: `/api/v5/${path.join('/')}`, status: upstream.status }))
       return new NextResponse(body, {
         status: upstream.status,
         headers: responseHeaders,

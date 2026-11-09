@@ -880,7 +880,7 @@ function WhatsNewBanner({ onDismiss }: { onDismiss: () => void }) {
 export default function DashboardPage() {
   const workbench = useWorkbenchState()
   const fastIntentPromiseRef = useRef<Promise<{ name: string; intent: string }> | null>(null)
-  const preflightPlanRef = useRef<{ requestId: string; prompt: string; mode: 'build' | 'plan' | 'chat'; summary: string; store: StoreData } | null>(null)
+  const preflightPlanRef = useRef<{ requestId: string; prompt: string; mode: 'build' | 'plan' | 'chat'; summary: string; storePromise: Promise<StoreData | null> } | null>(null)
   const projectCreatePromiseRef = useRef<{ prompt: string; promise: Promise<{ data: { store: StoreData } | null; error: string | null; aborted?: boolean }> } | null>(null)
   const replayApprovalResolveRef = useRef<(() => void) | null>(null)
   const replayAnswerResolveRef = useRef<(() => void) | null>(null)
@@ -999,6 +999,13 @@ export default function DashboardPage() {
       if (coreQuestionnaireInFlightRef.current.has(questionnaire.requestId)) return
       coreQuestionnaireInFlightRef.current.add(questionnaire.requestId)
       setCoreQuestionnaire({ ...questionnaire, isResponding: true })
+      const store = await preflightPlan.storePromise
+      if (!store) {
+        coreQuestionnaireInFlightRef.current.delete(questionnaire.requestId)
+        setCoreQuestionnaire((current) => current?.requestId === questionnaire.requestId ? { ...current, isResponding: false } : current)
+        setCoreConnectionError('Seltra could not create this project. Retry your prompt to continue.')
+        return
+      }
       agentTimingRef.current.answeredAt = Date.now()
       logAgentTiming('questionnaire_answered', agentTimingRef.current.answeredAt)
       const summary = [preflightPlan.summary, 'The user answered the planning questionnaire:', ...questionnaire.questions.map((question) => `- ${question.question}: ${answers?.[question.id] || 'Skipped'}`)].filter(Boolean).join('\n')
@@ -1008,10 +1015,10 @@ export default function DashboardPage() {
       setCoreQuestionnaire(null)
       dispatchWorkbench({ type: 'answer' })
       captureWorkbenchEvent({ type: 'answer' })
-      localStorage.setItem(`seltra:core:preflight-complete:${preflightPlan.store.id}`, '1')
+      localStorage.setItem(`seltra:core:preflight-complete:${store.id}`, '1')
       setSending(true)
       setAgentStreamPhase('narrating')
-      void runCorePrompt(`${preflightPlan.prompt}\n\n${summary}`, preflightPlan.mode, preflightPlan.store, [], false, true).finally(() => coreQuestionnaireInFlightRef.current.delete(questionnaire.requestId))
+      void runCorePrompt(`${preflightPlan.prompt}\n\n${summary}`, preflightPlan.mode, store, [], false, true).finally(() => coreQuestionnaireInFlightRef.current.delete(questionnaire.requestId))
       return
     }
     if (!questionnaire || !client || !runtime || coreQuestionnaireInFlightRef.current.has(questionnaire.requestId)) return
@@ -1968,7 +1975,10 @@ export default function DashboardPage() {
           }
         }
       }
-    }, setCoreConnected, setCoreConnectionError)
+    }, (connected) => {
+      setCoreConnected(connected)
+      if (!connected) coreRuntimeRef.current = undefined
+    }, setCoreConnectionError)
     coreEventsRef.current = events
     events.connect()
     return () => {
@@ -3127,7 +3137,8 @@ const send = async () => {
     return fallback
   })
   if (!replayRequested && builderMode === 'build') {
-    const prewarmPromise = (async () => {
+    const requestId = `preflight:${crypto.randomUUID()}`
+    const preflightStorePromise = (async () => {
       let store = activeStore
       if (!store && projectCreatePromiseRef.current?.prompt === earlyCorePrompt) {
         const created = await projectCreatePromiseRef.current.promise.catch(() => null)
@@ -3153,30 +3164,25 @@ const send = async () => {
       }
       return store
     })()
-    const prewarmedStore = await prewarmPromise
-    if (prewarmedStore?.id) {
-      localStorage.setItem(`seltra:core:preflight-complete:${prewarmedStore.id}`, '1')
-      const requestId = `preflight:${crypto.randomUUID()}`
-      const questionnaire = {
-        requestId,
-        chatId: -2,
-        questions: [
-          { id: 'audience', type: 'radio' as const, question: 'Who will use this app most?', options: ['Customers', 'Your team', 'Both'], required: false },
-          { id: 'priority', type: 'radio' as const, question: 'What should people be able to do first?', options: ['Explore information', 'Request a service', 'Buy or manage products'], required: false },
-          { id: 'style', type: 'radio' as const, question: 'Which visual direction fits best?', options: ['Clean and professional', 'Warm and editorial', 'Bold and playful'], required: false },
-        ],
-      }
-      preflightPlanRef.current = { requestId, prompt: corePrompt, mode: builderMode, summary: '', store: prewarmedStore }
-      coreQuestionnaireRef.current = questionnaire
-      setCoreQuestionnaire(questionnaire)
-      dispatchWorkbench({ type: 'questionnaire' })
-      captureWorkbenchEvent({ type: 'questionnaire' })
-      setAgentStreamPhase('asking')
-      setCoreStartupStatus('Waiting for answers')
-      setSending(false)
-      logAgentTiming('questionnaire_visible')
-      return
+    preflightPlanRef.current = { requestId, prompt: corePrompt, mode: builderMode, summary: '', storePromise: preflightStorePromise }
+    const questionnaire = {
+      requestId,
+      chatId: -2,
+      questions: [
+        { id: 'audience', type: 'radio' as const, question: 'Who will use this app most?', options: ['Customers', 'Your team', 'Both'], required: false },
+        { id: 'priority', type: 'radio' as const, question: 'What should people be able to do first?', options: ['Explore information', 'Request a service', 'Buy or manage products'], required: false },
+        { id: 'style', type: 'radio' as const, question: 'Which visual direction fits best?', options: ['Clean and professional', 'Warm and editorial', 'Bold and playful'], required: false },
+      ],
     }
+    coreQuestionnaireRef.current = questionnaire
+    setCoreQuestionnaire(questionnaire)
+    dispatchWorkbench({ type: 'questionnaire' })
+    captureWorkbenchEvent({ type: 'questionnaire' })
+    setAgentStreamPhase('asking')
+    setCoreStartupStatus('Waiting for answers')
+    setSending(false)
+    logAgentTiming('questionnaire_visible')
+    return
   }
   if (replayRequested) {
     const replayFrames = getWorkbenchReplayFrames() ?? DEV_STREAM_REPLAY

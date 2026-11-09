@@ -197,7 +197,7 @@ try {
     console.error(JSON.stringify({ diagnosticStatus: "unavailable" }));
   }
 } finally {
-  const destroy = await request(route("destroy"), "POST", {});
+  const destroy = await request(route("destroy"), "POST", {}, { "x-sandbox-destroy-reason": "destroy" });
   runtimeSession?.socket.close();
   if (!destroy.ok) throw new Error(`destroy failed (${destroy.status})`);
   console.log(JSON.stringify({ attempt, destroy: "passed" }));

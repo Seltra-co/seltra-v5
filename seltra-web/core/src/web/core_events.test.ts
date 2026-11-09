@@ -84,4 +84,20 @@ describe('CoreEvents reconnect circuit breaker', () => {
     expect(sockets).toHaveLength(1)
     events.close()
   })
+
+  it('marks the current runtime session unavailable before retrying its socket', () => {
+    vi.stubGlobal('window', globalThis)
+    vi.stubGlobal('WebSocket', { CONNECTING: 0, OPEN: 1 })
+    const statuses: boolean[] = []
+    const events = new CoreEvents(
+      { wsTicket: vi.fn().mockResolvedValue('ticket') } as never,
+      () => undefined,
+      (connected) => statuses.push(connected),
+    )
+
+    events.retryNow()
+
+    expect(statuses).toEqual([false])
+    events.close()
+  })
 })
