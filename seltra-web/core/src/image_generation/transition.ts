@@ -63,6 +63,7 @@ export function transition(
             themeMode: event.job.themeMode,
             targetAppId: event.job.targetAppId,
             targetAppName: event.job.targetAppName,
+            assetSlot: event.job.assetSlot,
             source: event.job.source,
           },
         },

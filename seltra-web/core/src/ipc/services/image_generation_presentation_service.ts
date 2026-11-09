@@ -85,10 +85,10 @@ export class ImageGenerationPresentationService {
 
 function presentationPayload(job: ImageGenerationJob, pendingCount: number) {
   if (job.status === "success" && job.result && !job.lateAfterCancel) {
-    const { fileName, appId, appName } = job.result;
+    const { fileName, appId, appName, publicAssetPath } = job.result;
     return {
       type: "succeeded" as const,
-      result: { fileName, appId, appName },
+      result: { fileName, appId, appName, ...(publicAssetPath ? { publicAssetPath } : {}) },
       pendingCount,
     };
   }

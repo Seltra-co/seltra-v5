@@ -505,6 +505,8 @@ try {
   });
   gateway.stdout.pipe(gatewayLog);
   gateway.stderr.pipe(gatewayLog);
+  gateway.stdout.pipe(process.stdout);
+  gateway.stderr.pipe(process.stderr);
   await waitForHttp(
     `http://127.0.0.1:${gatewayPort}/healthz`,
     gateway,

@@ -31,6 +31,7 @@ import { isWebChannelAllowed } from "../../src/web/channel_policy.js";
 import { isPrimaryGatewayHost } from "../../src/web/primary_gateway_host.js";
 import { rewritePreviewUrls } from "../../src/web/preview_urls.js";
 import { WorkspaceSupervisor, type WorkspaceRuntime } from "./workspace_supervisor.js";
+import { probeBrowserPreview } from "./preview_probe.js";
 import {
   parseFigmaFileUrl,
   retrieveFigmaReference,
@@ -694,19 +695,8 @@ async function main(): Promise<void> {
     console.warn("NOT ISOLATED - DEV ONLY: workspace code runs as a host process.");
   }
   durability.start(() => supervisor.listRuntimes());
-  const gatewayWorkspaceReaper = setInterval(() => {
-    void (async () => {
-      try {
-        const active = await publishBackend<{ workspaceKeys: string[] }>('workspaces/active', {});
-        const result = await supervisor.reapGatewayWorkspaces(new Set(active.workspaceKeys), config.WORKSPACE_GATEWAY_IDLE_TIMEOUT_SECONDS * 1000);
-        if (result.destroyed) console.info(JSON.stringify({ event: 'gateway_workspace_reap', scanned: result.scanned, destroyed: result.destroyed }));
-      } catch (error) {
-        console.error(JSON.stringify({ event: 'gateway_workspace_reap_failed', code: error instanceof Error ? error.name : 'unknown' }));
-      }
-    })();
-  }, config.WORKSPACE_GATEWAY_REAPER_INTERVAL_SECONDS * 1000);
-  gatewayWorkspaceReaper.unref();
   const entitlementCache = new Map<string, { expiresAt: number; active: boolean; reason?: string; engineApiKey: string }>();
+  const destroyingWorkspaceKeys = new Map<string, number>();
   const sessionOwners = new Map<string, SessionClaims>();
   const modelTokens = new Map<string, SessionClaims>();
   let runtimeModelSelfCheck: Promise<void> | undefined;
@@ -728,11 +718,49 @@ async function main(): Promise<void> {
   });
   const previewCookieRefreshes = new WeakMap<IncomingMessage, string>();
   const previewRuntimes = new WeakMap<IncomingMessage, WorkspaceRuntime>();
+  const previewRequestDiagnostics = new WeakMap<IncomingMessage, { host: string; authResult: string; upstreamHost: string | null; upstreamStatus: number | null; body: Buffer; startedAt: number }>();
   const nest = await NestFactory.create(GatewayModule, { logger: false });
   traceStartup("nest_created");
   nest.use((request: IncomingMessage, response: ServerResponse) => {
+    const suppliedRequestId = request.headers["x-request-id"] ?? request.headers["x-dyad-request-id"];
+    const requestId = typeof suppliedRequestId === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(suppliedRequestId) ? suppliedRequestId : randomUUID();
+    request.headers["x-request-id"] = requestId;
+    response.setHeader("x-request-id", requestId);
+    response.once("finish", () => console.info(JSON.stringify({ event: "core_http_request", requestId, method: request.method, path: new URL(request.url ?? "/", "http://core.invalid").pathname, status: response.statusCode })));
     setSecurityHeaders(response);
     setPreviewFrameHeaders(request, response, config);
+    const incomingHost = String(request.headers.host ?? "");
+    const previewHostname = incomingHost.replace(/:\d+$/, "").toLowerCase();
+    const isPreviewRequest = previewHostname.endsWith(`.${config.PREVIEW_BASE_DOMAIN.toLowerCase()}`);
+    if (isPreviewRequest) {
+      const diagnostic = { host: incomingHost, authResult: "not_checked", upstreamHost: null as string | null, upstreamStatus: null as number | null, body: Buffer.alloc(0), startedAt: Date.now() };
+      previewRequestDiagnostics.set(request, diagnostic);
+      const capture = (chunk: unknown) => {
+        if (diagnostic.body.length >= 200 || chunk === undefined || chunk === null) return;
+        const bytes = Buffer.isBuffer(chunk) ? chunk : typeof chunk === "string" || chunk instanceof Uint8Array ? Buffer.from(chunk) : undefined;
+        if (bytes) diagnostic.body = Buffer.concat([diagnostic.body, bytes.subarray(0, 200 - diagnostic.body.length)]);
+      };
+      const write = response.write.bind(response);
+      response.write = ((chunk: unknown, ...args: unknown[]) => { capture(chunk); return (write as (...values: unknown[]) => boolean)(chunk, ...args); }) as typeof response.write;
+      const end = response.end.bind(response);
+      response.end = ((chunk?: unknown, ...args: unknown[]) => { capture(chunk); return (end as (...values: unknown[]) => ServerResponse)(chunk, ...args); }) as typeof response.end;
+      response.once("finish", () => console.info(JSON.stringify({
+        event: "preview_host_proxy_request",
+        host: diagnostic.host,
+        authResult: diagnostic.authResult,
+        upstreamHost: diagnostic.upstreamHost,
+        upstreamStatus: diagnostic.upstreamStatus,
+        status: response.statusCode,
+        bodyPrefix: (() => {
+          let body = diagnostic.body.toString("utf8");
+          for (const [name, value] of Object.entries(config)) {
+            if (/secret|token|key|password|credential|database_url|private/i.test(name) && typeof value === "string" && value.length >= 4) body = body.split(value).join("[redacted]");
+          }
+          return redactSensitiveText(body).slice(0, 200);
+        })(),
+        latencyMs: Date.now() - diagnostic.startedAt,
+      })));
+    }
     let responseReason = "";
     response.once("finish", () => {
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -861,6 +889,8 @@ async function main(): Promise<void> {
     for (const [name, value] of Object.entries(runtime.signGatewayRequest("GET", proxyRequest.path ?? "/"))) proxyRequest.setHeader(name, value);
   });
   previewProxy.on("proxyRes", (proxyResponse, request, response) => {
+    const diagnostic = previewRequestDiagnostics.get(request as IncomingMessage);
+    if (diagnostic) diagnostic.upstreamStatus = proxyResponse.statusCode ?? null;
     proxyResponse.headers["x-content-type-options"] = "nosniff";
     proxyResponse.headers["referrer-policy"] = "same-origin";
     const refreshedCookie = previewCookieRefreshes.get(request);
@@ -897,7 +927,19 @@ async function main(): Promise<void> {
         `frame-ancestors ${frameAncestors(config)}`;
     }
   });
-  previewProxy.on("error", (_error, _request, response) => {
+  previewProxy.on("error", (error, request, response) => {
+    const runtime = request ? previewRuntimes.get(request as IncomingMessage) : undefined;
+    const failure = error as NodeJS.ErrnoException;
+    const diagnostic = request ? previewRequestDiagnostics.get(request as IncomingMessage) : undefined;
+    console.error(JSON.stringify({
+      event: "preview_proxy_upstream_failed",
+      projectId: runtime?.workspaceId ?? null,
+      method: request?.method ?? null,
+      errorName: error instanceof Error ? error.name : "unknown",
+      errorCode: typeof failure.code === "string" ? failure.code : undefined,
+      at: new Date().toISOString(),
+    }));
+    if (diagnostic) diagnostic.upstreamHost = runtime ? new URL(runtime.baseUrl).hostname : null;
     if (response && "writeHead" in response && !response.headersSent) {
       (response as ServerResponse).writeHead(502, {
         "content-type": "text/plain",
@@ -937,6 +979,11 @@ async function main(): Promise<void> {
   }
 
   async function assertEntitlement(claims: SessionClaims, allowExhausted = false) {
+    const destroyUntil = destroyingWorkspaceKeys.get(claims.coreWorkspaceKey);
+    if (destroyUntil && destroyUntil > Date.now()) {
+      throw new HttpError(410, "WORKSPACE_DESTROYED", "This project is being deleted.");
+    }
+    if (destroyUntil) destroyingWorkspaceKeys.delete(claims.coreWorkspaceKey);
     const cached = entitlementCache.get(claims.workspaceId);
     let result = cached && cached.expiresAt > Date.now() ? cached : undefined;
     if (!result) {
@@ -966,11 +1013,11 @@ async function main(): Promise<void> {
     return { engineApiKey: result.engineApiKey };
   }
 
-  async function runtimeFor(claims: Pick<SessionClaims, "sub" | "email" | "plan" | "workspaceId" | "coreWorkspaceKey" | "storeSlug">): Promise<WorkspaceRuntime> {
+  async function runtimeFor(claims: Pick<SessionClaims, "sub" | "email" | "plan" | "workspaceId" | "coreWorkspaceKey" | "storeSlug">, caller = 'gateway_request', traceId?: string, intent: 'user_send' | 'user_approve' | 'preview_open' | 'restore' | 'e2e' = 'user_send'): Promise<WorkspaceRuntime> {
     let runtime: WorkspaceRuntime;
     try {
       const entitlement = await assertEntitlement(claims, true);
-      runtime = await supervisor.get(claims.workspaceId, claims.coreWorkspaceKey, claims.storeSlug, claims.sub, entitlement.engineApiKey);
+      runtime = await supervisor.get(claims.workspaceId, claims.coreWorkspaceKey, claims.storeSlug, claims.sub, entitlement.engineApiKey, caller, traceId, intent);
     } catch (error) {
       const status = Number((error as { status?: number }).status) || 503;
       throw new HttpError(status, String((error as { code?: string }).code ?? "WORKSPACE_RUNTIME_UNAVAILABLE"), (error as Error).message || "Workspace runtime is unavailable.");
@@ -994,14 +1041,12 @@ async function main(): Promise<void> {
     return runtime;
   }
 
-  publishOrchestrator.startQueueWorker((identity) => runtimeFor({
-    sub: identity.userId,
-    email: identity.email,
-    plan: identity.plan,
-    workspaceId: identity.workspaceId,
-    coreWorkspaceKey: identity.workspaceKey,
-    storeSlug: identity.storeSlug,
-  }));
+  publishOrchestrator.startQueueWorker(async (identity) => {
+    const runtime = supervisor.getByKey(identity.workspaceKey);
+    if (!runtime || runtime.workspaceId !== identity.workspaceId || runtime.userId !== identity.userId || runtime.storeSlug !== identity.storeSlug)
+      throw Object.assign(new Error('A user action must restore this workspace before queued publishing can resume.'), { code: 'WORKSPACE_RUNTIME_UNAVAILABLE', status: 503 });
+    return runtime;
+  });
 
   function checkOrigin(request: IncomingMessage): void {
     const origin = request.headers.origin;
@@ -1131,7 +1176,7 @@ async function main(): Promise<void> {
     if (!match || match[1] !== claims.coreWorkspaceKey)
       throw new HttpError(404, "PREVIEW_NOT_FOUND", "Preview not found.");
     const appId = Number(match[2]);
-    const runtime = await runtimeFor(claims);
+    const runtime = await runtimeFor(claims, 'preview_open', undefined, 'preview_open');
     if (runtime.signGatewayRequest) return runtime.baseUrl.replace(/\/runtime$/, `/preview/${appId}`);
     const targetUrl = runtime.baseUrl + "/internal/preview-target/" + appId;
     const response = await fetch(
@@ -2005,11 +2050,17 @@ async function main(): Promise<void> {
       const supplied = Buffer.from(Array.isArray(suppliedHeader) ? suppliedHeader[0] ?? '' : suppliedHeader ?? '');
       const expected = Buffer.from(config.CORE_SERVICE_SECRET);
       if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new HttpError(401, 'UNAUTHORIZED', 'Core service authentication is required.');
-      let body: { workspaceKey?: unknown };
+      let body: { workspaceKey?: unknown; caller?: unknown; traceId?: unknown };
       try { body = JSON.parse((await readBody(request, 4096)).toString('utf8')) as typeof body; }
       catch { throw new HttpError(400, 'INVALID_REQUEST', 'A valid workspace destroy request is required.'); }
       if (typeof body.workspaceKey !== 'string' || !/^[a-f0-9]{12,128}$/i.test(body.workspaceKey)) throw new HttpError(400, 'INVALID_REQUEST', 'A valid workspace key is required.');
-      await supervisor.destroyWorkspace(body.workspaceKey);
+      const caller = body.caller === 'cleanup_retry' ? 'cleanup_retry' : 'store_delete';
+      const traceId = typeof body.traceId === 'string' && /^[a-f0-9-]{36}$/i.test(body.traceId) ? body.traceId : undefined;
+      // Prevent a reconnect with a cached entitlement from recreating a project while its owner deletes it.
+      destroyingWorkspaceKeys.set(body.workspaceKey, Date.now() + 60_000);
+      const activeRuntime = supervisor.getByKey(body.workspaceKey);
+      if (activeRuntime) entitlementCache.delete(activeRuntime.workspaceId);
+      await supervisor.destroyWorkspace(body.workspaceKey, caller, traceId, 'delete');
       sendJson(response, 200, { ok: true });
       return;
     }
@@ -2036,8 +2087,10 @@ async function main(): Promise<void> {
       if (!host.endsWith(suffix))
         throw new HttpError(404, "NOT_FOUND", "Not found.");
       const label = host.slice(0, -suffix.length);
+      const previewDiagnostic = previewRequestDiagnostics.get(request);
       const previewClaims = await validatePreviewAccess(request, response, label);
       if (!previewClaims) {
+        if (previewDiagnostic) previewDiagnostic.authResult = "failed";
         if (response.writableEnded) return;
         throw new HttpError(
           401,
@@ -2045,8 +2098,10 @@ async function main(): Promise<void> {
           "Preview access token is missing or expired.",
         );
       }
+      if (previewDiagnostic) previewDiagnostic.authResult = "passed";
       const port = await resolvePreviewPort(label, previewClaims);
-      const remoteRuntime = typeof port === "string" ? await runtimeFor(previewClaims) : undefined;
+      const remoteRuntime = typeof port === "string" ? await runtimeFor(previewClaims, 'preview_open', undefined, 'preview_open') : undefined;
+      if (previewDiagnostic) previewDiagnostic.upstreamHost = remoteRuntime ? new URL(remoteRuntime.baseUrl).hostname : "127.0.0.1";
       const internalPreviewHost = remoteRuntime ? undefined : `app-${label.match(/-app-(\d+)$/)?.[1]}.localhost:${port}`;
       // previewProxy.web(request, response, {
       //   target: "http://127.0.0.1:" + port,
@@ -2093,6 +2148,39 @@ async function main(): Promise<void> {
       const claims = await authenticate(request);
       if (!claims)
         throw new HttpError(401, "UNAUTHORIZED", "Authentication is required.");
+      if (request.method === "POST" && url.pathname === "/api/preview/probe") {
+        checkOrigin(request);
+        let body: { appId?: unknown };
+        try { body = JSON.parse((await readBody(request, 8 * 1024)).toString("utf8")) as typeof body; }
+        catch { throw new HttpError(400, "INVALID_REQUEST", "A valid app ID is required."); }
+        if (!Number.isSafeInteger(body.appId) || Number(body.appId) < 1)
+          throw new HttpError(400, "INVALID_REQUEST", "A valid app ID is required.");
+        const appId = Number(body.appId);
+        const label = `ws-${claims.coreWorkspaceKey}-app-${appId}`;
+        const previewToken = await issuePreviewToken(label, claims);
+        const port = config.previewPort ?? config.GATEWAY_PORT;
+        const probeUrl = `${config.previewScheme}://${label}:${port}/?preview_token=${encodeURIComponent(previewToken)}`;
+        let probe: Awaited<ReturnType<typeof probeBrowserPreview>>;
+        try {
+          probe = await probeBrowserPreview(probeUrl);
+        } catch (error) {
+          console.warn(JSON.stringify({ event: "preview_browser_path_probe", projectId: claims.workspaceId, appId, status: 0, errorName: error instanceof Error ? error.name : typeof error }));
+          sendJson(response, 200, { ready: false, status: 0 });
+          return;
+        }
+        console.info(JSON.stringify({ event: "preview_browser_path_probe", projectId: claims.workspaceId, appId, status: probe.status, ready: probe.ready, ...(probe.redactedBodyPrefix ? { redactedBodyPrefix: probe.redactedBodyPrefix } : {}) }));
+        sendJson(response, 200, { ready: probe.ready, status: probe.status });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/workspace/prewarm") {
+        checkOrigin(request);
+        let body: { intent?: unknown } = {};
+        try { body = JSON.parse((await readBody(request, 4 * 1024)).toString("utf8")) as typeof body; } catch { throw new HttpError(400, "INVALID_REQUEST", "A valid workspace action is required."); }
+        const intent = body.intent === "user_approve" || body.intent === "restore" ? body.intent : "user_send";
+        await runtimeFor(claims, "workspace_action", undefined, intent);
+        sendJson(response, 200, { ready: true });
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/api/builder/intent") {
         checkOrigin(request);
         let body: { prompt?: unknown };
@@ -2130,7 +2218,7 @@ async function main(): Promise<void> {
         try { body = JSON.parse((await readBody(request, 8 * 1024)).toString("utf8")) as { turnId?: unknown }; }
         catch { throw new HttpError(400, "INVALID_REQUEST", "A valid save point request is required."); }
         const turnId = typeof body.turnId === "string" ? body.turnId.slice(0, 128) : "manual";
-        const runtime = await runtimeFor(claims);
+        const runtime = await runtimeFor(claims, 'publish_start', undefined, 'user_approve');
         try { await durability.persist(runtime, "manual", turnId); }
         catch (error) { throw new HttpError(503, String((error as { code?: string }).code || "SOURCE_NOT_SAVED"), "Workspace changes could not be saved; the workspace was retained."); }
         sendJson(response, 200, { ok: true });
@@ -2163,7 +2251,7 @@ async function main(): Promise<void> {
         try { body = JSON.parse((await readBody(request, 8 * 1024)).toString("utf8")) as typeof body; }
         catch { throw new HttpError(400, "INVALID_REQUEST", "A valid publish request is required."); }
         if (!Number.isSafeInteger(body.appId) || Number(body.appId) < 1 || typeof body.idempotencyKey !== "string") throw new HttpError(400, "INVALID_REQUEST", "appId and idempotencyKey are required.");
-        const runtime = await runtimeFor(claims);
+        const runtime = await runtimeFor(claims, 'publish_rollback', undefined, 'user_approve');
         const result = await publishOrchestrator.start(claims, Number(body.appId), body.idempotencyKey, runtime, body.confirmReplaceLegacy === true);
         sendJson(response, 202, result);
         return;
@@ -2502,7 +2590,7 @@ async function main(): Promise<void> {
             request.url = url.pathname + url.search;
           }
           const port = await resolvePreviewPort(label, claims);
-          const remoteRuntime = typeof port === "string" ? await runtimeFor(claims) : undefined;
+          const remoteRuntime = typeof port === "string" ? await runtimeFor(claims, 'preview_websocket', undefined, 'preview_open') : undefined;
           const internalPreviewHost = remoteRuntime ? undefined : `app-${label.match(/-app-(\d+)$/)?.[1]}.localhost:${port}`;
           const internalPreviewOrigin = internalPreviewHost ? "http://" + internalPreviewHost : undefined;
           if (remoteRuntime) previewRuntimes.set(request, remoteRuntime);
@@ -2516,6 +2604,8 @@ async function main(): Promise<void> {
           throw new HttpError(404, "NOT_FOUND", "Not found.");
         checkOrigin(request);
         const ticket = url.searchParams.get("ticket");
+        const requestedTraceId = url.searchParams.get("runId");
+        const traceId = requestedTraceId && /^[a-f0-9-]{36}$/i.test(requestedTraceId) ? requestedTraceId : undefined;
         if (!ticket || ticket.length > 4096) throw new HttpError(401, "WS_TICKET_REQUIRED", "A websocket ticket is required.");
         let redeemed: { workspaceId?: string; creditWorkspaceId?: string; userId?: string; coreWorkspaceKey?: string; storeSlug?: string; email?: string; plan?: string; engineApiKey?: string };
         const redeemStartedAt = Date.now();
@@ -2564,17 +2654,19 @@ async function main(): Promise<void> {
           throw new HttpError(401, "WS_TICKET_INVALID", "Websocket ticket is invalid or expired.");
         }
         const claims: SessionClaims = { workspaceId: redeemed.workspaceId, creditWorkspaceId: redeemed.creditWorkspaceId, sub: redeemed.userId, coreWorkspaceKey: redeemed.coreWorkspaceKey, storeSlug: redeemed.storeSlug, email: redeemed.email, plan: redeemed.plan };
-        console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "ticket redeemed", at: new Date().toISOString(), durationMs: Date.now() - redeemStartedAt }));
+        console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, ...(traceId ? { traceId } : {}), phase: "ticket redeemed", at: new Date().toISOString(), durationMs: Date.now() - redeemStartedAt }));
         entitlementCache.set(redeemed.workspaceId, { active: true, engineApiKey: redeemed.engineApiKey, expiresAt: Date.now() + 60_000 });
         url.searchParams.delete("ticket");
         request.url = url.pathname + url.search;
         wss.handleUpgrade(request, socket, head, async (browser) => {
           let workspaceRuntime: WorkspaceRuntime;
           try {
-            console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "browser WS accepted", at: new Date().toISOString() }));
-            console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "workspace lookup requested", at: new Date().toISOString() }));
-            workspaceRuntime = await runtimeFor(claims);
-            console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "workspace runtime ready", at: new Date().toISOString() }));
+            console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, ...(traceId ? { traceId } : {}), phase: "browser WS accepted", at: new Date().toISOString() }));
+            console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, ...(traceId ? { traceId } : {}), phase: "workspace lookup requested", at: new Date().toISOString() }));
+            const existingRuntime = supervisor.getExisting(claims.workspaceId, claims.coreWorkspaceKey, claims.sub, claims.storeSlug)
+            if (!existingRuntime) throw new HttpError(503, 'WORKSPACE_RUNTIME_UNAVAILABLE', 'Send a message or restore this project to reconnect.');
+            workspaceRuntime = existingRuntime;
+            console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, ...(traceId ? { traceId } : {}), phase: "workspace runtime ready", at: new Date().toISOString() }));
           } catch {
             browser.close(1011, "Workspace runtime unavailable");
             return;

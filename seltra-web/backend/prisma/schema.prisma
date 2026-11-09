@@ -196,15 +196,18 @@ model TenantApp {
   lastCommitSha             String?
   githubRepoId              String?
   githubRepoFullName        String?
+  repoUrl                   String?
   githubRepoVisibility      PublishRepoVisibility?
   githubDefaultBranch       String                   @default("main")
   lastPushedSha             String?
+  commitSha                 String?
   lastPushedAt              DateTime?
   lastPushError             String?
   sourceState               PublishSourceState?
   persistenceStatus         PublishPersistenceStatus @default(OK)
   vercelProjectId           String?
   vercelProjectName         String?
+  deploymentUrl             String?
   publicationStatus         PublishPublicationStatus @default(UNPUBLISHED)
   liveDeploymentId          String?
   lastKnownGoodDeploymentId String?

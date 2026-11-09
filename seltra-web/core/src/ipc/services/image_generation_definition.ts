@@ -63,6 +63,7 @@ const imageGenerationEffectHandlers = defineCorrelatedEffectHandlers<
         prompt: command.params.prompt,
         themeMode: command.params.themeMode,
         targetAppId: command.params.targetAppId,
+        assetSlot: command.params.assetSlot,
       }),
     succeeded: (command, result) => ({
       type: "JOB_SUCCEEDED",

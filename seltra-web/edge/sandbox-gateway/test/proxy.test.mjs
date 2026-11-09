@@ -33,6 +33,7 @@ async function createHarness() {
   const container = {
     running: false,
     images: { base: "test-image" },
+    async start() { this.running = true; },
     async destroy() { this.running = false; },
     getTcpPort(port) {
       assert.ok(port === 8787 || port === 43127);
@@ -55,17 +56,27 @@ async function createHarness() {
     },
   };
   const values = new Map();
+  let transactionTail = Promise.resolve();
   const storage = {
     async get(key) { return values.get(key); },
     async put(key, value) { values.set(key, value); },
     async deleteAll() { values.clear(); },
     async delete(key) { values.delete(key); },
+    transaction(callback) {
+      const transaction = transactionTail.then(() => callback({ get: storage.get, put: storage.put }));
+      transactionTail = transaction.catch(() => undefined);
+      return transaction;
+    },
   };
   const context = {
+    id: { toString: () => "test-workspace-instance" },
     container,
     storage,
+    blockConcurrencyWhile(callback) { return callback(); },
+    waitUntil() {},
   };
-  const sandbox = new worker.WorkspaceSandbox(context, {});
+  const sandboxEnv = {};
+  const sandbox = new worker.WorkspaceSandbox(context, sandboxEnv);
   container.running = true;
   const replayNamespace = {
     async fetch() {
@@ -73,10 +84,18 @@ async function createHarness() {
     },
   };
   const workspaceRecords = new Map();
+  const projectCreateTimes = new Map();
   const registryNamespace = {
     async fetch(input, init) {
       const request = input instanceof Request ? input : new Request(input, init);
       const url = new URL(request.url);
+      if (url.pathname === '/__allow-create') {
+        const { projectId, at } = await request.json();
+        const recent = (projectCreateTimes.get(projectId) ?? []).filter((timestamp) => at - timestamp < 60 * 60 * 1000);
+        if (recent.length >= 3) return Response.json({ code: 'PROJECT_CREATE_LIMIT' }, { status: 429 });
+        projectCreateTimes.set(projectId, [...recent, at]);
+        return Response.json({ allowed: true });
+      }
       if (url.pathname === '/__list') return Response.json({ workspaces: [...workspaceRecords].map(([workspaceKey, value]) => ({ workspaceKey, ...value })) });
       const { workspaceKey } = await request.json();
       if (url.pathname === '/__remove') workspaceRecords.delete(workspaceKey);
@@ -92,7 +111,8 @@ async function createHarness() {
     },
     REGISTRY: { idFromName(name) { return name; }, get() { return registryNamespace; } },
   };
-  return { worker, env, upstreamRequests, container, workspaceRecords, storage };
+  Object.assign(sandboxEnv, env);
+  return { worker, env, upstreamRequests, container, workspaceRecords, projectCreateTimes, storage };
 }
 
 async function signedRequest(pathname, { body, signingSecret = secret, headers = {}, method = "POST" } = {}) {
@@ -216,6 +236,7 @@ test("readiness timeout retains the same container and workspace state", async (
   assert.equal(worker.PORT_READY_TIMEOUT_MS, 60_000);
   const values = new Map();
   let starts = 0;
+  let transactionTail = Promise.resolve();
   let destroys = 0;
   const container = {
     running: false,
@@ -238,18 +259,24 @@ test("readiness timeout retains the same container and workspace state", async (
     async put(key, value) { values.set(key, value); },
     async delete(key) { values.delete(key); },
     async deleteAll() { values.clear(); },
-    async transaction(callback) { return callback({ get: storage.get, put: storage.put }); },
+    transaction(callback) {
+      const transaction = transactionTail.then(() => callback({ get: storage.get, put: storage.put }));
+      transactionTail = transaction.catch(() => undefined);
+      return transaction;
+    },
   };
-  const context = { container, storage, waitUntil() {} };
-  const sandbox = new worker.WorkspaceSandbox(context, {}, 5);
+  const context = { id: { toString: () => "test-workspace-instance" }, container, storage, waitUntil() {} };
+  const sandboxEnv = {};
+  const sandbox = new worker.WorkspaceSandbox(context, sandboxEnv, 5);
   const replayNamespace = { async fetch() { return Response.json({ ok: true }); } };
   const env = {
     SANDBOX_GATEWAY_SIGNING_SECRET: secret,
     SANDBOXES: { idFromName(name) { return name; }, get(name) { return name === "seltra-gateway-auth-replay" ? { async fetch() { return Response.json({ ok: true }); } } : sandbox; } },
     REGISTRY: { idFromName(name) { return name; }, get() { return { async fetch() { return Response.json({ ok: true }); } }; } },
   };
+  Object.assign(sandboxEnv, env);
   const createPath = `/v1/workspaces/${workspaceKey}/create`;
-  const request = await signedRequest(createPath, { body: JSON.stringify({ workspaceKey, env: { DYAD_WORKSPACE_ID: workspaceKey } }) });
+  const request = await signedRequest(createPath, { body: JSON.stringify({ workspaceKey, projectId: "project-1", intent: "user_send", env: { DYAD_WORKSPACE_ID: workspaceKey } }) });
   const response = await worker.default.fetch(request, env);
 
   assert.equal(response.status, 503);
@@ -262,19 +289,119 @@ test("readiness timeout retains the same container and workspace state", async (
   assert.equal(await storage.get("lastErrorCode"), "RUNTIME_TIMEOUT");
 });
 
+test("concurrent creates and retries use one canonical workspace identity and one container start", async () => {
+  const worker = await loadWorkerModule();
+  const values = new Map();
+  let starts = 0;
+  let transactionTail = Promise.resolve();
+  const container = {
+    running: false,
+    images: { base: "test-image" },
+    async start() { starts++; await new Promise((resolve) => setTimeout(resolve, 10)); this.running = true; },
+    monitor() { return new Promise(() => {}); },
+    async setInactivityTimeout() {},
+    async setInactivityTimeout(milliseconds) { assert.equal(milliseconds, 10 * 60 * 1000); },
+    getTcpPort(port) { assert.equal(port, 8788); return { async fetch() { return Response.json({ ok: true }); } }; },
+  };
+  const storage = {
+    async get(key) { return values.get(key); },
+    async put(key, value) { values.set(key, value); },
+    async delete(key) { values.delete(key); },
+    async deleteAll() { values.clear(); },
+    transaction(callback) {
+      const transaction = transactionTail.then(() => callback({ get: storage.get, put: storage.put }));
+      transactionTail = transaction.catch(() => undefined);
+      return transaction;
+    },
+  };
+  const sandboxEnv = {};
+  const sandbox = new worker.WorkspaceSandbox({ id: { toString: () => "one-instance" }, container, storage, waitUntil() {} }, sandboxEnv);
+  const names = [];
+  const env = {
+    SANDBOX_GATEWAY_SIGNING_SECRET: secret,
+    SANDBOXES: { idFromName(name) { names.push(name); return name; }, get(name) { return name === "seltra-gateway-auth-replay" ? { async fetch() { return Response.json({ ok: true }); } } : sandbox; } },
+    REGISTRY: { idFromName(name) { return name; }, get() { return { async fetch() { return Response.json({ ok: true }); } }; } },
+  };
+  Object.assign(sandboxEnv, env);
+  const pathname = `/v1/workspaces/${workspaceKey}/create`;
+  const create = async (index) => worker.default.fetch(await signedRequest(pathname, {
+    body: JSON.stringify({ workspaceKey, projectId: "project-1", intent: "user_send", env: { DYAD_WORKSPACE_ID: workspaceKey } }),
+    headers: { "x-seltra-caller": `caller_${index}` },
+  }), env);
+  const responses = await Promise.all(Array.from({ length: 10 }, (_, index) => create(index)));
+  assert.ok(responses.every((response) => response.status === 200));
+  assert.equal((await create(10)).status, 200);
+  assert.equal((await create(11)).status, 200);
+  assert.equal(starts, 1);
+  assert.deepEqual(names.filter((name) => name === workspaceKey), Array(12).fill(workspaceKey));
+  assert.equal(await storage.get("createRequestCount"), 12);
+  const history = await storage.get("instanceHistory");
+  assert.equal(history.filter((entry) => entry.event === "create_requested").length, 12);
+  assert.ok(history.some((entry) => entry.caller === "caller_0"));
+  assert.ok(history.some((entry) => entry.caller === "caller_11"));
+  const restartedSandbox = new worker.WorkspaceSandbox({ id: { toString: () => "one-instance" }, container, storage, blockConcurrencyWhile(callback) { return callback(); }, waitUntil() {} }, {});
+  env.SANDBOXES.get = (name) => name === "seltra-gateway-auth-replay" ? { async fetch() { return Response.json({ ok: true }); } } : restartedSandbox;
+  assert.equal((await create(12)).status, 200);
+  assert.equal(starts, 1, "a Core restart and user retry must reuse the one running instance");
+  assert.equal(await storage.get("createRequestCount"), 13);
+});
+
+test("create rejects missing intent or active project identity and caps project starts at three per hour", async () => {
+  const { worker, env, container, projectCreateTimes } = await createHarness();
+  container.running = false;
+  const pathname = `/v1/workspaces/${workspaceKey}/create`;
+  const missingIntent = await signedRequest(pathname, { body: JSON.stringify({ workspaceKey, projectId: "project-1", env: { DYAD_WORKSPACE_ID: workspaceKey } }) });
+  assert.equal((await worker.default.fetch(missingIntent, env)).status, 403);
+  projectCreateTimes.set("project-1", [Date.now(), Date.now(), Date.now()]);
+  const capped = await signedRequest(pathname, { body: JSON.stringify({ workspaceKey, projectId: "project-1", intent: "user_approve", env: { DYAD_WORKSPACE_ID: workspaceKey } }) });
+  assert.equal((await worker.default.fetch(capped, env)).status, 429);
+  assert.equal(container.running, false);
+});
+
+test("project create cap is shared across different workspace identities", async () => {
+  const worker = await loadWorkerModule();
+  const values = new Map();
+  let transactionTail = Promise.resolve();
+  const storage = {
+    async get(key) { return values.get(key); },
+    async put(key, value) { values.set(key, value); },
+    transaction(callback) {
+      const transaction = transactionTail.then(() => callback({ get: storage.get, put: storage.put }));
+      transactionTail = transaction.catch(() => undefined);
+      return transaction;
+    },
+  };
+  const registry = new worker.WorkspaceRegistry({ storage }, {});
+  for (const key of [workspaceKey, '1123456789abcdef', '2123456789abcdef']) {
+    const response = await registry.fetch(new Request('https://registry/__allow-create', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectId: 'project-1', workspaceKey: key, at: Date.now() }) }));
+    assert.equal(response.status, 200);
+  }
+  const fourth = await registry.fetch(new Request('https://registry/__allow-create', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectId: 'project-1', workspaceKey: '3123456789abcdef', at: Date.now() }) }));
+  assert.equal(fourth.status, 429);
+});
+
 test("signed workspace destroy is idempotent and diag reports stopped", async () => {
-  const { worker, env, container, workspaceRecords } = await createHarness();
+  const { worker, env, container, workspaceRecords, storage } = await createHarness();
+  await storage.put("workspaceKey", workspaceKey);
+  await storage.put("createRequestCount", 2);
   workspaceRecords.set(workspaceKey, { createdAt: Date.now(), lastSeenAt: Date.now() });
   container.running = true;
 
+  const unnamedDestroy = await signedRequest(`/v1/workspaces/${workspaceKey}/destroy`, { body: "{}" });
+  assert.equal((await worker.default.fetch(unnamedDestroy, env)).status, 400);
+  assert.equal(container.running, true);
+
   for (let i = 0; i < 2; i++) {
-    const destroy = await signedRequest(`/v1/workspaces/${workspaceKey}/destroy`, { body: "{}" });
+    const destroy = await signedRequest(`/v1/workspaces/${workspaceKey}/destroy`, { body: "{}", headers: { "x-sandbox-destroy-reason": "delete" } });
     assert.equal((await worker.default.fetch(destroy, env)).status, 200);
   }
   const diag = await signedRequest(`/v1/workspaces/${workspaceKey}/diag`, { method: "GET" });
   const diagnostic = await worker.default.fetch(diag, env);
   assert.equal(diagnostic.status, 200);
-  assert.equal((await diagnostic.json()).running, false);
+  const diagnosticBody = await diagnostic.json();
+  assert.equal(diagnosticBody.running, false);
+  assert.equal(diagnosticBody.instanceId, "test-workspace-instance");
+  assert.ok(diagnosticBody.instanceHistory.some((entry) => entry.event === "stopped" && entry.reason === "delete"));
   assert.equal(workspaceRecords.has(workspaceKey), false);
 });
 

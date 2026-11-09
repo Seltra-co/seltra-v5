@@ -33,6 +33,7 @@ export interface GenerateImageInput {
   prompt: string;
   themeMode: ImageThemeMode;
   targetAppId: number;
+  assetSlot?: string;
 }
 
 interface ActiveGeneration {
@@ -81,6 +82,9 @@ export class ImageGenerationService {
 
   generate(params: GenerateImageInput) {
     this.assertAcceptingGenerations(params.targetAppId);
+    if (params.assetSlot && !/^photo-[1-9]\d?-[a-z0-9-]{1,48}$/.test(params.assetSlot)) {
+      throw new DyadError("Invalid blueprint photo slot.", DyadErrorKind.Validation);
+    }
     // Before the recording refusal below: a cancellation that arrived first is
     // what happened to this request, and reporting it as blocked by a recording
     // would both misname it and leave its tombstone behind until eviction.
@@ -147,6 +151,7 @@ export class ImageGenerationService {
     params: GenerateImageInput,
     controller: AbortController,
   ) {
+    const timeoutMs = params.assetSlot ? 30_000 : IMAGE_GENERATION_TIMEOUT_MS;
     const settings = readSettings();
     const apiKey =
       process.env.SELTRA_ENGINE_API_KEY ??
@@ -176,7 +181,7 @@ export class ImageGenerationService {
     const requestId = params.requestId;
     const timeoutId = setTimeout(
       () => controller.abort(),
-      IMAGE_GENERATION_TIMEOUT_MS,
+      timeoutMs,
     );
 
     let response: Response;
@@ -258,7 +263,7 @@ export class ImageGenerationService {
         throw new DyadError("Image URL must use HTTPS", DyadErrorKind.External);
       }
       const downloadTimeoutSignal = AbortSignal.timeout(
-        IMAGE_GENERATION_TIMEOUT_MS,
+        timeoutMs,
       );
       try {
         const imgResponse = await fetch(imageData.url, {
@@ -351,6 +356,26 @@ export class ImageGenerationService {
           await fs.promises.rename(tempFilePath, filePath);
           finalized = true;
           throwIfGenerationCancelled(controller.signal);
+          let publicAssetPath: string | undefined;
+          if (params.assetSlot) {
+            const assetsDir = safeJoin(resolvedAppPath, "public", "assets");
+            await fs.promises.mkdir(assetsDir, { recursive: true });
+            const assetName = `${params.assetSlot}.png`;
+            const assetPath = safeJoin(assetsDir, assetName);
+            const assetTempPath = safeJoin(assetsDir, `.${assetName}.${timestamp}.tmp`);
+            await fs.promises.copyFile(filePath, assetTempPath);
+            await fs.promises.rename(assetTempPath, assetPath);
+            publicAssetPath = `public/assets/${assetName}`;
+          }
+          logger.log(`Generated image saved to app assets: ${fileName}`);
+          return {
+            fileName,
+            filePath,
+            appPath: currentApp.path,
+            appId: currentApp.id,
+            appName: currentApp.name,
+            ...(publicAssetPath ? { publicAssetPath } : {}),
+          };
         } catch (error) {
           const cleanupOperations = [
             fs.promises.rm(tempFilePath, { force: true }),
@@ -363,14 +388,6 @@ export class ImageGenerationService {
           throw error;
         }
 
-        logger.log(`Generated image saved: ${filePath}`);
-        return {
-          fileName,
-          filePath,
-          appPath: currentApp.path,
-          appId: currentApp.id,
-          appName: currentApp.name,
-        };
       },
     );
 

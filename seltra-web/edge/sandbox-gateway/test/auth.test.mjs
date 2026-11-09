@@ -24,16 +24,16 @@ test("signing binds method, full path, timestamp and nonce", async () => {
 test("expired, malformed, and wrong-key signatures are rejected", async () => {
   const timestamp = String(Date.now() - 120_000);
   const nonce = "0123456789abcdef";
-  const signature = await signRequest(secret, "POST", "/v1/self-test", timestamp, nonce);
-  const expired = new Request("https://gateway.test/v1/self-test", { method: "POST", headers: {
+  const signature = await signRequest(secret, "POST", "/v1/workspaces/abc123abcdef/create", timestamp, nonce);
+  const expired = new Request("https://gateway.test/v1/workspaces/abc123abcdef/create", { method: "POST", headers: {
     "x-sandbox-timestamp": timestamp,
     "x-sandbox-nonce": nonce,
     "x-sandbox-signature": signature,
   } });
   assert.equal((await verifyRequest(secret, expired, new Uint8Array())).ok, false);
   const current = String(Date.now());
-  const wrongKeySig = await signRequest("wrong-key", "POST", "/v1/self-test", current, nonce);
-  const wrongKey = new Request("https://gateway.test/v1/self-test", { method: "POST", headers: {
+  const wrongKeySig = await signRequest("wrong-key", "POST", "/v1/workspaces/abc123abcdef/create", current, nonce);
+  const wrongKey = new Request("https://gateway.test/v1/workspaces/abc123abcdef/create", { method: "POST", headers: {
     "x-sandbox-timestamp": current,
     "x-sandbox-nonce": nonce,
     "x-sandbox-signature": wrongKeySig,

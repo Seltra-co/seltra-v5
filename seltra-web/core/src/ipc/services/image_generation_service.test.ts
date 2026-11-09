@@ -66,6 +66,8 @@ describe("ImageGenerationService", () => {
   let service: ImageGenerationService;
 
   beforeEach(() => {
+    vi.stubEnv("SELTRA_ENGINE_URL", "http://localhost:3001/v1");
+    vi.stubEnv("SELTRA_ENGINE_API_KEY", "test-api-key");
     fs.rmSync(tempBase, { recursive: true, force: true });
     harness = setupHandlerTestHarness();
     service = new ImageGenerationService();
@@ -80,6 +82,7 @@ describe("ImageGenerationService", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     harness.dispose();
     fs.rmSync(tempBase, { recursive: true, force: true });
   });
@@ -92,6 +95,25 @@ describe("ImageGenerationService", () => {
       targetAppId: appId,
     });
   }
+
+  it("writes blueprint photo slots into public assets inside Core", async () => {
+    const imageBytes = Buffer.from("test-png-bytes");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      created: 1,
+      data: [{ b64_json: imageBytes.toString("base64") }],
+    }), { status: 200 })));
+
+    const result = await service.generate({
+      requestId: "blueprint-photo",
+      prompt: "A tiny lighthouse",
+      themeMode: "real-photography",
+      targetAppId: appId,
+      assetSlot: "photo-1-lighthouse",
+    });
+
+    expect(result.publicAssetPath).toBe("public/assets/photo-1-lighthouse.png");
+    await expect(fs.promises.readFile(path.join(tempBase, "test-app", "public", "assets", "photo-1-lighthouse.png"))).resolves.toEqual(imageBytes);
+  });
 
   async function cancel(requestId: string): Promise<{ cancelled: boolean }> {
     return { cancelled: service.cancel(requestId) };

@@ -19,7 +19,7 @@ export class WorkspaceCleanupService {
       })
       for (const cleanup of pending) {
         try {
-          await destroyCoreWorkspace(cleanup.workspaceKey)
+          await destroyCoreWorkspace(cleanup.workspaceKey, 'cleanup_retry')
           await prisma.workspaceCleanup.delete({ where: { id: cleanup.id } })
         } catch (error) {
           const attempts = cleanup.attempts + 1

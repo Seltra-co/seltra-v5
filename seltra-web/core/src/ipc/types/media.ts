@@ -61,6 +61,11 @@ export const MoveMediaFileParamsSchema = z.object({
   fileName: z.string(),
   targetAppId: z.number(),
 });
+export const CopyGeneratedMediaToPublicAssetParamsSchema = z.object({
+  appId: z.number().int().positive(),
+  fileName: z.string().min(1).max(255).refine((name) => !name.includes('/') && !name.includes('\\') && name !== '.' && name !== '..'),
+  slot: z.string().min(1).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+});
 
 // =============================================================================
 // Media Contracts
@@ -100,6 +105,11 @@ export const mediaContracts = {
     channel: "move-media-file",
     input: MoveMediaFileParamsSchema,
     output: z.void(),
+  }),
+  copyGeneratedMediaToPublicAsset: defineContract({
+    channel: "persist-generated-media-as-public-asset",
+    input: CopyGeneratedMediaToPublicAssetParamsSchema,
+    output: z.object({ path: z.string() }).strict(),
   }),
 } as const;
 

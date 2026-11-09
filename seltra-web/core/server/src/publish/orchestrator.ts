@@ -202,15 +202,16 @@ export class PublishOrchestrator {
     let priorRoute: RouteRecord | undefined;
     try {
       await this.stage(begun.deploymentId, "PREPARING_WORKSPACE", "Preparing the workspace.", lease);
-      await this.stage(begun.deploymentId, "SAVING_SOURCE", "Saving the application source to its private repository.", lease);
+      const expectedVisibility = this.config.deployMode === "hobby" ? "public" : "private";
+      await this.stage(begun.deploymentId, "SAVING_SOURCE", `Saving the application source to its ${expectedVisibility} repository.`, lease);
       await this.durability.persist(runtime, "manual", `publish:${begun.deploymentId}`);
       const app = await this.backend<PublishApp>("publish/repository-info", { userId: claims.sub, workspaceKey: claims.coreWorkspaceKey, coreAppId });
       const repoId = app.githubRepoId;
       const repoName = app.githubRepoFullName;
       const sourceSha = app.lastPushedSha;
-      if (!repoId || !repoName || app.githubRepoVisibility !== "private" || !sourceSha) throw coded("SOURCE_NOT_SAVED", "A verified private GitHub source revision is required before deployment.");
+      if (!repoId || !repoName || app.githubRepoVisibility !== expectedVisibility || !sourceSha) throw coded("SOURCE_NOT_SAVED", `A verified ${expectedVisibility} GitHub source revision is required before deployment.`);
       const repo = await this.github!.ensureRepo(app.tenantAppId);
-      if (repo.visibility !== "private" || repo.id !== repoId || repo.fullName.toLowerCase() !== repoName.toLowerCase()) throw coded("REPOSITORY_PRIVACY_REQUIRED", "The saved repository identity or privacy could not be verified.");
+      if (repo.visibility !== expectedVisibility || repo.id !== repoId || repo.fullName.toLowerCase() !== repoName.toLowerCase()) throw coded("REPOSITORY_VISIBILITY_REQUIRED", "The saved repository identity or visibility could not be verified.");
       if (!await this.github!.verifyRemoteSha(repo, sourceSha, app.githubDefaultBranch || "main")) throw coded("GITHUB_PUSH_FAILED", "The saved application revision is not present on GitHub.");
 
       await this.stage(begun.deploymentId, "BUILDING", "Preparing a pinned deployment.", lease);

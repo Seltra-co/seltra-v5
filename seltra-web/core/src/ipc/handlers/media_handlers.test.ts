@@ -7,6 +7,7 @@ import { apps } from "@/db/schema";
 import { DyadErrorKind } from "@/errors/dyad_error";
 import { activeRecordings } from "@/ipc/services/recording_registry";
 import { DYAD_MEDIA_DIR_NAME } from "@/ipc/utils/media_path_utils";
+import { mediaContracts } from "@/ipc/types/media";
 import {
   type HandlerTestHarness,
   setupHandlerTestHarness,
@@ -24,6 +25,10 @@ vi.mock("electron", () => ({
 const { registerMediaHandlers } = await import("./media_handlers");
 
 describe("media move recording admission", () => {
+  it("does not expose the raw raster file-writing RPC", () => {
+    expect("saveRasterAsset" in mediaContracts).toBe(false);
+  });
+
   let harness: HandlerTestHarness;
   let tempRoot: string;
 

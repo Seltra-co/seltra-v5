@@ -276,6 +276,7 @@ export function createRpcServer(
         skipReason: processDiagnostics ? processDiagnostics.skipReason : "process_diagnostics_unavailable",
         mappingSkipReason: processDiagnostics ? processDiagnostics.mappingSkipReason : "process_diagnostics_unavailable",
         loopbackProbeAttempts: processDiagnostics?.loopbackProbeAttempts ?? [],
+        lastProbeResult: processDiagnostics?.loopbackProbeAttempts?.at(-1) ?? null,
       });
       return;
     }

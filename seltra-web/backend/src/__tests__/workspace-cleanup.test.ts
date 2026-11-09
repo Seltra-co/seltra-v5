@@ -24,7 +24,7 @@ describe('destroyCoreWorkspace', () => {
     expect(global.fetch).toHaveBeenCalledTimes(2)
     expect(global.fetch).toHaveBeenLastCalledWith(
       'https://core.example.test/internal/workspaces/destroy',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ workspaceKey: '0123456789abcdef' }) }),
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ workspaceKey: '0123456789abcdef', caller: 'store_delete' }) }),
     )
   })
 })

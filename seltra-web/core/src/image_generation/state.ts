@@ -28,6 +28,7 @@ export interface GenerateImageResponse {
   appPath: string;
   appId: number;
   appName: string;
+  publicAssetPath?: string;
 }
 
 export type ImageGenerationResultView = Omit<
@@ -40,6 +41,7 @@ export interface StartImageGenerationParams {
   themeMode: ImageThemeMode;
   targetAppId: number;
   targetAppName: string;
+  assetSlot?: string;
   source?: "chat" | "media-library";
 }
 

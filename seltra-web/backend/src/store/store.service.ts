@@ -992,7 +992,7 @@ export class StoreService {
     return updated
   }
 
-  async delete(id: string, authorization?: string) {
+  async delete(id: string, authorization?: string, runId?: string) {
     const ownerId = await this.getUserIdFromAuth(authorization, true)
     const tenant = await prisma.tenant.findUnique({ where: { id } })
     if (!tenant || tenant.ownerId !== ownerId) {
@@ -1001,7 +1001,7 @@ export class StoreService {
 
     if (tenant.coreWorkspaceKey) {
       try {
-        await destroyCoreWorkspace(tenant.coreWorkspaceKey)
+        await destroyCoreWorkspace(tenant.coreWorkspaceKey, 'store_delete', runId)
         await prisma.workspaceCleanup.deleteMany({ where: { workspaceKey: tenant.coreWorkspaceKey } })
       } catch (error) {
         const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'GATEWAY_DESTROY_FAILED'

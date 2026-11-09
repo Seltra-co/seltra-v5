@@ -39,6 +39,7 @@ export const ImageGenerationResultViewSchema = z
     fileName: z.string(),
     appId: z.number(),
     appName: z.string(),
+    publicAssetPath: z.string().optional(),
   })
   .strict();
 

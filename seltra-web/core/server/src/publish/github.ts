@@ -36,19 +36,20 @@ export class GithubPublisher {
   async ensureRepo(tenantAppId: string): Promise<GithubRepository> {
     const token = await this.installationToken();
     const name = `${this.options.repoPrefix}${tenantAppId.toLowerCase()}`;
+    const shouldBePrivate = this.options.mode !== "hobby";
     let response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.org)}/${encodeURIComponent(name)}`, { headers: githubHeaders(token) });
     if (response.status === 404) {
       response = await this.fetcher(`https://api.github.com/orgs/${encodeURIComponent(this.options.org)}/repos`, {
-        method: "POST", headers: githubHeaders(token), body: JSON.stringify({ name, private: true, auto_init: false }),
+        method: "POST", headers: githubHeaders(token), body: JSON.stringify({ name, private: shouldBePrivate, auto_init: false }),
       });
       if (response.status === 422) {
         response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.org)}/${encodeURIComponent(name)}`, { headers: githubHeaders(token) });
       }
     } else if (response.ok) {
       const existing = await response.clone().json() as { private?: boolean };
-      if (existing.private === false) {
+      if (existing.private !== shouldBePrivate) {
         response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.org)}/${encodeURIComponent(name)}`, {
-          method: "PATCH", headers: githubHeaders(token), body: JSON.stringify({ private: true }),
+          method: "PATCH", headers: githubHeaders(token), body: JSON.stringify({ private: shouldBePrivate }),
         });
       }
     }

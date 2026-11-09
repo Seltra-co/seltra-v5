@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
 import { filterChildEnvironment } from './security.js'
-import { createWorkspaceExecutionProvider, type WorkspaceExecutionProvider } from './execution_provider.js'
+import { createWorkspaceExecutionProvider, type ExecutionRequest, type WorkspaceExecutionProvider } from './execution_provider.js'
 import { seltraEngineModelBaseUrl } from './model_gateway_url.js'
 
 export type WorkspaceRuntime = {
@@ -20,6 +20,7 @@ export type WorkspaceRuntime = {
   syncFromExecution?: () => Promise<void>
   child: ChildProcess
   executionName: string
+  traceId?: string
   touchedAt: number
 }
 
@@ -108,6 +109,8 @@ async function getOrCreateSecretsKey(filename: string, restoredKey?: string) {
 export class WorkspaceSupervisor {
   private readonly runtimes = new Map<string, WorkspaceRuntime>()
   private readonly starts = new Map<string, Promise<WorkspaceRuntime>>()
+  private readonly startsByWorkspaceKey = new Map<string, Promise<WorkspaceRuntime>>()
+  private readonly destroyingWorkspaceKeys = new Map<string, number>()
   private readonly timer: NodeJS.Timeout
   private readonly executionProvider: WorkspaceExecutionProvider
 
@@ -117,7 +120,10 @@ export class WorkspaceSupervisor {
     this.timer.unref()
   }
 
-  async get(workspaceId: string, workspaceKey: string, storeSlug: string, userId: string, engineApiKey: string) {
+  async get(workspaceId: string, workspaceKey: string, storeSlug: string, userId: string, engineApiKey: string, caller = 'unknown', traceId?: string, intent: ExecutionRequest['intent'] = 'user_send') {
+    const destroyUntil = this.destroyingWorkspaceKeys.get(workspaceKey)
+    if (destroyUntil && destroyUntil > Date.now()) throw Object.assign(new Error('Workspace is being deleted.'), { code: 'WORKSPACE_DESTROYED', status: 410 })
+    if (destroyUntil) this.destroyingWorkspaceKeys.delete(workspaceKey)
     const active = this.runtimes.get(workspaceId)
     if (active && active.child.exitCode === null) {
       if (active.workspaceKey !== workspaceKey) throw Object.assign(new Error('Workspace key does not match the active runtime.'), { code: 'WORKSPACE_KEY_MISMATCH', status: 403 })
@@ -127,10 +133,22 @@ export class WorkspaceSupervisor {
     }
     const pending = this.starts.get(workspaceId)
     if (pending) return pending
-    console.info(JSON.stringify({ event: 'workspace_create_requested', projectId: workspaceId, workspaceKey, at: new Date().toISOString() }))
-    const start = this.start(workspaceId, workspaceKey, storeSlug, userId, engineApiKey)
+    const pendingByWorkspace = this.startsByWorkspaceKey.get(workspaceKey)
+    if (pendingByWorkspace) {
+      const runtime = await pendingByWorkspace
+      if (runtime.storeSlug !== storeSlug) throw Object.assign(new Error('Store slug changed. Restart the workspace runtime before continuing.'), { code: 'STORE_SLUG_MISMATCH', status: 409 })
+      if (runtime.userId !== userId) throw Object.assign(new Error('Workspace owner changed. Restart the workspace runtime before continuing.'), { code: 'WORKSPACE_OWNER_MISMATCH', status: 403 })
+      this.runtimes.set(workspaceId, runtime)
+      return runtime
+    }
+    console.info(JSON.stringify({ event: 'workspace_create_requested', projectId: workspaceId, workspaceKey, caller, ...(traceId ? { traceId } : {}), at: new Date().toISOString() }))
+    const start = this.start(workspaceId, workspaceKey, storeSlug, userId, engineApiKey, caller, traceId, intent)
     this.starts.set(workspaceId, start)
-    try { return await start } finally { this.starts.delete(workspaceId) }
+    this.startsByWorkspaceKey.set(workspaceKey, start)
+    try { return await start } finally {
+      if (this.starts.get(workspaceId) === start) this.starts.delete(workspaceId)
+      if (this.startsByWorkspaceKey.get(workspaceKey) === start) this.startsByWorkspaceKey.delete(workspaceKey)
+    }
   }
 
   getByKey(workspaceKey: string) {
@@ -143,6 +161,13 @@ export class WorkspaceSupervisor {
     return null
   }
 
+  getExisting(workspaceId: string, workspaceKey: string, userId: string, storeSlug: string) {
+    const runtime = this.runtimes.get(workspaceId)
+    if (!runtime || runtime.child.exitCode !== null || runtime.workspaceKey !== workspaceKey || runtime.userId !== userId || runtime.storeSlug !== storeSlug) return null
+    runtime.touchedAt = Date.now()
+    return runtime
+  }
+
   async assertExecutionReady(): Promise<void> { await this.executionProvider.assertReady() }
   get executionMode(): 'host' | 'docker' | 'cloudflare' { return this.executionProvider.mode }
   async executionHealth() {
@@ -152,39 +177,27 @@ export class WorkspaceSupervisor {
 
   listRuntimes(): WorkspaceRuntime[] { return [...this.runtimes.values()] }
 
-  async reapGatewayWorkspaces(activeWorkspaceKeys: Set<string>, idleMs: number) {
-    const provider = this.executionProvider as WorkspaceExecutionProvider & {
-      listWorkspaces?: () => Promise<Array<{ workspaceKey: string; lastSeenAt: number }>>
-      destroyWorkspace?: (workspaceKey: string) => Promise<void>
-    }
-    if (!provider.listWorkspaces || !provider.destroyWorkspace) return { scanned: 0, destroyed: 0 }
-    const workspaces = await provider.listWorkspaces()
-    let destroyed = 0
-    const activeRuntimeKeys = new Set([...this.runtimes.values()].map((runtime) => runtime.workspaceKey))
-    for (const workspace of workspaces) {
-      if (activeRuntimeKeys.has(workspace.workspaceKey)) continue
-      if (activeWorkspaceKeys.has(workspace.workspaceKey) && Date.now() - workspace.lastSeenAt < idleMs) continue
-      await provider.destroyWorkspace(workspace.workspaceKey)
-      destroyed++
-    }
-    return { scanned: workspaces.length, destroyed }
-  }
-
-  async destroyWorkspace(workspaceKey: string) {
+  async destroyWorkspace(workspaceKey: string, caller = 'unknown', traceId?: string, reason: 'delete' | 'idle' | 'destroy' = 'destroy') {
+    this.destroyingWorkspaceKeys.set(workspaceKey, Date.now() + 60_000)
+    // A delete can race a cold start after its entitlement check; wait for that keyed create, then destroy its one runtime.
+    const starting = this.startsByWorkspaceKey.get(workspaceKey)
+    if (starting) await starting.catch(() => undefined)
     const pending = [...this.runtimes.entries()].find(([, runtime]) => runtime.workspaceKey === workspaceKey)
     const provider = this.executionProvider as WorkspaceExecutionProvider & { destroyWorkspace?: (key: string) => Promise<void> }
     if (pending) {
       this.runtimes.delete(pending[0])
-      console.info(JSON.stringify({ event: 'workspace_destroy_requested', projectId: pending[0], workspaceKey, reason: 'explicit_destroy', at: new Date().toISOString() }))
-      await this.executionProvider.stop(pending[1].executionName, pending[1].child)
+      console.info(JSON.stringify({ event: 'workspace_destroy_requested', projectId: pending[0], workspaceKey, reason, caller, ...(traceId ? { traceId } : {}), at: new Date().toISOString() }))
+      await this.executionProvider.stop(pending[1].executionName, pending[1].child, { caller, traceId, reason })
+      console.info(JSON.stringify({ event: 'workspace_stopped', projectId: pending[0], workspaceKey, reason, caller, ...(traceId ? { traceId } : {}), at: new Date().toISOString() }))
       return
     }
     if (!provider.destroyWorkspace) return
-    console.info(JSON.stringify({ event: 'workspace_destroy_requested', workspaceKey, reason: 'gateway_destroy', at: new Date().toISOString() }))
-    await provider.destroyWorkspace(workspaceKey)
+    console.info(JSON.stringify({ event: 'workspace_destroy_requested', workspaceKey, reason, caller, ...(traceId ? { traceId } : {}), at: new Date().toISOString() }))
+    await provider.destroyWorkspace(workspaceKey, { caller, traceId, reason })
+    console.info(JSON.stringify({ event: 'workspace_stopped', workspaceKey, reason, caller, ...(traceId ? { traceId } : {}), at: new Date().toISOString() }))
   }
 
-  private async start(workspaceId: string, workspaceKey: string, storeSlug: string, userId: string, engineApiKey: string): Promise<WorkspaceRuntime> {
+  private async start(workspaceId: string, workspaceKey: string, storeSlug: string, userId: string, engineApiKey: string, caller: string, traceId: string | undefined, intent: ExecutionRequest['intent']): Promise<WorkspaceRuntime> {
     await this.executionProvider.assertReady()
     if (this.runtimes.size >= this.options.maxActive) {
       throw Object.assign(new Error('Builder capacity is full. Try again shortly.'), { code: 'WORKSPACE_CAPACITY', status: 429 })
@@ -230,7 +243,7 @@ export class WorkspaceSupervisor {
         VITE_SELTRA_API_URL: this.options.publicApiUrl.replace(/\/$/, ''),
         VITE_SELTRA_STORE_SLUG: storeSlug,
       }
-    const request = { name: executionName, workspaceRoot: root, hostPort: port, runtimeEnv,
+    const request: ExecutionRequest = { name: executionName, workspaceRoot: root, hostPort: port, runtimeEnv, caller, traceId, projectId: workspaceId, intent,
       runtimeEntry: path.join(this.options.root, 'dist/runtime/runtime_main.js'),
       nativeHook: path.join(this.options.root, 'scripts/web/native-require-hook.cjs'), runtimeRoot: this.options.root }
     let remote: Awaited<ReturnType<NonNullable<WorkspaceExecutionProvider['startRemote']>>> | undefined
@@ -241,11 +254,12 @@ export class WorkspaceSupervisor {
       throw error
     }
     const child = remote?.child ?? this.executionProvider.spawn(request)
-    const runtime = { workspaceId, workspaceKey, storeSlug, userId, baseUrl: remote?.baseUrl ?? `http://127.0.0.1:${port}`, rpcSecret, runtimeSecretsKey: secretsKey, modelToken, signGatewayRequest: remote?.signRequest, syncFromExecution: remote?.syncFromExecution, child, executionName, touchedAt: Date.now() }
+    const runtime = { workspaceId, workspaceKey, storeSlug, userId, baseUrl: remote?.baseUrl ?? `http://127.0.0.1:${port}`, rpcSecret, runtimeSecretsKey: secretsKey, modelToken, signGatewayRequest: remote?.signRequest, syncFromExecution: remote?.syncFromExecution, child, executionName, traceId, touchedAt: Date.now() }
     this.runtimes.set(workspaceId, runtime)
-    console.info(JSON.stringify({ event: 'workspace_container_ready', projectId: workspaceId, workspaceKey, at: new Date().toISOString(), provider: this.executionProvider.mode }))
+      console.info(JSON.stringify({ event: 'workspace_container_started', projectId: workspaceId, workspaceKey, caller, ...(traceId ? { traceId } : {}), provider: this.executionProvider.mode, instanceId: runtime.executionName, at: new Date().toISOString() }))
+    console.info(JSON.stringify({ event: 'workspace_container_ready', projectId: workspaceId, workspaceKey, caller, ...(traceId ? { traceId } : {}), at: new Date().toISOString(), provider: this.executionProvider.mode }))
     child.once('exit', (code, signal) => {
-      console.info(JSON.stringify({ event: 'workspace_container_stopped', projectId: workspaceId, workspaceKey, reason: 'runtime_process_exit', exitCode: code, signal, at: new Date().toISOString() }))
+      console.info(JSON.stringify({ event: 'workspace_container_stopped', projectId: workspaceId, workspaceKey, reason: 'runtime_process_exit', caller, ...(traceId ? { traceId } : {}), exitCode: code, signal, at: new Date().toISOString() }))
       if (this.runtimes.get(workspaceId) === runtime) this.runtimes.delete(workspaceId)
     })
     try { if (!remote) await waitForRuntime(port, child) } catch (error) {
@@ -254,7 +268,8 @@ export class WorkspaceSupervisor {
         error: error instanceof Error ? error.message : String(error),
       }))
       try {
-        await this.executionProvider.stop(executionName, child)
+        if (remote) this.executionProvider.release?.(executionName, child)
+        else await this.executionProvider.stop(executionName, child, { caller, traceId, reason: 'destroy' })
       } catch {
         if (this.executionProvider.mode === 'cloudflare') await this.options.onWorkspaceCleanupPending?.(workspaceId, workspaceKey).catch(() => undefined)
       }
@@ -276,8 +291,13 @@ export class WorkspaceSupervisor {
           }
         }
         this.runtimes.delete(id)
+        if (this.executionProvider.mode === 'cloudflare') {
+          this.executionProvider.release?.(runtime.executionName, runtime.child)
+          console.info(JSON.stringify({ event: 'workspace_runtime_handle_released', projectId: id, workspaceKey: runtime.workspaceKey, reason: 'idle_timeout', caller: 'workspace_supervisor', at: new Date().toISOString() }))
+          continue
+        }
         console.info(JSON.stringify({ event: 'workspace_idle_destroy_requested', projectId: id, workspaceKey: runtime.workspaceKey, reason: 'idle_timeout', at: new Date().toISOString() }))
-        await this.executionProvider.stop(runtime.executionName, runtime.child)
+        await this.executionProvider.stop(runtime.executionName, runtime.child, { caller: 'workspace_supervisor', reason: 'idle' })
       }
     }
   }
@@ -286,6 +306,8 @@ export class WorkspaceSupervisor {
     clearInterval(this.timer)
     const runtimes = [...this.runtimes.values()]
     this.runtimes.clear()
-    await Promise.all(runtimes.map((runtime) => this.executionProvider.stop(runtime.executionName, runtime.child)))
+    await Promise.all(runtimes.map((runtime) => this.executionProvider.mode === 'cloudflare'
+      ? this.executionProvider.release?.(runtime.executionName, runtime.child)
+      : this.executionProvider.stop(runtime.executionName, runtime.child, { caller: 'workspace_supervisor', reason: 'destroy' })))
   }
 }

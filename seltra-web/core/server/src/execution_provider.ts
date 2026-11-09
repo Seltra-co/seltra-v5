@@ -12,6 +12,10 @@ export type ExecutionRequest = {
   runtimeEntry: string
   nativeHook: string
   runtimeRoot: string
+  projectId: string
+  intent: 'user_send' | 'user_approve' | 'preview_open' | 'restore' | 'e2e'
+  caller?: string
+  traceId?: string
 }
 
 export interface WorkspaceExecutionProvider {
@@ -19,8 +23,9 @@ export interface WorkspaceExecutionProvider {
   assertReady(): Promise<void>
   spawn(request: ExecutionRequest): ChildProcess
   startRemote?(request: ExecutionRequest): Promise<{ child: ChildProcess; baseUrl: string; signRequest: (method: string, path: string) => Record<string, string>; syncFromExecution: () => Promise<void> }>
-  stop(name: string, child: ChildProcess): Promise<void>
-  destroyWorkspace?(workspaceKey: string): Promise<void>
+  stop(name: string, child: ChildProcess, context?: { caller?: string; traceId?: string; reason?: 'delete' | 'idle' | 'destroy' }): Promise<void>
+  release?(name: string, child: ChildProcess): void
+  destroyWorkspace?(workspaceKey: string, context?: { caller?: string; traceId?: string; reason?: 'delete' | 'idle' | 'destroy' }): Promise<void>
   listWorkspaces?(): Promise<Array<{ workspaceKey: string; createdAt: number; lastSeenAt: number }>>
   readonly runtimePort?: number
 }
@@ -68,21 +73,14 @@ export class CloudflareSandboxProvider implements WorkspaceExecutionProvider {
     catch { this.gatewayReachable = false; throw new Error('Cloudflare sandbox gateway is unreachable.') }
     this.gatewayReachable = health.ok
     if (!health.ok) throw new Error('Cloudflare sandbox gateway health check failed.')
-    const testPath = '/v1/self-test'
-    try {
-      const response = await this.send(testPath, 'POST', '{}', 210_000)
-      const result = await response.json().catch(() => ({})) as { ok?: boolean }
-      if (!response.ok || result.ok !== true) throw new Error('Self-test returned failure.')
-      console.info(JSON.stringify({ event: 'sandbox_gateway_startup_self_test', status: 'passed' }))
-    } catch {
-      console.error(JSON.stringify({ event: 'sandbox_gateway_startup_self_test', status: 'failed' }))
-      throw new Error('Cloudflare sandbox gateway startup self-test failed.')
-    }
   }
 
   async startRemote(request: ExecutionRequest) {
     const workspaceKey = request.runtimeEnv.DYAD_WORKSPACE_ID
     if (!workspaceKey || !/^[a-f0-9]{12,128}$/i.test(workspaceKey)) throw new Error('Cloudflare sandbox requires a valid workspace key.')
+    // WorkspaceSupervisor is reached only after Core verifies active project entitlement; the signed gateway body binds that project identity to this create.
+    if (!request.projectId || !/^[A-Za-z0-9_-]{1,128}$/.test(request.projectId)) throw new Error('Cloudflare sandbox requires an active project identity.')
+    if (!['user_send', 'user_approve', 'preview_open', 'restore', 'e2e'].includes(request.intent)) throw new Error('Cloudflare sandbox create requires a user intent.')
     const runtimeEnv = Object.fromEntries(Object.entries(request.runtimeEnv).filter(([name, value]) => REMOTE_RUNTIME_ENV.has(name) && typeof value === 'string')) as Record<string, string>
     runtimeEnv.DYAD_USER_DATA = '/workspace/userData'
     runtimeEnv.DYAD_APPS_DIR = '/workspace/apps'
@@ -90,13 +88,14 @@ export class CloudflareSandboxProvider implements WorkspaceExecutionProvider {
     runtimeEnv.RUNTIME_RPC_HOST = '0.0.0.0'
     runtimeEnv.RUNTIME_RPC_PORT = String(this.runtimePort)
     const route = `/v1/workspaces/${workspaceKey}/create`
-    const response = await this.send(route, 'POST', JSON.stringify({ workspaceKey, env: runtimeEnv }), 120_000)
+    console.info(JSON.stringify({ event: 'sandbox_create_entry', workspaceId: request.projectId, workspaceKey, intent: request.intent, caller: request.caller ?? 'unknown', ...(request.traceId ? { traceId: request.traceId } : {}), stack: new Error('Cloudflare sandbox create caller').stack?.split('\n').slice(1, 9).map((line) => line.replaceAll(this.gatewayUrl, '[gateway]').replaceAll(this.signingSecret, '[redacted]')).join('\n') }))
+    const response = await this.send(route, 'POST', JSON.stringify({ workspaceKey, projectId: request.projectId, intent: request.intent, env: runtimeEnv }), 120_000, { caller: request.caller, traceId: request.traceId })
     if (!response.ok) throw new Error(`Cloudflare sandbox create failed (${response.status}).`)
     const result = await response.json().catch(() => ({})) as { sandboxId?: string }
     if (!result.sandboxId) throw new Error('Cloudflare sandbox create returned an invalid response.')
     this.handles.set(request.name, workspaceKey)
     try { await this.uploadWorkspace(request.workspaceRoot, workspaceKey) }
-    catch (error) { await this.stop(request.name, createRemoteHandle()); throw error }
+    catch (error) { this.release(request.name, createRemoteHandle()); throw error }
     return {
       child: createRemoteHandle(),
       baseUrl: `${this.gatewayUrl}/v1/workspaces/${workspaceKey}/runtime`,
@@ -107,21 +106,26 @@ export class CloudflareSandboxProvider implements WorkspaceExecutionProvider {
 
   spawn(_request: ExecutionRequest): ChildProcess { throw new Error('Cloudflare sandboxes require startRemote().') }
 
-  async stop(name: string, child: ChildProcess) {
+  async stop(name: string, child: ChildProcess, context?: { caller?: string; traceId?: string; reason?: 'delete' | 'idle' | 'destroy' }) {
     const workspaceKey = this.handles.get(name)
     if (workspaceKey) {
-      await this.destroyWorkspace(workspaceKey)
+      await this.destroyWorkspace(workspaceKey, context)
       this.handles.delete(name)
     }
     if (child.exitCode === null) (child as unknown as { exitCode: number | null }).exitCode = 0
   }
 
-  async destroyWorkspace(workspaceKey: string) {
+  release(name: string, child: ChildProcess) {
+    this.handles.delete(name)
+    if (child.exitCode === null) (child as unknown as { exitCode: number | null }).exitCode = 0
+  }
+
+  async destroyWorkspace(workspaceKey: string, context?: { caller?: string; traceId?: string; reason?: 'delete' | 'idle' | 'destroy' }) {
     if (!/^[a-f0-9]{12,128}$/i.test(workspaceKey)) throw new Error('Invalid workspace key.')
     let lastStatus = 0
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const response = await this.send(`/v1/workspaces/${workspaceKey}/destroy`, 'POST', '{}', 20_000)
+        const response = await this.send(`/v1/workspaces/${workspaceKey}/destroy`, 'POST', '{}', 20_000, { ...context, reason: context?.reason ?? 'destroy' })
         lastStatus = response.status
         if (response.ok) return
       } catch {}
@@ -154,10 +158,10 @@ export class CloudflareSandboxProvider implements WorkspaceExecutionProvider {
     return { 'x-sandbox-timestamp': timestamp, 'x-sandbox-nonce': nonce, 'x-sandbox-signature': signature }
   }
 
-  private send(route: string, method: string, body = '', timeoutMs = 30_000) {
+  private send(route: string, method: string, body = '', timeoutMs = 30_000, trace?: { caller?: string; traceId?: string; reason?: 'delete' | 'idle' | 'destroy' }) {
     return this.fetchImpl(`${this.gatewayUrl}${route}`, {
       method,
-      headers: { ...this.signRequest(method, route), ...(body ? { 'content-type': 'application/json' } : {}) },
+      headers: { ...this.signRequest(method, route), ...(body ? { 'content-type': 'application/json' } : {}), ...(trace?.caller ? { 'x-seltra-caller': trace.caller } : {}), ...(trace?.traceId ? { 'x-seltra-run-id': trace.traceId } : {}), ...(trace?.reason ? { 'x-sandbox-destroy-reason': trace.reason } : {}) },
       ...(body ? { body } : {}),
       signal: AbortSignal.timeout(timeoutMs),
     })

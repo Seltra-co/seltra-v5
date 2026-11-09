@@ -14,6 +14,7 @@ import {
 } from "../services/app_operation_coordinator";
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import log from "electron-log";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
@@ -208,6 +209,27 @@ export function registerMediaHandlers() {
       mimeType: getMimeType(path.extname(params.fileName).toLowerCase()),
       base64: (await fs.promises.readFile(filePath)).toString("base64"),
     };
+  });
+
+  createTypedHandler(mediaContracts.copyGeneratedMediaToPublicAsset, async (_, params) => {
+    return await withMediaLock([params.appId], async () => {
+      const app = await getAppOrThrow(params.appId);
+      const appPath = getDyadAppPath(app.path);
+      const sourcePath = getMediaFilePath(appPath, params.fileName);
+      const extension = path.extname(params.fileName).toLowerCase();
+      if (![".png", ".jpg", ".jpeg", ".webp"].includes(extension)) {
+        throw new DyadError("Generated photo assets must be PNG, JPEG, or WebP rasters.", DyadErrorKind.Validation);
+      }
+      const stat = await fs.promises.stat(sourcePath);
+      if (!stat.isFile() || stat.size === 0 || stat.size > 20 * 1024 * 1024) {
+        throw new DyadError("Generated image is empty or exceeds the asset size limit.", DyadErrorKind.Validation);
+      }
+      const relativePath = `public/assets/${params.slot}${extension}`;
+      const destinationPath = safeJoin(appPath, "public", "assets", `${params.slot}${extension}`);
+      await fs.promises.mkdir(path.dirname(destinationPath), { recursive: true });
+      await fs.promises.copyFile(sourcePath, destinationPath);
+      return { path: relativePath };
+    }, [params.appId]);
   });
 
   createTypedHandler(mediaContracts.listAllMedia, async () => {

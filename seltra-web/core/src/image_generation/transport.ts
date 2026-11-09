@@ -40,6 +40,7 @@ const startParamsSchema = z
     themeMode: ImageThemeModeSchema,
     targetAppId: z.number().int().positive(),
     targetAppName: z.string().min(1),
+    assetSlot: z.string().regex(/^photo-[1-9]\d?-[a-z0-9-]{1,48}$/).optional(),
     source: z.enum(["chat", "media-library"]).optional(),
   })
   .strict();
@@ -74,6 +75,7 @@ const resultViewSchema = z
     fileName: z.string(),
     appId: z.number().int().positive(),
     appName: z.string(),
+    publicAssetPath: z.string().optional(),
   })
   .strict();
 
@@ -119,6 +121,7 @@ export function projectImageGenerationRemoteSnapshot(
               fileName: job.result.fileName,
               appId: job.result.appId,
               appName: job.result.appName,
+              ...(job.result.publicAssetPath ? { publicAssetPath: job.result.publicAssetPath } : {}),
             },
           }
         : {}),

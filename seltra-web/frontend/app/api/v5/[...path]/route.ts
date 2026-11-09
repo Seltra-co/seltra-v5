@@ -33,11 +33,13 @@ async function proxy(req: NextRequest, path: string[]) {
   const cookie = req.headers.get('cookie')
   const idempotencyKey = req.headers.get('idempotency-key')
   const lastEventId = req.headers.get('last-event-id')
+  const runId = req.headers.get('x-seltra-run-id')
   if (contentType) headers.set('content-type', contentType)
   if (authorization) headers.set('authorization', authorization)
   if (cookie) headers.set('cookie', cookie)
   if (idempotencyKey) headers.set('idempotency-key', idempotencyKey)
   if (lastEventId) headers.set('last-event-id', lastEventId)
+  if (runId && /^[a-f0-9-]{36}$/i.test(runId)) headers.set('x-seltra-run-id', runId)
 
   const init: RequestInit = {
     method: req.method,

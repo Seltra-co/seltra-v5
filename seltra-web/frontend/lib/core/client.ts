@@ -47,6 +47,7 @@ function unwrapCoreIpcEnvelope<T>(value: unknown): T {
 
 export class CoreClient {
   private workspaceIdValue?: string
+  readonly traceId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
   constructor(private readonly getSession: () => Promise<CoreSession>, private readonly refreshSession: () => Promise<CoreSession> = getSession) {}
 
   get workspaceId() { return this.workspaceIdValue }
@@ -72,6 +73,7 @@ export class CoreClient {
       method: 'POST', headers: {
         authorization: `Bearer ${session.coreToken}`,
         'content-type': 'application/json',
+        'x-seltra-run-id': this.traceId,
         ...(runtimeSession ? { 'x-runtime-session': runtimeSession } : {}),
       }, body,
     })
@@ -102,12 +104,36 @@ export class CoreClient {
     return unwrapCoreIpcEnvelope<T>(result.result)
   }
 
+  async probePreview(appId: number): Promise<{ ready: boolean; status: number }> {
+    const session = await this.getSession()
+    const response = await fetch(`${this.baseUrl}/api/preview/probe`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${session.coreToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ appId }),
+      cache: 'no-store',
+    })
+    const result = await response.json().catch(() => ({})) as { ready?: unknown; status?: unknown; error?: { message?: string } }
+    if (!response.ok || typeof result.ready !== 'boolean' || typeof result.status !== 'number') throw new Error(result.error?.message || 'Could not verify the app preview.')
+    return { ready: result.ready, status: result.status }
+  }
+
+  async prewarm(intent: 'user_send' | 'user_approve' | 'restore' = 'user_send'): Promise<void> {
+    const session = await this.getSession()
+    const response = await fetch(`${this.baseUrl}/api/workspace/prewarm`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${session.coreToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ intent }),
+      cache: 'no-store',
+    })
+    if (!response.ok) throw new Error('Core workspace prewarm failed.')
+  }
+
   async wsTicket(): Promise<string> {
     const accessToken = localStorage.getItem('seltra:token')
     const session = await this.getSession()
     this.workspaceIdValue = session.workspaceId
     const response = await fetchWithSeltraAuth('/api/v5/builder/ws-ticket', {
-      method: 'POST', headers: { authorization: `Bearer ${accessToken || ''}`, 'content-type': 'application/json' },
+      method: 'POST', headers: { authorization: `Bearer ${accessToken || ''}`, 'content-type': 'application/json', 'x-seltra-run-id': this.traceId },
       body: JSON.stringify({ tenantId: session.workspaceId, coreToken: session.coreToken }), cache: 'no-store',
     })
     const payload = await response.json().catch(() => ({})) as { ticket?: string; message?: string }

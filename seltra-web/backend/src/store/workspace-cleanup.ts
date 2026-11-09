@@ -1,4 +1,4 @@
-export async function destroyCoreWorkspace(workspaceKey: string) {
+export async function destroyCoreWorkspace(workspaceKey: string, caller = 'store_delete', runId?: string) {
   const baseUrl = (process.env.CORE_PUBLIC_URL ?? '').replace(/\/$/, '')
   const secret = process.env.CORE_SERVICE_SECRET ?? ''
   if (!baseUrl || secret.length < 32) throw Object.assign(new Error('Core workspace destroy is not configured.'), { code: 'CORE_DESTROY_NOT_CONFIGURED' })
@@ -6,8 +6,8 @@ export async function destroyCoreWorkspace(workspaceKey: string) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const response = await fetch(`${baseUrl}/internal/workspaces/destroy`, {
-        method: 'POST', headers: { 'content-type': 'application/json', 'x-core-service-secret': secret },
-        body: JSON.stringify({ workspaceKey }), signal: AbortSignal.timeout(12_000),
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-core-service-secret': secret, ...(runId && /^[a-f0-9-]{36}$/i.test(runId) ? { 'x-seltra-run-id': runId } : {}) },
+        body: JSON.stringify({ workspaceKey, caller, ...(runId && /^[a-f0-9-]{36}$/i.test(runId) ? { traceId: runId } : {}) }), signal: AbortSignal.timeout(12_000),
       })
       status = response.status
       if (response.ok) return

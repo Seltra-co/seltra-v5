@@ -195,15 +195,22 @@ describe('PublishService', () => {
       tenantAppId: app.id,
       status: DeploymentStatus.QUEUED,
       deployMode: PublishDeployMode.hobby,
-      repoVisibility: 'private',
+      repoVisibility: 'public',
       events: { create: { seq: 1, status: DeploymentStatus.QUEUED, message: 'Publish queued.' } },
     }) }))
   })
 
-  it('records private repository metadata only', async () => {
+  it('records public repository metadata in hobby mode', async () => {
+    db.tenantApp.findFirst.mockResolvedValue(app)
+    await service.repositorySaved({ userId: 'user-1', workspaceKey: 'workspace-1', coreAppId: 7, githubRepoId: 'repo-1', githubRepoFullName: 'Seltra-Cloud/app-1', githubRepoVisibility: 'public' })
+    expect(db.tenantApp.update).toHaveBeenCalledWith({ where: { id: app.id }, data: expect.objectContaining({ githubRepoVisibility: 'public' }) })
+  })
+
+  it('keeps team repository metadata private', async () => {
+    process.env.DEPLOY_MODE = 'team'
     db.tenantApp.findFirst.mockResolvedValue(app)
     await expect(service.repositorySaved({ userId: 'user-1', workspaceKey: 'workspace-1', coreAppId: 7, githubRepoId: 'repo-1', githubRepoFullName: 'Seltra-Cloud/app-1', githubRepoVisibility: 'public' }))
-      .rejects.toMatchObject({ status: 409, response: expect.objectContaining({ code: 'REPOSITORY_PRIVACY_REQUIRED' }) })
+      .rejects.toMatchObject({ status: 409, response: expect.objectContaining({ code: 'REPOSITORY_VISIBILITY_REQUIRED' }) })
     expect(db.tenantApp.update).not.toHaveBeenCalled()
   })
 

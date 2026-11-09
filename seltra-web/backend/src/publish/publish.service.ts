@@ -175,7 +175,7 @@ export class PublishService implements OnModuleInit {
           } : {}),
           ...(app.liveDeploymentId ? { previousDeploymentId: app.liveDeploymentId } : {}),
           deployMode,
-          repoVisibility: PublishRepoVisibility.private,
+          repoVisibility: mode() === PublishDeployMode.hobby ? PublishRepoVisibility.public : PublishRepoVisibility.private,
           lastEventSeq: 1,
           events: { create: { seq: 1, status: DeploymentStatus.QUEUED, message: 'Publish queued.' } },
         },
@@ -406,6 +406,7 @@ export class PublishService implements OnModuleInit {
         publicationStatus: PublishPublicationStatus.PUBLISHED,
         publishedUrl: `https://${deployment.slug}.${process.env.PUBLISH_ROOT_DOMAIN || 'seltra.co'}`,
         lastCommitSha: deployment.sourceCommitSha,
+        deploymentUrl: deployment.vercelOrigin,
       } })
     })
     return { outcome: 'LIVE' }
@@ -430,6 +431,7 @@ export class PublishService implements OnModuleInit {
     const degraded = Boolean(input.error)
     await prisma.tenantApp.update({ where: { id: app.id }, data: {
       lastPushedSha: input.sha ?? app.lastPushedSha,
+      commitSha: input.sha ?? app.commitSha,
       lastPushedAt: degraded ? app.lastPushedAt : new Date(),
       lastPushError: input.error?.slice(0, 500) ?? null,
       sourceState: input.kind === 'COMPLETE' ? PublishSourceState.COMPLETE : PublishSourceState.INTERRUPTED,
@@ -499,20 +501,25 @@ export class PublishService implements OnModuleInit {
       slug: app.tenant.slug,
       githubRepoId: app.githubRepoId,
       githubRepoFullName: app.githubRepoFullName,
+      repoUrl: app.repoUrl,
       githubRepoVisibility: app.githubRepoVisibility,
       githubDefaultBranch: app.githubDefaultBranch,
       lastPushedSha: app.lastPushedSha,
+      commitSha: app.commitSha,
       vercelProjectId: app.vercelProjectId,
       vercelProjectName: app.vercelProjectName,
+      deploymentUrl: app.deploymentUrl,
     }
   }
 
   async repositorySaved(input: { userId: string; workspaceKey: string; coreAppId: number; githubRepoId: string; githubRepoFullName: string; githubRepoVisibility: 'public' | 'private'; githubDefaultBranch?: string }) {
-    if (input.githubRepoVisibility !== 'private') throw httpError(HttpStatus.CONFLICT, 'REPOSITORY_PRIVACY_REQUIRED', 'Merchant source repositories must remain private.')
+    const expectedVisibility = mode() === PublishDeployMode.hobby ? 'public' : 'private'
+    if (input.githubRepoVisibility !== expectedVisibility) throw httpError(HttpStatus.CONFLICT, 'REPOSITORY_VISIBILITY_REQUIRED', `Source repositories must be ${expectedVisibility} in the configured deploy mode.`)
     const app = await this.resolveOwnedApp(input.userId, input.coreAppId, input.workspaceKey)
     await prisma.tenantApp.update({ where: { id: app.id }, data: {
       githubRepoId: input.githubRepoId,
       githubRepoFullName: input.githubRepoFullName,
+      repoUrl: `https://github.com/${input.githubRepoFullName}`,
       githubRepoVisibility: input.githubRepoVisibility,
       ...(input.githubDefaultBranch ? { githubDefaultBranch: input.githubDefaultBranch } : {}),
     } })
@@ -563,6 +570,10 @@ export class PublishService implements OnModuleInit {
       deployMode: mode(),
       publicationStatus: app.publicationStatus,
       liveUrl: app.publishedUrl,
+      repoUrl: app.repoUrl,
+      commitSha: app.commitSha ?? app.lastPushedSha,
+      vercelProjectId: app.vercelProjectId,
+      deploymentUrl: app.deploymentUrl,
       live: app.liveDeploymentId ? await prisma.deployment.findUnique({ where: { id: app.liveDeploymentId } }) : null,
       current: active,
       ...(queuePosition ? { queuePosition } : {}),

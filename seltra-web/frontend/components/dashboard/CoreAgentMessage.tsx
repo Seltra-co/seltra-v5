@@ -195,7 +195,7 @@ export function CoreTodoProgress({ todos }: { todos: CoreTodo[] }) {
   </section>
 }
 
-function BlueprintCard({ blueprint, onApprove, onNameChange }: { blueprint: CoreBlueprint; onApprove: () => Promise<void>; onNameChange: (name: string) => void }) {
+function BlueprintCard({ blueprint, onApprove, onNameChange, approvalError }: { blueprint: CoreBlueprint; onApprove: () => Promise<void>; onNameChange: (name: string) => void; approvalError?: string }) {
   const [name, setName] = useState(blueprint.appName)
   const [approving, setApproving] = useState(false)
   return <section className="my-4 w-full min-w-0 max-w-[680px] overflow-hidden rounded-2xl border border-emerald-400/20 bg-[#171b19] p-4 shadow-[0_16px_50px_rgba(0,0,0,.18)]">
@@ -204,7 +204,8 @@ function BlueprintCard({ blueprint, onApprove, onNameChange }: { blueprint: Core
     <p className="mt-3 text-sm leading-6 text-white/65">{blueprint.designDirection || 'Core will build the app from your prompt.'}</p>
     <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/55">{blueprint.templateId && <span className="rounded-full bg-white/[0.06] px-2.5 py-1">Template: {blueprint.templateId}</span>}{blueprint.themeId && <span className="rounded-full bg-white/[0.06] px-2.5 py-1">Theme: {blueprint.themeId}</span>}{blueprint.primaryColor && <span className="rounded-full bg-white/[0.06] px-2.5 py-1">Color: {blueprint.primaryColor}</span>}</div>
     {blueprint.visuals?.length ? <ul className="mt-3 space-y-1 text-xs text-white/55">{blueprint.visuals.map((visual, index) => <li key={`${visual.type}-${index}`}>{visual.type}: {visual.description}</li>)}</ul> : null}
-    <div className="mt-4 flex justify-end"><button type="button" disabled={approving || !name.trim()} onClick={async () => { setApproving(true); try { await onApprove() } catch { /* The dashboard reports the Core operation error. */ } finally { setApproving(false) } }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-[#082012] hover:bg-emerald-300 disabled:opacity-50">{approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}Approve and build</button></div>
+    {approvalError && <p role="alert" className="mt-3 rounded-lg border border-rose-300/20 bg-rose-300/[0.06] px-3 py-2 text-sm text-rose-100">{approvalError}</p>}
+    <div className="mt-4 flex justify-end"><button type="button" disabled={approving || !name.trim()} onClick={async () => { setApproving(true); try { await onApprove() } catch { /* The dashboard reports the Core operation error. */ } finally { setApproving(false) } }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-[#082012] hover:bg-emerald-300 disabled:opacity-50">{approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{approvalError ? 'Retry approval' : 'Approve and build'}</button></div>
   </section>
 }
 
@@ -260,7 +261,7 @@ function GeneratedAssets({ assets, loadAsset }: { assets: Array<Extract<MessageB
   </section>
 }
 
-export function CoreAgentMessage({ content, streamingPreview = '', isStreaming, todos, questionnaire, blueprint, onQuestionnaireSubmit, onBlueprintApprove, onBlueprintNameChange, loadAsset, compactStream = false }: { content: string; streamingPreview?: string; isStreaming?: boolean; todos?: CoreTodo[]; questionnaire?: CoreQuestionnaire; blueprint?: CoreBlueprint; onQuestionnaireSubmit?: (answers: Record<string, string> | null) => void; onBlueprintApprove?: () => Promise<void>; onBlueprintNameChange?: (name: string) => void; loadAsset?: (path: string) => Promise<string>; compactStream?: boolean }) {
+export function CoreAgentMessage({ content, streamingPreview = '', isStreaming, todos, questionnaire, blueprint, onQuestionnaireSubmit, onBlueprintApprove, onBlueprintNameChange, loadAsset, approvalError, compactStream = false }: { content: string; streamingPreview?: string; isStreaming?: boolean; todos?: CoreTodo[]; questionnaire?: CoreQuestionnaire; blueprint?: CoreBlueprint; onQuestionnaireSubmit?: (answers: Record<string, string> | null) => void; onBlueprintApprove?: () => Promise<void>; onBlueprintNameChange?: (name: string) => void; loadAsset?: (path: string) => Promise<string>; approvalError?: string; compactStream?: boolean }) {
   const blocks = useMemo(() => parseMessage(content), [content])
   const previewBlocks = useMemo(() => streamingPreview ? parseMessage(streamingPreview) : [], [streamingPreview])
   const hasQuestionnaireStatus = blocks.some((block) => block.kind === 'status' && /questionnaire/i.test(block.title))
@@ -268,7 +269,7 @@ export function CoreAgentMessage({ content, streamingPreview = '', isStreaming, 
   return <div className="w-full min-w-0 max-w-[680px] overflow-x-hidden text-[15px] leading-7 text-white/90">
     {!compactStream && isStreaming && content.trim() ? <CoreActivity hasResponse /> : null}
     {blocks.map((block, index) => {
-      if (block.kind === 'blueprint') return blueprint && onBlueprintApprove ? <BlueprintCard key={`blueprint-${index}`} blueprint={blueprint} onApprove={onBlueprintApprove} onNameChange={onBlueprintNameChange ?? (() => undefined)} /> : null
+      if (block.kind === 'blueprint') return blueprint && onBlueprintApprove ? <BlueprintCard key={`blueprint-${index}`} blueprint={blueprint} onApprove={onBlueprintApprove} onNameChange={onBlueprintNameChange ?? (() => undefined)} approvalError={approvalError} /> : null
       if (block.kind === 'asset') {
         if (blocks[index - 1]?.kind === 'asset') return null
         const assets: Array<Extract<MessageBlock, { kind: 'asset' }>> = []
@@ -284,7 +285,7 @@ export function CoreAgentMessage({ content, streamingPreview = '', isStreaming, 
       return <p key={`text-${index}`} className="my-2 min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{block.content.replace(/\n{3,}/g, '\n\n').trim()}</p>
     })}
     {previewBlocks.filter((block): block is Extract<MessageBlock, { kind: 'asset' }> => block.kind === 'asset').map((asset, index) => <GeneratedAssets key={`streaming-asset-${asset.prompt}-${index}`} assets={[asset]} loadAsset={loadAsset} />)}
-    {blueprint && onBlueprintApprove && !hasBlueprintBlock ? <BlueprintCard blueprint={blueprint} onApprove={onBlueprintApprove} onNameChange={onBlueprintNameChange ?? (() => undefined)} /> : null}
+    {blueprint && onBlueprintApprove && !hasBlueprintBlock ? <BlueprintCard blueprint={blueprint} onApprove={onBlueprintApprove} onNameChange={onBlueprintNameChange ?? (() => undefined)} approvalError={approvalError} /> : null}
     {questionnaire && onQuestionnaireSubmit ? <CoreQuestionnaireCard key={questionnaire.requestId} questionnaire={questionnaire} onSubmit={onQuestionnaireSubmit} /> : null}
     {!compactStream && todos?.length ? <CoreTodoProgress todos={todos} /> : null}
   </div>

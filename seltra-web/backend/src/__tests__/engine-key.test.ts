@@ -86,6 +86,25 @@ describe('workspace Engine keys', () => {
     )
   })
 
+  it('does not mint a websocket ticket from a stale Core token after its project is deleted', async () => {
+    const jwt = new JwtService()
+    const builder = new BuilderService(jwt, {
+      getAccountSnapshot: jest.fn(async () => ({ windowAllowance: 100, balance: 100 })),
+    } as never)
+    const sessionToken = await jwt.signAsync(
+      { sub: 'user-1' },
+      { secret: process.env.JWT_SECRET },
+    )
+    const coreToken = await jwt.signAsync(
+      { workspaceId: 'tenant-1', coreWorkspaceKey: 'core-key-1' },
+      { secret: process.env.CORE_TOKEN_SECRET, issuer: 'seltra-api', audience: 'seltra-core', subject: 'user-1', expiresIn: '10m' },
+    )
+
+    mocks.tenant = { ...mocks.tenant, status: 'deleted' }
+    await expect(builder.createWsTicket(`Bearer ${sessionToken}`, 'tenant-1', coreToken))
+      .rejects.toThrow('You do not have access to this workspace.')
+  })
+
   it('provisions an idempotent tenant-scoped key encrypted at rest and accepted by Engine auth', async () => {
     const key = await provisionEngineKey('tenant-1')
     const stored = mocks.keys[0]

@@ -32,3 +32,4 @@ seltra-web/core/.sandbox-gateway-secrets/
 /AI-CORE-INTEGRATION-ARCHITECTURE.md
 /deploy-fail.log
 /.phase5-logs/
+/.logs/

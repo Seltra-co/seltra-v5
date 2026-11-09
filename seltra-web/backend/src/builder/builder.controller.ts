@@ -26,8 +26,8 @@ export class BuilderController {
   }
 
   @Post('ws-ticket')
-  createWsTicket(@Headers('authorization') authorization: string | undefined, @Body() body: BuilderSessionDto) {
-    return this.builder.createWsTicket(authorization, body.tenantId, body.coreToken)
+  createWsTicket(@Headers('authorization') authorization: string | undefined, @Headers('x-seltra-run-id') runId: string | undefined, @Body() body: BuilderSessionDto) {
+    return this.builder.createWsTicket(authorization, body.tenantId, body.coreToken, runId)
   }
 
   @Get('apps')

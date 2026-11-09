@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common'
+import { ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { prisma } from '../db'
@@ -16,10 +16,22 @@ function workspaceFileMime(filePath: string) {
   return extension ? types[extension] : undefined
 }
 
+function redactedErrorStack(error: unknown) {
+  let stack = error instanceof Error ? error.stack ?? `${error.name}: ${error.message}` : String(error)
+  for (const value of Object.values(process.env)) {
+    if (typeof value === 'string' && value.length >= 8) stack = stack.split(value).join('[redacted]')
+  }
+  return stack
+    .replace(/Bearer\s+[^\s"']+/gi, 'Bearer [redacted]')
+    .replace(/((?:token|secret|password|authorization|api[_-]?key)\s*[=:]\s*)[^\s,;]+/gi, '$1[redacted]')
+}
+
 @Injectable()
 export class BuilderService {
   private readonly logger = new Logger(BuilderService.name)
   private readonly redeemedTickets = new Map<string, number>()
+  private wsTicketIssuedCount = 0
+  private wsTicketFailureCount = 0
   constructor(private readonly jwt: JwtService, private readonly credits: CreditsService) {}
 
   private coreSecret() {
@@ -44,7 +56,7 @@ export class BuilderService {
       where: { id: tenantId, ownerId: userId },
       include: { owner: { select: { plan: true, email: true } } },
     }))
-    if (!tenant) throw new ForbiddenException('You do not have access to this workspace.')
+    if (!tenant) throw new NotFoundException('Workspace not found.')
     if (tenant.status !== 'active') throw new ForbiddenException('This workspace is not active.')
     const plan = tenant.owner?.plan ?? 'free'
     const creditAccount = await this.measureSessionStage(tenantId, requestId, 'credit snapshot', () => this.credits.getAccountSnapshot(userId, plan))
@@ -122,26 +134,44 @@ export class BuilderService {
   async listApps(authorization: string | undefined, tenantId: string) {
     const userId = await resolveUserIdFromAuthorization(authorization, this.jwt)
     const tenant = await prisma.tenant.findFirst({ where: { id: tenantId, ownerId: userId }, select: { id: true } })
-    if (!tenant) throw new ForbiddenException('You do not have access to this workspace.')
+    if (!tenant) throw new NotFoundException('Workspace not found.')
     return prisma.tenantApp.findMany({ where: { tenantId }, orderBy: { updatedAt: 'desc' } })
   }
 
-  async createWsTicket(authorization: string | undefined, tenantId: string, coreToken?: string) {
+  async createWsTicket(authorization: string | undefined, tenantId: string, coreToken?: string, runId?: string) {
     const startedAt = Date.now()
-    const session = coreToken
-      ? await this.jwt.verifyAsync<{ workspaceId?: string }>(coreToken, {
-          secret: this.coreSecret(), algorithms: ['HS256'], issuer: 'seltra-api', audience: 'seltra-core',
-        }).then((claims) => {
-          if (claims.workspaceId !== tenantId) throw new UnauthorizedException('Invalid Core session.')
-          return { workspaceId: claims.workspaceId }
-        })
-      : await this.createSession(authorization, tenantId)
-    const ticket = await this.jwt.signAsync(
-      { workspaceId: session.workspaceId, jti: randomUUID() },
-      { secret: this.coreSecret(), algorithm: 'HS256', issuer: 'seltra-api', audience: 'seltra-core-ws', subject: session.workspaceId, expiresIn: '30s' },
-    )
-    this.logger.log(JSON.stringify({ event: 'core_project_phase', projectId: tenantId, phase: 'ticket issued', at: new Date().toISOString(), durationMs: Date.now() - startedAt, reusedCoreSession: Boolean(coreToken) }))
-    return { ticket, expiresIn: 30 }
+    const traceId = runId && /^[a-f0-9-]{36}$/i.test(runId) ? runId : undefined
+    try {
+      const userId = await resolveUserIdFromAuthorization(authorization, this.jwt)
+      if (!userId) throw new ForbiddenException('Authentication is required to start a builder session.')
+      // A still-valid Core JWT must not mint tickets after its tenant was deleted or access revoked.
+      const tenant = await prisma.tenant.findFirst({
+        where: { id: tenantId, ownerId: userId, status: 'active' },
+        select: { id: true, status: true, coreWorkspaceKey: true },
+      })
+      if (!tenant || tenant.status !== 'active') throw new ForbiddenException('You do not have access to this workspace.')
+
+      const session = coreToken
+        ? await this.jwt.verifyAsync<{ workspaceId?: string; sub?: string; coreWorkspaceKey?: string }>(coreToken, {
+            secret: this.coreSecret(), algorithms: ['HS256'], issuer: 'seltra-api', audience: 'seltra-core',
+          }).then((claims) => {
+            if (claims.workspaceId !== tenantId || claims.sub !== userId || claims.coreWorkspaceKey !== tenant.coreWorkspaceKey)
+              throw new UnauthorizedException('Invalid Core session.')
+            return { workspaceId: claims.workspaceId }
+          })
+        : await this.createSession(authorization, tenantId)
+      const ticket = await this.jwt.signAsync(
+        { workspaceId: session.workspaceId, jti: randomUUID() },
+        { secret: this.coreSecret(), algorithm: 'HS256', issuer: 'seltra-api', audience: 'seltra-core-ws', subject: session.workspaceId, expiresIn: '30s' },
+      )
+      this.wsTicketIssuedCount += 1
+      this.logger.log(JSON.stringify({ event: 'core_project_phase', projectId: tenantId, ...(traceId ? { traceId } : {}), phase: 'ticket issued', at: new Date().toISOString(), durationMs: Date.now() - startedAt, reusedCoreSession: Boolean(coreToken), issuedCount: this.wsTicketIssuedCount, failedCount: this.wsTicketFailureCount }))
+      return { ticket, expiresIn: 30 }
+    } catch (error) {
+      this.wsTicketFailureCount += 1
+      this.logger.warn(JSON.stringify({ event: 'core_project_phase', projectId: tenantId, ...(traceId ? { traceId } : {}), phase: 'ticket failed', at: new Date().toISOString(), durationMs: Date.now() - startedAt, failureCount: this.wsTicketFailureCount, code: error instanceof Error && 'code' in error ? String((error as Error & { code?: unknown }).code ?? error.name) : error instanceof Error ? error.name : 'unknown', stack: redactedErrorStack(error) }))
+      throw error
+    }
   }
 
   async redeemWsTicket(ticket: string) {
@@ -174,7 +204,7 @@ export class BuilderService {
   async syncCoreAppState(authorization: string | undefined, input: { tenantId: string; coreAppId: number; name?: string; corePath?: string; status?: string; previewUrl?: string; eventType?: string; blueprint?: Record<string, unknown>; approved?: boolean }) {
     const userId = await resolveUserIdFromAuthorization(authorization, this.jwt)
     const tenant = await prisma.tenant.findFirst({ where: { id: input.tenantId, ownerId: userId }, select: { id: true } })
-    if (!tenant) throw new ForbiddenException('You do not have access to this workspace.')
+    if (!tenant) throw new NotFoundException('Workspace not found.')
     const eventType = input.eventType && /^[a-z0-9._-]{1,80}$/i.test(input.eventType) ? input.eventType : 'app.state.updated'
     if (input.blueprint && Buffer.byteLength(JSON.stringify(input.blueprint)) > 64 * 1024) throw new ForbiddenException('Blueprint payload exceeds the storage limit.')
     const visuals = Array.isArray(input.blueprint?.visuals)

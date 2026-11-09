@@ -19,8 +19,10 @@ async function proxy(req: NextRequest, path: string[]) {
   const headers = new Headers()
   const contentType = req.headers.get('content-type')
   const authorization = req.headers.get('authorization')
+  const runId = req.headers.get('x-seltra-run-id')
   if (contentType) headers.set('content-type', contentType)
   if (authorization) headers.set('authorization', authorization)
+  if (runId && /^[a-f0-9-]{36}$/i.test(runId)) headers.set('x-seltra-run-id', runId)
 
   const init: RequestInit = {
     method: req.method,

@@ -174,8 +174,8 @@ export class StoreController {
   }
 
   @Delete(':id')
-  delete(@Param('id') id: string, @Headers('authorization') authorization?: string) {
-    return this.storeService.delete(id, authorization)
+  delete(@Param('id') id: string, @Headers('authorization') authorization?: string, @Headers('x-seltra-run-id') runId?: string) {
+    return this.storeService.delete(id, authorization, runId)
   }
 
   @Post(':id/regenerate')
