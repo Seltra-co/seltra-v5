@@ -24,6 +24,8 @@ export type BrowserEvidence = {
   screenshot: Buffer;
   url: string;
   errors: string[];
+  consoleErrors: string[];
+  failedRequests: string[];
 };
 
 export async function captureBrowserEvidence(
@@ -57,21 +59,28 @@ export async function captureBrowserEvidence(
     });
     const page = await context.newPage();
     const errors: string[] = [];
+    const consoleErrors: string[] = [];
+    const failedRequests: string[] = [];
     page.on("console", (message) => {
-      if (message.type() === "error")
+      if (message.type() === "error") {
         errors.push(`console.error: ${message.text()}`);
+        consoleErrors.push(message.text());
+      }
     });
     page.on("pageerror", (error) => errors.push(`uncaught: ${error.message}`));
-    page.on("requestfailed", (request) =>
-      errors.push(
-        `request failed: ${request.method()} ${request.url()} (${request.failure()?.errorText ?? "unknown"})`,
-      ),
-    );
+    page.on("requestfailed", (request) => {
+      const failure = `${request.method()} ${request.url()} (${request.failure()?.errorText ?? "unknown"})`;
+      errors.push(`request failed: ${failure}`);
+      failedRequests.push(failure);
+    });
     page.on("response", (response) => {
-      if (response.status() >= 400)
+      if (response.status() >= 400) {
+        const failure = `HTTP ${response.status()}: ${response.request().method()} ${response.url()}`;
         errors.push(
-          `HTTP ${response.status()}: ${response.request().method()} ${response.url()}`,
+          failure,
         );
+        failedRequests.push(failure);
+      }
     });
     await page
       .goto(target.toString(), {
@@ -93,6 +102,8 @@ export async function captureBrowserEvidence(
       screenshot,
       url: target.toString(),
       errors: [...new Set(errors)].slice(0, 40),
+      consoleErrors: [...new Set(consoleErrors)].slice(0, 40),
+      failedRequests: [...new Set(failedRequests)].slice(0, 40),
     };
   } finally {
     await browser.close();

@@ -202,17 +202,7 @@ export const writeAppBlueprintTool: ToolDefinition<
       ctx.enableAppBlueprint !== false &&
       !existingBlueprint &&
       !ctx.appBlueprintQuestionnaireCompleted &&
-      ctx.planningQuestionnaireAvailable === false
-    ) {
-      throw new DyadError(
-        "The initial app blueprint requires planning_questionnaire, but that tool is disabled in Settings → Build and Agent Permissions. Set planning_questionnaire to Ask or Always allow, then retry this request.",
-        DyadErrorKind.Precondition,
-      );
-    }
-    if (
-      ctx.enableAppBlueprint !== false &&
-      !existingBlueprint &&
-      !ctx.appBlueprintQuestionnaireCompleted
+      ctx.planningQuestionnaireAvailable !== false
     ) {
       throw new DyadError(
         "The initial app blueprint requires a successfully completed planning_questionnaire. Call planning_questionnaire, wait for the user's answers, then retry write_app_blueprint.",

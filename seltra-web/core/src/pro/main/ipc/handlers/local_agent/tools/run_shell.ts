@@ -36,9 +36,9 @@ const schema = z.object({
 
 export const runShellTool: ToolDefinition<z.infer<typeof schema>> = {
   name: "run_shell",
-  description: "Run an independently reviewed app command on the host.",
+  description: "Run an independently reviewed command inside the isolated app workspace.",
   getDescription: (ctx) =>
-    "Run an independently reviewed app command on the host. " +
+    "Run an independently reviewed command inside the isolated app workspace. " +
     shellExecutionGuidance(
       process.platform,
       ctx.appPath ?? "current app directory",
@@ -81,7 +81,10 @@ export const runShellTool: ToolDefinition<z.infer<typeof schema>> = {
     const available = () => {
       const settings = readSettings();
       const mode = runningApps.get(ctx.appId)?.mode;
-      if (mode === "cloud" || mode === "docker") return false;
+      if (
+        (mode === "cloud" && process.env.DYAD_WEB_RUNTIME !== "1") ||
+        mode === "docker"
+      ) return false;
       return isShellExperimentAvailable({
         settings,
         isDyadPro: ctx.isDyadPro && isDyadProEnabled(settings),

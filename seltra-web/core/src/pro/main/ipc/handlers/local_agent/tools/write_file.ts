@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import log from "electron-log";
 import {
@@ -71,10 +72,19 @@ export const writeFileTool: ToolDefinition<z.infer<typeof writeFileSchema>> = {
 
       // Write file content
       fs.writeFileSync(fullFilePath, args.content);
+      const written = fs.readFileSync(fullFilePath);
+      const expected = Buffer.from(args.content);
+      const sha256 = createHash("sha256").update(written).digest("hex");
+      if (!written.equals(expected)) {
+        throw new Error(`File write verification failed for ${operationPath}`);
+      }
       logger.log(`Successfully wrote file: ${fullFilePath}`);
       broadcastToRegisteredWindows(ctx.event.sender, "agent-tool:file-written", {
         chatId: ctx.chatId,
         appId: ctx.appId,
+        path: operationPath.replaceAll("\\", "/"),
+        bytes: written.byteLength,
+        sha256,
       });
       queueCloudSandboxSnapshotSync({
         appId: ctx.appId,

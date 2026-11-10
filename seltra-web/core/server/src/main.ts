@@ -31,7 +31,7 @@ import { isWebChannelAllowed } from "../../src/web/channel_policy.js";
 import { isPrimaryGatewayHost } from "../../src/web/primary_gateway_host.js";
 import { rewritePreviewUrls } from "../../src/web/preview_urls.js";
 import { WorkspaceSupervisor, type WorkspaceRuntime } from "./workspace_supervisor.js";
-import { browserPreviewProbeUrl, probeBrowserPreview } from "./preview_probe.js";
+import { browserPreviewProbeUrl } from "./preview_probe.js";
 import {
   parseFigmaFileUrl,
   retrieveFigmaReference,
@@ -169,6 +169,24 @@ async function performWorkspaceFileBatches(
       return;
     }
   }
+  const verifiedFiles = files.map((file) => {
+    const bytes = file.content.startsWith("base64:")
+      ? Buffer.from(file.content.slice(7), "base64")
+      : Buffer.from(file.content, "utf8");
+    return { path: file.path.replaceAll("\\", "/"), sha256: createHash("sha256").update(bytes).digest("hex") };
+  });
+  const verification = await fetch(`${config.NEST_INTERNAL_URL.replace(/\/+$/, "")}/api/v5/builder/workspace/files-verify`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-core-service-secret": config.CORE_SERVICE_SECRET },
+    body: JSON.stringify({ tenantId: claims.workspaceId, files: verifiedFiles }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!verification.ok) {
+    console.error(JSON.stringify({ event: "workspace_files_verify_failed", tenantId: claims.workspaceId, status: verification.status }));
+    return;
+  }
+  const result = await verification.json().catch(() => null) as { verified?: boolean; mismatches?: string[] } | null;
+  console.info(JSON.stringify({ event: "workspace_manifest_verified", tenantId: claims.workspaceId, verified: result?.verified === true, mismatches: result?.mismatches ?? [] }));
 }
 
 class HttpError extends Error {
@@ -2156,6 +2174,42 @@ async function main(): Promise<void> {
         if (!Number.isSafeInteger(body.appId) || Number(body.appId) < 1)
           throw new HttpError(400, "INVALID_REQUEST", "A valid app ID is required.");
         const appId = Number(body.appId);
+        const runtime = await runtimeFor(claims, 'preview_open', undefined, 'preview_open');
+        let upstreamStatus = 0;
+        try {
+          if (runtime.signGatewayRequest) {
+            const route = `/v1/workspaces/${runtime.workspaceKey}/preview/${appId}/`;
+            const gatewayUrl = new URL(route, runtime.baseUrl.replace(/\/runtime$/, ''));
+            const response = await fetch(gatewayUrl, {
+              headers: { ...runtime.signGatewayRequest('GET', route), accept: 'text/html' },
+              redirect: 'manual',
+              signal: AbortSignal.timeout(5_000),
+            });
+            upstreamStatus = response.status;
+            await response.body?.cancel().catch(() => undefined);
+          } else {
+            const targetResponse = await fetch(`${runtime.baseUrl}/internal/preview-target/${appId}`, {
+              headers: { authorization: `Bearer ${runtime.rpcSecret}` },
+              signal: AbortSignal.timeout(3_000),
+            });
+            const target = targetResponse.ok ? await targetResponse.json() as { appId?: number; host?: string; port?: number; previewHost?: string } : null;
+            if (target?.appId === appId && target.host === '127.0.0.1' && Number.isInteger(target.port) && target.port! >= 1024 && target.port! <= 65535 && (target.previewHost === 'localhost' || target.previewHost === `app-${appId}.localhost`)) {
+              const response = await fetch(`http://127.0.0.1:${target.port}/`, {
+                headers: { host: `${target.previewHost}:${target.port}`, accept: 'text/html' },
+                redirect: 'manual',
+                signal: AbortSignal.timeout(5_000),
+              });
+              upstreamStatus = response.status;
+              await response.body?.cancel().catch(() => undefined);
+            }
+          }
+        } catch (error) {
+          console.warn(JSON.stringify({ event: 'preview_upstream_probe', projectId: claims.workspaceId, appId, status: upstreamStatus, errorName: error instanceof Error ? error.name : typeof error }));
+        }
+        if (upstreamStatus !== 200) {
+          sendJson(response, 200, { ready: false, status: upstreamStatus });
+          return;
+        }
         const label = `ws-${claims.coreWorkspaceKey}-app-${appId}`;
         const previewToken = await issuePreviewToken(label, claims);
         const probeUrl = browserPreviewProbeUrl({
@@ -2165,16 +2219,11 @@ async function main(): Promise<void> {
           port: config.previewPort,
           token: previewToken,
         });
-        let probe: Awaited<ReturnType<typeof probeBrowserPreview>>;
-        try {
-          probe = await probeBrowserPreview(probeUrl);
-        } catch (error) {
-          console.warn(JSON.stringify({ event: "preview_browser_path_probe", projectId: claims.workspaceId, appId, status: 0, errorName: error instanceof Error ? error.name : typeof error }));
-          sendJson(response, 200, { ready: false, status: 0 });
-          return;
-        }
-        console.info(JSON.stringify({ event: "preview_browser_path_probe", projectId: claims.workspaceId, appId, status: probe.status, ready: probe.ready, ...(probe.redactedBodyPrefix ? { redactedBodyPrefix: probe.redactedBodyPrefix } : {}) }));
-        sendJson(response, 200, { ready: probe.ready, status: probe.status });
+        sendJson(response, 200, {
+          ready: true,
+          status: upstreamStatus,
+          previewUrl: probeUrl,
+        });
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/workspace/prewarm") {

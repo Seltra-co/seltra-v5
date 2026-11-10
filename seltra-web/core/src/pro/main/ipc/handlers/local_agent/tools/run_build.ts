@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 import log from "electron-log/main";
 import { z } from "zod";
@@ -34,6 +35,7 @@ import { getPackageManagerCommandEnv } from "@/ipc/utils/socket_firewall";
 import type { AppFrameworkType } from "@/lib/framework_constants";
 import { getUserDataPath } from "@/paths/paths";
 import { isPlaywrightAvailable } from "@/web/playwright_health";
+import { broadcastToRegisteredWindows } from "@/ipc/utils/window_broadcast";
 import type { AgentContext, ToolDefinition } from "./types";
 import { escapeXmlAttr, escapeXmlContent } from "./types";
 
@@ -452,7 +454,10 @@ export const runBuildTool: ToolDefinition<z.infer<typeof runBuildSchema>> = {
             count: 0,
           } satisfies BuildAttemptState);
           const currentMutationCount = ctx.mutationCount ?? 0;
-          if (runningApps.get(ctx.appId)?.mode === "cloud") {
+          if (
+            runningApps.get(ctx.appId)?.mode === "cloud" &&
+            process.env.DYAD_WEB_RUNTIME !== "1"
+          ) {
             throw new DyadError(
               "Production build verification is unavailable while this app is running in a cloud sandbox because the build would run on the host instead of inside that sandbox. Switch the app runtime to Host and try again.",
               DyadErrorKind.Precondition,
@@ -587,6 +592,13 @@ export const runBuildTool: ToolDefinition<z.infer<typeof runBuildSchema>> = {
               timeoutMs: Math.max(1, abortScope.deadlineAt - Date.now()),
               onOutput: buildOutputPreview.append,
             }).finally(buildOutputPreview.flush);
+            broadcastToRegisteredWindows(ctx.event.sender, "agent-tool:build-result", {
+              appId: ctx.appId,
+              chatId: ctx.chatId,
+              executed: true,
+              exitCode: result.code,
+              timedOut: abortScope.timedOut() || result.timedOut,
+            });
             const buildMs = Date.now() - buildStartedAt;
             const timing = snapshot
               ? `Mode: isolated (${snapshot.strategy}); snapshot setup: ${snapshot.setupMs} ms; dependency install: ${dependencyInstallMs} ms; build: ${buildMs} ms.`
@@ -632,13 +644,31 @@ export const runBuildTool: ToolDefinition<z.infer<typeof runBuildSchema>> = {
                     "\n\nBrowser runtime QA was not run because no preview URL is available. Run repair_app after the preview is available before declaring the work complete.";
                   statusTitle = "Build passed; browser QA unavailable";
                   status = "warning";
-                } else if (evidence.errors.length > 0) {
+                } else {
+                  const screenshotPath = "public/assets/qa-screenshot.png";
+                  const screenshotFile = path.join(ctx.appPath, screenshotPath);
+                  await fs.mkdir(path.dirname(screenshotFile), { recursive: true });
+                  await fs.writeFile(screenshotFile, evidence.screenshot);
+                  const screenshotSha256 = createHash("sha256")
+                    .update(evidence.screenshot)
+                    .digest("hex");
+                  broadcastToRegisteredWindows(ctx.event.sender, "agent-tool:browser-qa", {
+                    appId: ctx.appId,
+                    chatId: ctx.chatId,
+                    consoleErrors: evidence.consoleErrors,
+                    failedRequests: evidence.failedRequests,
+                    screenshotPath,
+                    screenshotBytes: evidence.screenshot.byteLength,
+                    screenshotSha256,
+                  });
+                  if (evidence.errors.length > 0) {
                   body += `\n\nBrowser runtime QA found ${evidence.errors.length} issue(s):\n${evidence.errors.join("\n")}\n\nTreat these as defects even though compilation passed. Apply a targeted fix and rerun browser QA.`;
                   statusTitle = "Build passed; browser errors detected";
                   status = "warning";
-                } else {
-                  body +=
-                    "\n\nBrowser runtime QA passed: no console errors, uncaught page errors, failed requests, or HTTP 4xx/5xx responses were captured.";
+                  } else {
+                    body +=
+                      "\n\nBrowser runtime QA passed: no console errors, uncaught page errors, failed requests, or HTTP 4xx/5xx responses were captured.";
+                  }
                 }
               } catch (error) {
                 const reason =

@@ -257,7 +257,7 @@ export class WorkspaceSupervisor {
     const runtime = { workspaceId, workspaceKey, storeSlug, userId, baseUrl: remote?.baseUrl ?? `http://127.0.0.1:${port}`, rpcSecret, runtimeSecretsKey: secretsKey, modelToken, signGatewayRequest: remote?.signRequest, syncFromExecution: remote?.syncFromExecution, child, executionName, traceId, touchedAt: Date.now() }
     this.runtimes.set(workspaceId, runtime)
       console.info(JSON.stringify({ event: 'workspace_container_started', projectId: workspaceId, workspaceKey, caller, ...(traceId ? { traceId } : {}), provider: this.executionProvider.mode, instanceId: runtime.executionName, at: new Date().toISOString() }))
-    console.info(JSON.stringify({ event: 'workspace_container_ready', projectId: workspaceId, workspaceKey, caller, ...(traceId ? { traceId } : {}), at: new Date().toISOString(), provider: this.executionProvider.mode }))
+    console.info(JSON.stringify({ event: 'workspace_container_ready', projectId: workspaceId, workspaceKey, caller, ...(traceId ? { traceId } : {}), at: new Date().toISOString(), provider: this.executionProvider.mode, BUILD_SHA: process.env.BUILD_SHA }))
     child.once('exit', (code, signal) => {
       console.info(JSON.stringify({ event: 'workspace_container_stopped', projectId: workspaceId, workspaceKey, reason: 'runtime_process_exit', caller, ...(traceId ? { traceId } : {}), exitCode: code, signal, at: new Date().toISOString() }))
       if (this.runtimes.get(workspaceId) === runtime) this.runtimes.delete(workspaceId)

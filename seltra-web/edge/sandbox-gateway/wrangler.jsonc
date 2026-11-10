@@ -9,7 +9,11 @@
       "class_name": "WorkspaceSandbox",
       "scheduling_policy": "durable_object",
       "images": {
-        "base": { "dockerfile": "./image/Dockerfile", "build_context": "./image" }
+        "base": {
+          "dockerfile": "./image/Dockerfile",
+          "build_context": "./image",
+          "build_vars": { "BUILD_SHA": "local" }
+        }
       }
     }
   ],

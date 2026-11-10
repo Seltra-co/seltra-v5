@@ -17,6 +17,7 @@ on:
       - "seltra-web/core/scaffold/pnpm-lock.yaml"
       - "seltra-web/core/src/pro/main/ipc/handlers/local_agent/tools/run_build.ts"
       - "seltra-web/core/src/pro/main/ipc/handlers/local_agent/tools/repair_app.ts"
+      - "seltra-web/core/server/src/workspace_supervisor.ts"
       - "seltra-web/core/scripts/build-runtime.mjs"
       - "seltra-web/core/worker/**"
       - "seltra-web/core/scripts/audit-runtime-dependencies.mjs"
@@ -46,6 +47,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       SIGNING_SECRET: ${{ secrets.SANDBOX_GATEWAY_SIGNING_SECRET_DEV }}
       WORKER_NAME: seltra-sandbox-gateway-dev
+      BUILD_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -136,6 +138,10 @@ jobs:
       - name: Validate Worker bundle and Wrangler configuration
         working-directory: seltra-web/edge/sandbox-gateway
         run: npx --yes wrangler@4 deploy --dry-run --config wrangler.jsonc --name "$WORKER_NAME"
+      - name: Set container build SHA
+        working-directory: seltra-web/edge/sandbox-gateway
+        run: |
+          node -e 'const fs=require("node:fs");const p="wrangler.jsonc";const c=JSON.parse(fs.readFileSync(p,"utf8"));const image=c.containers?.find(x=>x.class_name==="WorkspaceSandbox")?.images?.base;if(!image)throw new Error("WorkspaceSandbox base image config missing");image.build_vars={...image.build_vars,BUILD_SHA:process.env.BUILD_SHA};fs.writeFileSync(p,JSON.stringify(c,null,2)+"\n")'
       - name: Deploy Worker and container image
         working-directory: seltra-web/edge/sandbox-gateway
         run: npx --yes wrangler@4 deploy --config wrangler.jsonc --name "$WORKER_NAME"
@@ -179,6 +185,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       SIGNING_SECRET: ${{ secrets.SANDBOX_GATEWAY_SIGNING_SECRET_PROD }}
       WORKER_NAME: seltra-sandbox-gateway-prod
+      BUILD_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -211,6 +218,10 @@ jobs:
           mkdir -p "$image/assets/icon"
           cp assets/icon/seltra-mark.png "$image/assets/icon/seltra-mark.png"
           cp dist/runtime/runtime_main.js "$image/dist/runtime/runtime_main.js"
+      - name: Set container build SHA
+        working-directory: seltra-web/edge/sandbox-gateway
+        run: |
+          node -e 'const fs=require("node:fs");const p="wrangler.jsonc";const c=JSON.parse(fs.readFileSync(p,"utf8"));const image=c.containers?.find(x=>x.class_name==="WorkspaceSandbox")?.images?.base;if(!image)throw new Error("WorkspaceSandbox base image config missing");image.build_vars={...image.build_vars,BUILD_SHA:process.env.BUILD_SHA};fs.writeFileSync(p,JSON.stringify(c,null,2)+"\n")'
       - name: Deploy Worker and container image
         working-directory: seltra-web/edge/sandbox-gateway
         run: npx --yes wrangler@4 deploy --config wrangler.jsonc --name "$WORKER_NAME"
