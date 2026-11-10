@@ -16,6 +16,7 @@ import {
 import { configureTrustedRenderer } from "@/ipc/utils/renderer_security";
 import { activeRecordings } from "@/ipc/services/recording_registry";
 import { appOperationCoordinator } from "@/ipc/services/app_operation_coordinator";
+import * as processManager from "@/ipc/utils/process_manager";
 
 // All app folders live under one throwaway base so the filesystem-probing
 // conflict checks (and actual folder moves) run against real directories.
@@ -179,6 +180,7 @@ describe("app naming handlers", () => {
     fs.mkdirSync(TEMP_BASE, { recursive: true });
     harness = setupHandlerTestHarness();
     activeRecordings.clear();
+    processManager.runningApps.clear();
     deletionOrder.length = 0;
     settleChatActorsForDeletionMock.mockClear();
     createFromTemplateMock.mockClear();
@@ -190,6 +192,7 @@ describe("app naming handlers", () => {
 
   afterEach(() => {
     activeRecordings.clear();
+    processManager.runningApps.clear();
     harness.dispose();
     fs.rmSync(TEMP_BASE, { recursive: true, force: true });
   });
@@ -619,8 +622,17 @@ describe("app naming handlers", () => {
   });
 
   describe("rename-app", () => {
-    it("moves the folder and returns the final name and path", async () => {
+    it("stops a running app and moves the folder when its path changes", async () => {
       const appId = seedAppWithFolder("Old Name", "old-name");
+      processManager.runningApps.set(appId, {
+        process: null,
+        processId: 123,
+        mode: "host",
+        lastViewedAt: Date.now(),
+      });
+      const stopApp = vi
+        .spyOn(processManager, "stopAppByInfo")
+        .mockResolvedValue(undefined);
 
       const result = await harness.invokeHandler<{
         name: string;
@@ -636,10 +648,60 @@ describe("app naming handlers", () => {
         true,
       );
       expect(fs.existsSync(path.join(TEMP_BASE, "old-name"))).toBe(false);
+      expect(stopApp).toHaveBeenCalledOnce();
       expect(getAppRow(appId)).toMatchObject({
         name: "New Name",
         path: "new-name",
       });
+      stopApp.mockRestore();
+    });
+
+    it("renames only the display name when auto-resolving a conflict for the current folder", async () => {
+      seedAppWithFolder("Todo App", "todo-app");
+      const appId = seedAppWithFolder("Fresh App", "fresh-app");
+      const originalFile = path.join(TEMP_BASE, "fresh-app", "index.ts");
+      const originalMtime = fs.statSync(originalFile).mtimeMs;
+      processManager.runningApps.set(appId, {
+        process: null,
+        processId: 123,
+        mode: "host",
+        lastViewedAt: Date.now(),
+      });
+      const stopApp = vi
+        .spyOn(processManager, "stopAppByInfo")
+        .mockResolvedValue(undefined);
+      const mkdir = vi.spyOn(fs.promises, "mkdir");
+      const copyFile = vi.spyOn(fs.promises, "copyFile");
+      const remove = vi.spyOn(fs.promises, "rm");
+      const rename = vi.spyOn(fs.promises, "rename");
+
+      const result = await harness.invokeHandler<{
+        name: string;
+        path: string;
+      }>("rename-app", {
+        appId,
+        appName: "Todo App",
+        appPath: "fresh-app",
+        autoResolveConflicts: true,
+      });
+
+      expect(result).toEqual({ name: "Todo App 2", path: "fresh-app" });
+      expect(getAppRow(appId)).toMatchObject({
+        name: "Todo App 2",
+        path: "fresh-app",
+      });
+      expect(stopApp).not.toHaveBeenCalled();
+      expect(mkdir).not.toHaveBeenCalled();
+      expect(copyFile).not.toHaveBeenCalled();
+      expect(remove).not.toHaveBeenCalled();
+      expect(rename).not.toHaveBeenCalled();
+      expect(fs.statSync(originalFile).mtimeMs).toBe(originalMtime);
+      expect(fs.existsSync(path.join(TEMP_BASE, "todo-app-2"))).toBe(false);
+      stopApp.mockRestore();
+      mkdir.mockRestore();
+      copyFile.mockRestore();
+      remove.mockRestore();
+      rename.mockRestore();
     });
 
     it("rejects invalid folder names with Validation", async () => {

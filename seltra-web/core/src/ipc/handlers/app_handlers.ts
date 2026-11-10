@@ -1,3 +1,4 @@
+// core/src/ipc/handlers/app_handlers.ts
 import { deleteChatJournals } from "@/ipc/services/chat_journal_cleanup";
 import { initialChatExecution } from "@/ipc/utils/chat_execution_selection";
 import { app, dialog } from "electron";
@@ -1700,10 +1701,15 @@ export function registerAppHandlers() {
           throw new DyadError("App not found", DyadErrorKind.NotFound);
         }
 
+        const currentFolderName = app.path.replaceAll("\\", "/").split("/").at(-1);
+        const keepCurrentFolder =
+          appPath === app.path || appPath === currentFolderName;
+        const currentResolvedPath = getDyadAppPath(app.path);
+
         // Security: reject NEW absolute paths - rename-app should only accept relative paths for new paths
         // Absolute paths should only be set through change-app-location handler
         // If the path is changing and it's absolute, reject it
-        if (appPath !== app.path && path.isAbsolute(appPath)) {
+        if (!keepCurrentFolder && appPath !== app.path && path.isAbsolute(appPath)) {
           throw new Error(
             "Absolute paths are not allowed when renaming an app folder. Please use a relative folder name only. To change the storage location, use the 'Change location' button.",
           );
@@ -1712,7 +1718,7 @@ export function registerAppHandlers() {
         // Validate the folder name only when the path changes — a
         // display-name-only rename passes the existing path back unchanged, and
         // legacy folders that predate the naming policy must keep working.
-        if (appPath !== app.path) {
+        if (!keepCurrentFolder && appPath !== app.path) {
           const validationError = validateAppFolderName(appPath);
           if (validationError) {
             throw new DyadError(validationError, DyadErrorKind.Validation);
@@ -1734,12 +1740,14 @@ export function registerAppHandlers() {
           });
           if (resolvedName !== appName) {
             appName = resolvedName;
-            appPath = slugifyAppFolderName(resolvedName);
+            if (!keepCurrentFolder) appPath = slugifyAppFolderName(resolvedName);
           }
-          appPath = await resolveUniqueFolderName(appPath, {
-            excludeAppId: appId,
-            resolveCandidate: resolveCandidatePath,
-          });
+          if (!keepCurrentFolder) {
+            appPath = await resolveUniqueFolderName(appPath, {
+              excludeAppId: appId,
+              resolveCandidate: resolveCandidatePath,
+            });
+          }
         } else {
           // Check for conflicts with existing apps
           const nameConflict = await db.query.apps.findFirst({
@@ -1754,9 +1762,10 @@ export function registerAppHandlers() {
           }
         }
 
-        const pathChanged = appPath !== app.path;
-        const currentResolvedPath = getDyadAppPath(app.path);
-        const newAppPath = resolveCandidatePath(appPath);
+        const newAppPath = keepCurrentFolder
+          ? currentResolvedPath
+          : resolveCandidatePath(appPath);
+        const pathChanged = newAppPath !== currentResolvedPath;
 
         let hasPathConflict = false;
         if (!autoResolveConflicts && pathChanged) {
@@ -1781,8 +1790,8 @@ export function registerAppHandlers() {
           );
         }
 
-        // Stop the app if it's running
-        if (runningApps.has(appId)) {
+        // A display-name-only change must not interrupt the live preview.
+        if (pathChanged && runningApps.has(appId)) {
           const appInfo = runningApps.get(appId)!;
           try {
             await stopAppByInfo(appId, appInfo);
@@ -1882,7 +1891,11 @@ export function registerAppHandlers() {
 
         // Update app in database
         // If the current path was absolute, store the new absolute path; otherwise store the relative path
-        const pathToStore = path.isAbsolute(app.path) ? newAppPath : appPath;
+        const pathToStore = !pathChanged
+          ? app.path
+          : path.isAbsolute(app.path)
+            ? newAppPath
+            : appPath;
         try {
           await db
             .update(apps)

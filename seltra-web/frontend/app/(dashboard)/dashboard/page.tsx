@@ -1143,9 +1143,10 @@ export default function DashboardPage() {
       if (!alreadyApproved) {
         setCoreStartupStatus('Building your app')
         const app = await client.invoke<{ name: string; path: string }>('get-app', [appId], activeRuntime)
-        const folder = name.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 80) || 'seltra-app'
-        if (name !== app.name || folder !== app.path.split(/[\\/]/).filter(Boolean).at(-1)) {
-          const renamed = await client.invoke<{ name: string }>('rename-app', [{ appId, appName: name, appPath: folder, autoResolveConflicts: true }], activeRuntime)
+        const currentFolder = app.path.split(/[\\/]/).filter(Boolean).at(-1)
+        if (!currentFolder) throw new Error('The Core app folder is unavailable.')
+        if (name !== app.name) {
+          const renamed = await client.invoke<{ name: string }>('rename-app', [{ appId, appName: name, appPath: currentFolder, autoResolveConflicts: true }], activeRuntime)
           finalAppName = renamed.name
           setCoreBlueprint((current) => current?.chatId === chatId ? { ...current, appName: renamed.name } : current)
         }
