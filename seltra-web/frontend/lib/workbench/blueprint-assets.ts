@@ -30,7 +30,7 @@ export async function generateBlueprintPhotoAssets<TGenerated, TFallback>(
     saveGenerated: (slot: BlueprintPhotoSlot, generated: TGenerated) => Promise<string>
     fallback?: (slot: BlueprintPhotoSlot) => Promise<TFallback>
     saveFallback?: (slot: BlueprintPhotoSlot, fallback: TFallback) => Promise<string>
-    onTransition?: (slot: BlueprintPhotoSlot, state: 'generating' | 'generated' | 'fallback' | 'skipped' | 'failed', path?: string) => void
+    onTransition?: (slot: BlueprintPhotoSlot, state: 'generating' | 'generated' | 'fallback' | 'skipped' | 'failed', path?: string, error?: string) => void
     timeoutMs?: number
   },
 ): Promise<GeneratedBlueprintAsset[]> {
@@ -51,8 +51,8 @@ export async function generateBlueprintPhotoAssets<TGenerated, TFallback>(
         const fallback = await withTimeout(options.fallback(slot), timeoutMs)
         path = await withTimeout(options.saveFallback(slot, fallback), timeoutMs)
         if (!/^public\/assets\/[a-z0-9-]+\.(?:png|jpe?g|webp)$/i.test(path)) throw new Error('Fallback did not resolve to a public raster asset.')
-      } catch {
-        options.onTransition?.(slot, 'skipped')
+      } catch (error) {
+        options.onTransition?.(slot, 'failed', undefined, error instanceof Error ? error.message : String(error))
         return { ...slot, status: 'skipped' as const }
       }
     }

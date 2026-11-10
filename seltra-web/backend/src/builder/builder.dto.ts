@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, IsUrl, IsIn, Min, IsObject, IsBoolean } from 'class-validator'
+import { IsInt, IsOptional, IsString, IsUrl, IsIn, Min, IsObject, IsBoolean, MaxLength } from 'class-validator'
 
 export class BuilderSessionDto {
   @IsString()
@@ -67,7 +67,7 @@ export class SyncCoreAppStateDto {
   corePath?: string
 
   @IsOptional()
-  @IsIn(['draft', 'building', 'live', 'failed'])
+  @IsIn(['draft', 'planning', 'awaiting_answers', 'building', 'preview_ready', 'published', 'live', 'failed', 'stopped'])
   status?: string
 
   @IsOptional()
@@ -77,6 +77,23 @@ export class SyncCoreAppStateDto {
   @IsOptional()
   @IsString()
   eventType?: string
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  workspaceInstanceId?: string
+
+  @IsOptional()
+  @IsString()
+  runId?: string
+
+  @IsOptional()
+  @IsString()
+  errorCode?: string
+
+  @IsOptional()
+  @IsString()
+  errorDetail?: string
 
   @IsOptional()
   @IsObject()

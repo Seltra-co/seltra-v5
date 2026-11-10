@@ -202,12 +202,15 @@ export class BuilderService {
     })
   }
 
-  async syncCoreAppState(authorization: string | undefined, input: { tenantId: string; coreAppId: number; name?: string; corePath?: string; status?: string; previewUrl?: string; eventType?: string; blueprint?: Record<string, unknown>; approved?: boolean }) {
+  async syncCoreAppState(authorization: string | undefined, input: { tenantId: string; coreAppId: number; name?: string; corePath?: string; status?: string; previewUrl?: string; eventType?: string; blueprint?: Record<string, unknown>; approved?: boolean; workspaceInstanceId?: string; runId?: string; errorCode?: string; errorDetail?: string }) {
     const userId = await resolveUserIdFromAuthorization(authorization, this.jwt)
     if (typeof input.tenantId !== 'string' || !input.tenantId.trim()) throw new NotFoundException('Workspace not found.')
+    if (input.workspaceInstanceId !== undefined && (!input.workspaceInstanceId.trim() || input.workspaceInstanceId.length > 256)) throw new ForbiddenException('Workspace instance ID is invalid.')
     const tenant = await prisma.tenant.findFirst({ where: { id: input.tenantId, ownerId: userId }, select: { id: true } })
     if (!tenant) throw new NotFoundException('Workspace not found.')
     const eventType = input.eventType && /^[a-z0-9._-]{1,80}$/i.test(input.eventType) ? input.eventType : 'app.state.updated'
+    const canonicalPreviewUrl = input.previewUrl ? (() => { const url = new URL(input.previewUrl); url.searchParams.delete('preview_token'); return url.toString() })() : undefined
+    const failure = input.status === 'failed'
     if (input.blueprint && Buffer.byteLength(JSON.stringify(input.blueprint)) > 64 * 1024) throw new ForbiddenException('Blueprint payload exceeds the storage limit.')
     const visuals = Array.isArray(input.blueprint?.visuals)
       ? input.blueprint.visuals.filter((visual): visual is Record<string, unknown> => typeof visual === 'object' && visual !== null)
@@ -222,7 +225,11 @@ export class BuilderService {
         name: input.name?.trim().slice(0, 120) || `App ${input.coreAppId}`,
         status: input.status ?? 'draft',
         ...(eventType === 'app.build.completed' ? { version: 1 } : {}),
-        ...(input.previewUrl ? { previewUrl: input.previewUrl } : {}),
+        ...(canonicalPreviewUrl ? { previewUrl: canonicalPreviewUrl } : {}),
+        ...(input.workspaceInstanceId ? { workspaceInstanceId: input.workspaceInstanceId } : {}),
+        ...(input.runId ? { lastRunId: input.runId } : {}),
+        ...(eventType === 'app.build.completed' ? { lastBuildAt: new Date() } : {}),
+        ...(failure ? { errorCode: input.errorCode?.slice(0, 100) || 'BUILD_FAILED', errorDetail: input.errorDetail?.slice(0, 4000) || 'The build failed.' } : input.status && input.status !== 'failed' ? { errorCode: null, errorDetail: null } : {}),
         ...(input.blueprint ? { blueprint: input.blueprint as Prisma.InputJsonObject } : {}),
         ...(input.approved ? { blueprintApprovedAt: new Date() } : {}),
       },
@@ -231,7 +238,11 @@ export class BuilderService {
         ...(input.corePath ? { corePath: input.corePath.slice(0, 500) } : {}),
         ...(input.status ? { status: input.status } : {}),
         ...(eventType === 'app.build.completed' ? { version: 1 } : {}),
-        ...(input.previewUrl ? { previewUrl: input.previewUrl } : {}),
+        ...(canonicalPreviewUrl ? { previewUrl: canonicalPreviewUrl } : {}),
+        ...(input.workspaceInstanceId ? { workspaceInstanceId: input.workspaceInstanceId } : {}),
+        ...(input.runId ? { lastRunId: input.runId } : {}),
+        ...(eventType === 'app.build.completed' ? { lastBuildAt: new Date() } : {}),
+        ...(failure ? { errorCode: input.errorCode?.slice(0, 100) || 'BUILD_FAILED', errorDetail: input.errorDetail?.slice(0, 4000) || 'The build failed.' } : input.status && input.status !== 'failed' ? { errorCode: null, errorDetail: null } : {}),
         ...(input.blueprint ? { blueprint: input.blueprint as Prisma.InputJsonObject } : {}),
         ...(input.approved ? { blueprintApprovedAt: new Date() } : {}),
       },
@@ -268,6 +279,27 @@ export class BuilderService {
       return savedApp
     })
     return app
+  }
+
+  async retryAsset(authorization: string | undefined, tenantId: string, appIdValue: string, slot: string, prompt: string) {
+    const userId = await resolveUserIdFromAuthorization(authorization, this.jwt)
+    if (!userId) throw new ForbiddenException('Authentication is required.')
+    const coreAppId = Number(appIdValue)
+    if (!tenantId?.trim() || !Number.isSafeInteger(coreAppId) || coreAppId < 1 || !/^[a-z0-9-]{1,64}$/i.test(slot) || typeof prompt !== 'string' || !prompt.trim() || prompt.length > 4000) {
+      throw new NotFoundException('Generated asset not found.')
+    }
+    const tenant = await prisma.tenant.findFirst({ where: { id: tenantId, ownerId: userId }, select: { id: true } })
+    if (!tenant) throw new NotFoundException('Generated asset not found.')
+    const app = await prisma.tenantApp.findUnique({ where: { tenantId_coreAppId: { tenantId, coreAppId } }, select: { id: true } })
+    if (!app) throw new NotFoundException('Generated asset not found.')
+    const storageRef = `core:${coreAppId}:${slot}`
+    return prisma.$transaction(async (tx) => {
+      const current = await tx.projectAsset.findFirst({ where: { projectId: tenantId, storageRef }, select: { id: true, status: true } })
+      if (current?.status === 'generating') return current
+      const data = { kind: 'generated_image', slot, prompt: prompt.trim(), status: 'generating', sourceUrl: null, error: null, storageRef }
+      if (current) return tx.projectAsset.update({ where: { id: current.id }, data })
+      return tx.projectAsset.create({ data: { projectId: tenantId, ...data } })
+    })
   }
 
   async syncWorkspaceFiles(input: { tenantId: string; workspaceId?: string; coreAppId?: number; runId?: string; files: Array<{ path: string; content: string }> }) {
@@ -370,6 +402,59 @@ export class BuilderService {
       }
     }
     return { synced: textFiles.length, changed: manifestChanges.size, snapshotted: Boolean(manifestChanges.size && runId) }
+  }
+
+  async verifyWorkspaceFiles(input: { tenantId: string; files: Array<{ path: string; sha256: string }> }) {
+    if (!input.tenantId || !Array.isArray(input.files) || input.files.length > 10_000) throw new ForbiddenException('Workspace file listing is invalid.')
+    const workspace = new Map<string, string>()
+    for (const file of input.files) {
+      if (!file || typeof file.path !== 'string' || file.path.startsWith('/') || file.path.split(/[\\/]/).includes('..') || typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(file.sha256)) {
+        throw new ForbiddenException('Workspace file listing contains an invalid entry.')
+      }
+      workspace.set(file.path.replaceAll('\\', '/'), file.sha256.toLowerCase())
+    }
+    const [manifestRows, apps, assets] = await Promise.all([
+      prisma.projectFile.findMany({ where: { projectId: input.tenantId }, select: { path: true, contentHash: true, inlineContent: true } }),
+      prisma.tenantApp.findMany({ where: { tenantId: input.tenantId }, select: { id: true, coreAppId: true, corePath: true, name: true } }),
+      prisma.projectAsset.findMany({ where: { projectId: input.tenantId, status: 'generated' }, select: { kind: true, sourceUrl: true } }),
+    ])
+    const manifest = new Map(manifestRows.map((file) => [file.path.replaceAll('\\', '/'), file.contentHash.toLowerCase()]))
+    const missing = [...manifest.keys()].filter((path) => !workspace.has(path))
+    const extra = [...workspace.keys()].filter((path) => !manifest.has(path))
+    const changed = [...manifest.keys()].filter((path) => workspace.has(path) && workspace.get(path) !== manifest.get(path))
+    const mismatches = [...missing.map((path) => `missing:${path}`), ...extra.map((path) => `extra:${path}`), ...changed.map((path) => `changed:${path}`)]
+    const app = apps.at(-1)
+    const root = app?.corePath?.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '')
+    const appFiles = manifestRows.filter((file) => !root || file.path.replaceAll('\\', '/').startsWith(`${root}/`))
+    const packageFile = appFiles.find((file) => file.path.replaceAll('\\', '/').endsWith('/package.json') || file.path === 'package.json')
+    let packageScriptsValid = false
+    try {
+      const scripts = JSON.parse(packageFile?.inlineContent ?? '{}').scripts
+      packageScriptsValid = typeof scripts?.dev === 'string' && typeof scripts?.build === 'string'
+    } catch { packageScriptsValid = false }
+    const routeFiles = appFiles.filter((file) => /(?:^|\/)(?:app|pages)\/(?:.*\/)?(?:page|index)\.[cm]?[jt]sx?$/.test(file.path.replaceAll('\\', '/')))
+    const viteEntry = appFiles.find((file) => /(?:^|\/)src\/main\.[jt]sx?$/.test(file.path.replaceAll('\\', '/')))
+    const viteApp = appFiles.find((file) => /(?:^|\/)src\/App\.[jt]sx?$/.test(file.path.replaceAll('\\', '/')))
+    const pagesRouted = routeFiles.length > 0 || Boolean(viteEntry?.inlineContent && viteApp?.inlineContent && /(?:from\s+|import\s*)['"]\.\/App['"]/.test(viteEntry.inlineContent))
+    const referencedAssets = appFiles.filter((file) => /(?:^|\/)public\/assets\/[^/]+\.(?:png|jpe?g|webp)$/i.test(file.path.replaceAll('\\', '/')))
+    const referencedContent = appFiles.map((file) => file.inlineContent ?? '').join('\n')
+    const assetsVerified = referencedAssets.every((file) => referencedContent.includes(file.path.split('/public/').at(-1) ?? file.path))
+      && assets.filter((asset) => asset.kind === 'generated_image').every((asset) => typeof asset.sourceUrl === 'string' && asset.sourceUrl.length > 0)
+    const evidence = { verified: mismatches.length === 0 && pagesRouted && packageScriptsValid && assetsVerified, pagesRouted, assetsVerified, packageScriptsValid, mismatches }
+    const activeRun = await prisma.run.findFirst({
+      where: { projectId: input.tenantId, state: { in: ['queued', 'running', 'waiting_for_user', 'stopping'] } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    })
+    if (activeRun) {
+      await prisma.$transaction(async (tx) => {
+        const run = await tx.run.findUnique({ where: { id: activeRun.id }, select: { lastEventSeq: true } })
+        if (!run) return
+        const updated = await tx.run.update({ where: { id: activeRun.id }, data: { lastEventSeq: { increment: 1 }, lastHeartbeatAt: new Date() }, select: { lastEventSeq: true } })
+        await tx.runEvent.create({ data: { runId: activeRun.id, seq: updated.lastEventSeq, type: 'manifest.verified', phase: 'verifying', agent: 'supervisor', payload: evidence } })
+      })
+    }
+    return { ...evidence, workspaceFiles: workspace.size, manifestFiles: manifest.size }
   }
 
   async entitlement(tenantId: string) {

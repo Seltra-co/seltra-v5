@@ -5,7 +5,7 @@ import { Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Circle, Cl
 import { cn } from '@/lib/utils'
 
 export type CoreTodo = { id: string; content: string; status: 'pending' | 'in_progress' | 'completed' }
-export type CoreQuestion = { id: string; type: 'text' | 'radio' | 'checkbox'; question: string; options?: string[]; required?: boolean; placeholder?: string }
+export type CoreQuestion = { id: string; type: 'text' | 'radio' | 'checkbox'; question: string; why?: string; options?: string[]; required?: boolean; placeholder?: string }
 export type CoreQuestionnaire = { requestId: string; chatId: number; questions: CoreQuestion[]; isResponding?: boolean }
 export type CoreBlueprint = { chatId: number; appName: string; userPrompt: string; templateId: string; themeId: string; designDirection: string; primaryColor: string; visuals?: Array<{ type: string; description: string; prompt: string }> }
 
@@ -151,14 +151,12 @@ export function CoreQuestionnaireCard({ questionnaire, onSubmit }: { questionnai
   }
 
   return (
-    <section className="my-4 w-full min-w-0 max-w-[680px] overflow-hidden rounded-2xl border border-emerald-400/20 bg-[#171b19] shadow-[0_16px_50px_rgba(0,0,0,.18)]" aria-label="Build questionnaire">
-      <header className="flex items-center justify-between border-b border-white/[0.07] px-4 py-3">
-        <div className="flex items-center gap-2.5"><span className="seltra-waiting-pulse grid h-8 w-8 place-items-center rounded-xl bg-emerald-400/10 text-emerald-300"><ClipboardList className="h-4 w-4" /></span><div><p className="text-sm font-semibold text-white">A few quick questions</p><p className="text-xs text-white/45">Help Seltra shape the first version</p></div></div>
-        <span className="rounded-full bg-white/[0.06] px-2.5 py-1 text-xs tabular-nums text-white/60">{index + 1} of {questions.length}</span>
+    <section className="my-3 w-full min-w-0 max-w-[390px] overflow-hidden rounded-2xl border border-white/[0.1] bg-[#202220] shadow-[0_16px_50px_rgba(0,0,0,.18)]" aria-label="Build questionnaire">
+      <header className="border-b border-white/[0.07] px-4 py-3">
+        <h3 className="text-sm font-medium leading-5 text-white">{question.question}</h3>
+        {question.why && <p className="mt-0.5 text-xs leading-4 text-white/50">{question.why}</p>}
       </header>
-      <div className="px-4 py-4 sm:px-5">
-        <div className="mb-4 h-1 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${((index + 1) / questions.length) * 100}%` }} /></div>
-        <h3 className="text-[15px] font-semibold leading-6 text-white">{question.question}</h3>
+      <div className="px-3.5 py-3">
         <div className="mt-3 space-y-2">
           {question.type === 'text' || !question.options?.length ? (
             <textarea value={answer} onChange={(event) => updateAnswer(event.target.value)} placeholder={question.placeholder || 'Type your answer…'} rows={2} className="w-full resize-y rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/35 focus:border-emerald-400/50" />
@@ -169,9 +167,9 @@ export function CoreQuestionnaireCard({ questionnaire, onSubmit }: { questionnai
           )}
           {hasOther && otherSelected && <textarea autoFocus value={question.type === 'checkbox' ? answer.split('\n').find((item) => item.startsWith('Other detail: '))?.slice(14) ?? '' : answer.replace(/^Other:\s*/, '')} onChange={(event) => question.type === 'checkbox' ? updateAnswer([...answer.split('\n').filter((item) => item !== 'Other' && !item.startsWith('Other detail: ')), 'Other', ...(event.target.value ? [`Other detail: ${event.target.value}`] : [])].join('\n')) : updateAnswer(`Other: ${event.target.value}`)} placeholder="Tell us a little more" rows={2} className="w-full resize-y rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/35 focus:border-emerald-400/50" />}
         </div>
-        <footer className="mt-5 flex items-center justify-between">
-          <div className="flex items-center gap-2"><button type="button" onClick={() => submit(null)} disabled={questionnaire.isResponding} className="rounded-lg px-2 py-2 text-sm text-white/45 hover:text-white disabled:opacity-25">Skip all</button><button type="button" onClick={() => setIndex((current) => Math.max(0, current - 1))} disabled={index === 0 || questionnaire.isResponding} className="inline-flex items-center gap-1 rounded-lg px-2 py-2 text-sm text-white/55 hover:text-white disabled:opacity-25"><ChevronLeft className="h-4 w-4" />Back</button></div>
-          <button type="button" onClick={advance} disabled={(question.required !== false && !answer.trim()) || questionnaire.isResponding} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-[#082012] hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-45">{questionnaire.isResponding ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{isLast ? 'Submit answers' : 'Next'}{!isLast && <ChevronRight className="h-4 w-4" />}</button>
+        <footer className="mt-3 flex items-center justify-between">
+          <div className="flex items-center gap-1"><button type="button" aria-label="Previous question" onClick={() => setIndex((current) => Math.max(0, current - 1))} disabled={index === 0 || questionnaire.isResponding} className="rounded-lg p-1.5 text-white/45 hover:text-white disabled:opacity-25"><ChevronLeft className="h-4 w-4" /></button><button type="button" aria-label="Next question" onClick={() => setIndex((current) => Math.min(questions.length - 1, current + 1))} disabled={isLast || questionnaire.isResponding} className="rounded-lg p-1.5 text-white/45 hover:text-white disabled:opacity-25"><ChevronRight className="h-4 w-4" /></button></div>
+          <div className="flex items-center gap-3"><button type="button" onClick={() => submit(null)} disabled={questionnaire.isResponding} className="rounded-lg px-2 py-2 text-xs text-white/70 hover:text-white disabled:opacity-25">Skip</button><button type="button" onClick={advance} disabled={(question.required !== false && !answer.trim()) || questionnaire.isResponding} className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500 px-4 py-2 text-xs font-semibold text-[#082012] hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-45">{questionnaire.isResponding ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{isLast ? 'Submit' : 'Next'}</button></div>
         </footer>
       </div>
     </section>
@@ -195,17 +193,21 @@ export function CoreTodoProgress({ todos }: { todos: CoreTodo[] }) {
   </section>
 }
 
-function BlueprintCard({ blueprint, onApprove, onNameChange, approvalError }: { blueprint: CoreBlueprint; onApprove: () => Promise<void>; onNameChange: (name: string) => void; approvalError?: string }) {
+function BlueprintCard({ blueprint, onApprove, onNameChange, approvalError, approved = false }: { blueprint: CoreBlueprint; onApprove?: () => Promise<void>; onNameChange: (name: string) => void; approvalError?: string; approved?: boolean }) {
   const [name, setName] = useState(blueprint.appName)
   const [approving, setApproving] = useState(false)
-  return <section className="my-4 w-full min-w-0 max-w-[680px] overflow-hidden rounded-2xl border border-emerald-400/20 bg-[#171b19] p-4 shadow-[0_16px_50px_rgba(0,0,0,.18)]">
-    <div className="flex items-center gap-2 text-sm font-semibold text-white"><span className="grid h-8 w-8 place-items-center rounded-xl bg-emerald-400/10 text-emerald-300"><Sparkles className="h-4 w-4" /></span>Review your app plan</div>
+  const [expanded, setExpanded] = useState(!approved)
+  useEffect(() => { if (approved) setExpanded(false) }, [approved])
+  return <section className="my-3 w-full min-w-0 max-w-[680px] overflow-hidden rounded-2xl border border-emerald-400/20 bg-[#171b19] shadow-[0_16px_50px_rgba(0,0,0,.18)]">
+    <button type="button" onClick={() => setExpanded((current) => !current)} aria-expanded={expanded} className="flex w-full items-center justify-between gap-3 p-3.5 text-left"><span className="flex min-w-0 items-center gap-2.5"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-emerald-400/10 text-emerald-300"><Sparkles className="h-4 w-4" /></span><span className="truncate text-sm font-semibold text-white">{approved ? blueprint.appName : 'Your app plan'}</span></span><span className="flex items-center gap-2 text-xs text-white/50">{approved ? 'Continuing' : 'Review'}<ChevronDown className={cn('h-4 w-4 transition-transform', expanded && 'rotate-180')} /></span></button>
+    {expanded && <div className="border-t border-white/[0.07] p-4">
     <label className="mt-4 block text-xs text-white/50">App name<input value={name} onChange={(event) => { setName(event.target.value); onNameChange(event.target.value) }} className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white outline-none focus:border-emerald-400/50" /></label>
     <p className="mt-3 text-sm leading-6 text-white/65">{blueprint.designDirection || 'Core will build the app from your prompt.'}</p>
     <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/55">{blueprint.templateId && <span className="rounded-full bg-white/[0.06] px-2.5 py-1">Template: {blueprint.templateId}</span>}{blueprint.themeId && <span className="rounded-full bg-white/[0.06] px-2.5 py-1">Theme: {blueprint.themeId}</span>}{blueprint.primaryColor && <span className="rounded-full bg-white/[0.06] px-2.5 py-1">Color: {blueprint.primaryColor}</span>}</div>
     {blueprint.visuals?.length ? <ul className="mt-3 space-y-1 text-xs text-white/55">{blueprint.visuals.map((visual, index) => <li key={`${visual.type}-${index}`}>{visual.type}: {visual.description}</li>)}</ul> : null}
     {approvalError && <p role="alert" className="mt-3 rounded-lg border border-rose-300/20 bg-rose-300/[0.06] px-3 py-2 text-sm text-rose-100">{approvalError}</p>}
-    <div className="mt-4 flex justify-end"><button type="button" disabled={approving || !name.trim()} onClick={async () => { setApproving(true); try { await onApprove() } catch { /* The dashboard reports the Core operation error. */ } finally { setApproving(false) } }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-[#082012] hover:bg-emerald-300 disabled:opacity-50">{approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{approvalError ? 'Retry approval' : 'Approve and build'}</button></div>
+    {approved ? <p className="mt-4 text-xs text-emerald-200/70">Seltra is continuing with this plan.</p> : <div className="mt-4 flex justify-end"><button type="button" disabled={approving || !name.trim() || !onApprove} onClick={async () => { if (!onApprove) return; setApproving(true); try { await onApprove() } catch { /* The dashboard reports the Core operation error. */ } finally { setApproving(false) } }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-[#082012] hover:bg-emerald-300 disabled:opacity-50">{approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{approvalError ? 'Retry approval' : 'Continue'}</button></div>}
+    </div>}
   </section>
 }
 
@@ -223,9 +225,10 @@ function CoreActivity({ hasResponse }: { hasResponse: boolean }) {
   return <div className="my-3 inline-flex items-center gap-2.5 rounded-full border border-white/[0.07] bg-white/[0.025] px-3 py-1.5 text-[13px] text-white/50" aria-live="polite"><Sparkles className="h-3.5 w-3.5 text-emerald-300/80" /><span>{words[index]}…</span></div>
 }
 
-function GeneratedAssets({ assets, loadAsset }: { assets: Array<Extract<MessageBlock, { kind: 'asset' }>>; loadAsset?: (path: string) => Promise<string> }) {
+function GeneratedAssets({ assets, loadAsset, onRetry }: { assets: Array<Extract<MessageBlock, { kind: 'asset' }>>; loadAsset?: (path: string) => Promise<string>; onRetry?: (prompt: string) => Promise<void> }) {
   const [images, setImages] = useState<Record<string, string>>({})
   const [failed, setFailed] = useState<string[]>([])
+  const [retrying, setRetrying] = useState<string[]>([])
   const requested = useRef(new Set<string>())
   const [selected, setSelected] = useState<{ url: string; prompt: string } | null>(null)
   const assetKey = assets.map((asset) => `${asset.path}:${asset.prompt}`).join('|')
@@ -256,25 +259,33 @@ function GeneratedAssets({ assets, loadAsset }: { assets: Array<Extract<MessageB
     <div className="grid grid-cols-2 gap-2 p-2.5 sm:grid-cols-3">{assets.map((asset, index) => { const key = asset.path || `${asset.prompt}:${index}`; return <figure key={key} className="min-w-0 overflow-hidden rounded-xl border border-white/[0.06] bg-black/20">
       {images[key] ? <button type="button" onClick={() => setSelected({ url: images[key], prompt: asset.prompt })} className="block w-full cursor-zoom-in" aria-label={`View image: ${asset.prompt}`}><img src={images[key]} alt={asset.prompt} loading="lazy" className="aspect-square w-full object-cover" /></button> : <div className="grid aspect-square place-items-center bg-gradient-to-br from-emerald-950/70 via-[#202723] to-black px-2 text-center text-xs text-white/50">{(asset.state === 'pending' || !asset.path) && !failed.includes(key) ? <div className="w-full animate-pulse space-y-2 px-4" aria-label="Image is generating"><div className="mx-auto h-7 w-7 rounded-lg bg-emerald-300/20"/><div className="h-2 rounded bg-white/10"/><div className="mx-auto h-2 w-2/3 rounded bg-white/[0.06]"/></div> : <span><Sparkles className="mx-auto mb-1.5 h-4 w-4 text-emerald-300" />{failed.includes(key) ? 'Preview unavailable' : asset.prompt}</span>}</div>}
       <figcaption className="line-clamp-2 px-2.5 py-2 text-[11px] leading-4 text-white/55" title={asset.prompt}>{asset.prompt}</figcaption>
+      {onRetry && (asset.state === 'failed' || asset.state === 'skipped' || failed.includes(key)) && <button type="button" disabled={retrying.includes(key)} onClick={() => {
+        setRetrying((current) => current.includes(key) ? current : [...current, key])
+        void onRetry(asset.prompt).then(() => {
+          setImages((current) => { const next = { ...current }; delete next[key]; return next })
+          setFailed((current) => current.filter((value) => value !== key))
+        }).catch(() => setFailed((current) => current.includes(key) ? current : [...current, key])).finally(() => setRetrying((current) => current.filter((value) => value !== key)))
+      }} className="mx-2.5 mb-2 rounded-full bg-[#22c55e] px-3 py-1 text-[12px] font-semibold text-[#082012] disabled:cursor-wait disabled:opacity-60">{retrying.includes(key) ? 'Retrying…' : 'Retry'}</button>}
     </figure>})}</div>
     {selected && <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Generated image preview" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null) }}><button type="button" onClick={() => setSelected(null)} aria-label="Close image preview" className="absolute right-5 top-5 grid h-10 w-10 place-items-center rounded-full bg-white/10 text-white hover:bg-white/20"><X className="h-5 w-5"/></button><figure className="max-h-full max-w-5xl"><img src={selected.url} alt={selected.prompt} className="max-h-[82vh] max-w-full rounded-2xl object-contain"/><figcaption className="mt-3 text-center text-sm text-white/70">{selected.prompt}</figcaption></figure></div>}
   </section>
 }
 
-export function CoreAgentMessage({ content, streamingPreview = '', isStreaming, todos, questionnaire, blueprint, onQuestionnaireSubmit, onBlueprintApprove, onBlueprintNameChange, loadAsset, approvalError, compactStream = false }: { content: string; streamingPreview?: string; isStreaming?: boolean; todos?: CoreTodo[]; questionnaire?: CoreQuestionnaire; blueprint?: CoreBlueprint; onQuestionnaireSubmit?: (answers: Record<string, string> | null) => void; onBlueprintApprove?: () => Promise<void>; onBlueprintNameChange?: (name: string) => void; loadAsset?: (path: string) => Promise<string>; approvalError?: string; compactStream?: boolean }) {
+export function CoreAgentMessage({ content, streamingPreview = '', isStreaming, todos, questionnaire, blueprint, onQuestionnaireSubmit, onBlueprintApprove, onBlueprintNameChange, loadAsset, onRetryAsset, approvalError, compactStream = false, structuredOnly = false, blueprintApproved = false }: { content: string; streamingPreview?: string; isStreaming?: boolean; todos?: CoreTodo[]; questionnaire?: CoreQuestionnaire; blueprint?: CoreBlueprint; onQuestionnaireSubmit?: (answers: Record<string, string> | null) => void; onBlueprintApprove?: () => Promise<void>; onBlueprintNameChange?: (name: string) => void; loadAsset?: (path: string) => Promise<string>; onRetryAsset?: (prompt: string) => Promise<void>; approvalError?: string; compactStream?: boolean; structuredOnly?: boolean; blueprintApproved?: boolean }) {
   const blocks = useMemo(() => parseMessage(content), [content])
   const previewBlocks = useMemo(() => streamingPreview ? parseMessage(streamingPreview) : [], [streamingPreview])
   const hasQuestionnaireStatus = blocks.some((block) => block.kind === 'status' && /questionnaire/i.test(block.title))
   const hasBlueprintBlock = blocks.some((block) => block.kind === 'blueprint')
+  const visibleBlocks = structuredOnly ? blocks.filter((block) => block.kind === 'blueprint') : blocks
   return <div className="w-full min-w-0 max-w-[680px] overflow-x-hidden text-[15px] leading-7 text-white/90">
-    {!compactStream && isStreaming && content.trim() ? <CoreActivity hasResponse /> : null}
-    {blocks.map((block, index) => {
-      if (block.kind === 'blueprint') return blueprint && onBlueprintApprove ? <BlueprintCard key={`blueprint-${index}`} blueprint={blueprint} onApprove={onBlueprintApprove} onNameChange={onBlueprintNameChange ?? (() => undefined)} approvalError={approvalError} /> : null
+    {!structuredOnly && !compactStream && isStreaming && content.trim() ? <CoreActivity hasResponse /> : null}
+    {visibleBlocks.map((block, index) => {
+      if (block.kind === 'blueprint') return blueprint && (onBlueprintApprove || blueprintApproved) ? <BlueprintCard key={`blueprint-${index}`} blueprint={blueprint} onApprove={onBlueprintApprove} onNameChange={onBlueprintNameChange ?? (() => undefined)} approvalError={approvalError} approved={blueprintApproved} /> : null
       if (block.kind === 'asset') {
         if (blocks[index - 1]?.kind === 'asset') return null
         const assets: Array<Extract<MessageBlock, { kind: 'asset' }>> = []
         for (let cursor = index; cursor < blocks.length && blocks[cursor].kind === 'asset'; cursor++) assets.push(blocks[cursor] as Extract<MessageBlock, { kind: 'asset' }>)
-        return <GeneratedAssets key={`assets-${index}`} assets={assets} loadAsset={loadAsset} />
+        return <GeneratedAssets key={`assets-${index}`} assets={assets} loadAsset={loadAsset} onRetry={onRetryAsset} />
       }
       if (block.kind === 'thought') return null
       if (block.kind === 'status') return compactStream ? null : <div key={`status-${index}`} className={cn('my-3 flex min-w-0 gap-3 rounded-xl border px-3.5 py-3', /error|failed|aborted/i.test(block.state) ? 'border-red-400/20 bg-red-400/[0.05]' : 'border-white/[0.08] bg-[#171b19]')}>
@@ -284,9 +295,9 @@ export function CoreAgentMessage({ content, streamingPreview = '', isStreaming, 
       if (block.kind === 'output') return compactStream ? null : <div key={`output-${index}`} className="my-3 min-w-0 rounded-xl border border-amber-300/20 bg-amber-300/[0.05] px-3.5 py-3"><p className="break-words text-sm font-medium text-amber-100">{block.title}</p>{block.content.trim() && <details className="mt-1 min-w-0 text-[13px] leading-5 text-white/60"><summary className="w-fit cursor-pointer select-none text-xs text-white/45 hover:text-white/75">Show error details</summary><pre className="mt-2 max-h-64 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words font-sans [overflow-wrap:anywhere]">{block.content.trim()}</pre></details>}</div>
       return <p key={`text-${index}`} className="my-2 min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{block.content.replace(/\n{3,}/g, '\n\n').trim()}</p>
     })}
-    {previewBlocks.filter((block): block is Extract<MessageBlock, { kind: 'asset' }> => block.kind === 'asset').map((asset, index) => <GeneratedAssets key={`streaming-asset-${asset.prompt}-${index}`} assets={[asset]} loadAsset={loadAsset} />)}
-    {blueprint && onBlueprintApprove && !hasBlueprintBlock ? <BlueprintCard blueprint={blueprint} onApprove={onBlueprintApprove} onNameChange={onBlueprintNameChange ?? (() => undefined)} approvalError={approvalError} /> : null}
-    {questionnaire && onQuestionnaireSubmit ? <CoreQuestionnaireCard key={questionnaire.requestId} questionnaire={questionnaire} onSubmit={onQuestionnaireSubmit} /> : null}
-    {!compactStream && todos?.length ? <CoreTodoProgress todos={todos} /> : null}
+    {!structuredOnly && previewBlocks.filter((block): block is Extract<MessageBlock, { kind: 'asset' }> => block.kind === 'asset').map((asset, index) => <GeneratedAssets key={`streaming-asset-${asset.prompt}-${index}`} assets={[asset]} loadAsset={loadAsset} onRetry={onRetryAsset} />)}
+    {blueprint && (onBlueprintApprove || blueprintApproved) && !hasBlueprintBlock ? <BlueprintCard blueprint={blueprint} onApprove={onBlueprintApprove} onNameChange={onBlueprintNameChange ?? (() => undefined)} approvalError={approvalError} approved={blueprintApproved} /> : null}
+    {!structuredOnly && questionnaire && onQuestionnaireSubmit ? <CoreQuestionnaireCard key={questionnaire.requestId} questionnaire={questionnaire} onSubmit={onQuestionnaireSubmit} /> : null}
+    {!structuredOnly && !compactStream && todos?.length ? <CoreTodoProgress todos={todos} /> : null}
   </div>
 }

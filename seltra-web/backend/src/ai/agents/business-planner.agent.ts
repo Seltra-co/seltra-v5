@@ -56,31 +56,12 @@ function cleanJSON(raw: string): string {
 }
 
 function fallbackPlan(prompt: string): PlannerResult {
-  // Deterministic fallback if the LLM call fails.
-  const questions: PlannerQuestion[] = [
-    {
-      id: 'fulfillment_mode',
-      question: 'How will customers get their orders?',
-      why: 'This changes what we ask customers at checkout.',
-      options: ['Delivery only', 'Pickup only', 'Both delivery and pickup'],
-    },
-    {
-      id: 'product_variants',
-      question: 'Do your products come in options like sizes, colors, scents, flavors, or pack sizes?',
-      why: 'This lets the agent generate the right product selectors instead of a flat catalog.',
-      options: ['Yes, infer sensible options', 'No variants', 'Not sure'],
-    },
-    {
-      id: 'delivery_tiers',
-      question: 'Should checkout use standard delivery and let you contact customers directly, or should it be pickup only?',
-      why: 'This keeps checkout simple and lets merchants manage delivery follow-up with customers directly.',
-      options: ['Standard delivery, I will contact customers', 'Pickup only'],
-    },
-  ]
   return {
-    readyToBuild: false,
-    inferredSummary: `Building a store based on: "${prompt.slice(0, 140)}"`,
-    questions,
+    // If the planner is unavailable, proceed with the user's prompt instead of
+    // fabricating product questions that were never chosen by the model.
+    readyToBuild: true,
+    inferredSummary: `Building a first version based on: "${prompt.slice(0, 140)}"`,
+    questions: [],
   }
 }
 
@@ -110,8 +91,10 @@ export async function planFromPrompt(prompt: string): Promise<PlannerResult> {
     const parsed = JSON.parse(cleanJSON(result.content)) as PlannerResult
     if (!Array.isArray(parsed.questions)) throw new Error('bad shape')
     const questions = parsed.questions
+      .filter((q): q is PlannerQuestion => Boolean(q && typeof q === 'object' && typeof q.id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(q.id) && typeof q.question === 'string' && q.question.trim() && typeof q.why === 'string'))
       .filter((q) => q.id !== 'contact_number')
       .filter((q) => !/whats\s?app|phone|contact number|customer.*reach/i.test(q.question))
+      .map((q) => ({ ...q, question: q.question.trim().slice(0, 240), why: q.why.trim().slice(0, 180), options: Array.isArray(q.options) ? q.options.filter((option): option is string => typeof option === 'string' && Boolean(option.trim())).slice(0, 4).map((option) => option.trim().slice(0, 120)) : undefined }))
       .slice(0, 4)
     return {
       readyToBuild: parsed.readyToBuild && questions.length === 0,

@@ -192,6 +192,11 @@ model TenantApp {
   name                      String
   status                    String                   @default("draft")
   previewUrl                String?
+  workspaceInstanceId       String?
+  lastRunId                 String?
+  lastBuildAt               DateTime?
+  errorCode                 String?
+  errorDetail               String?
   publishedUrl              String?
   lastCommitSha             String?
   githubRepoId              String?
@@ -822,17 +827,19 @@ model Run {
 }
 
 model RunEvent {
-  id      String   @id @default(uuid())
-  runId   String
-  seq     Int
-  ts      DateTime @default(now())
-  type    String
-  phase   String?
-  agent   String?
-  payload Json
-  run     Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  id       String   @id @default(uuid())
+  runId    String
+  seq      Int
+  eventKey String?
+  ts       DateTime @default(now())
+  type     String
+  phase    String?
+  agent    String?
+  payload  Json
+  run      Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@unique([runId, seq])
+  @@unique([runId, eventKey])
   @@index([runId, seq])
   @@map("run_events")
 }
@@ -950,11 +957,14 @@ model ProjectAsset {
   id          String   @id @default(uuid())
   projectId   String
   kind        String
+  slot        String?
+  status      String?
   sourceUrl   String?
   prompt      String?
   license     String?
   attribution String?
   storageRef  String?
+  error       String?
   createdAt   DateTime @default(now())
 
   @@index([projectId, createdAt])

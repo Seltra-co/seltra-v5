@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Param, Post, Query, Sse, UseGuards } from '@nestjs/common'
+import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, Post, Query, Sse, UseGuards } from '@nestjs/common'
 import { RunService, PersistedRunState } from './run.service'
 import { CoreServiceGuard } from '../core-internal/core-service.guard'
 
@@ -7,14 +7,16 @@ export class RunController {
   constructor(private readonly runs: RunService) {}
 
   @Post('internal/:id/events')
+  @HttpCode(HttpStatus.OK)
   @UseGuards(CoreServiceGuard)
-  appendInternal(@Param('id') id: string, @Body() body: { type: string; phase?: string; agent?: string; payload?: Record<string, unknown>; state?: PersistedRunState }) {
+  appendInternal(@Param('id') id: string, @Body() body: { type: string; phase?: string; agent?: string; payload?: Record<string, unknown>; state?: PersistedRunState; eventKey?: string }) {
     return this.runs.appendInternal(id, {
       type: body.type,
       phase: body.phase,
       agent: body.agent,
       payload: body.payload ?? {},
       state: body.state,
+      eventKey: body.eventKey,
     })
   }
 
@@ -37,13 +39,15 @@ export class RunController {
   }
 
   @Post(':id/events')
-  append(@Param('id') id: string, @Body() body: { type: string; phase?: string; agent?: string; payload?: Record<string, unknown>; state?: PersistedRunState }, @Headers('authorization') authorization?: string) {
+  @HttpCode(HttpStatus.OK)
+  append(@Param('id') id: string, @Body() body: { type: string; phase?: string; agent?: string; payload?: Record<string, unknown>; state?: PersistedRunState; eventKey?: string }, @Headers('authorization') authorization?: string) {
     return this.runs.append(id, {
       type: body.type,
       phase: body.phase,
       agent: body.agent,
       payload: body.payload ?? {},
       state: body.state,
+      eventKey: body.eventKey,
     }, authorization)
   }
 

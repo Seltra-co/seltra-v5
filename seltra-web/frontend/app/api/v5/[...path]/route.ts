@@ -49,6 +49,7 @@ async function proxy(req: NextRequest, path: string[]) {
     method: req.method,
     headers,
     redirect: 'manual',
+    signal: req.signal,
   }
 
   if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -58,12 +59,18 @@ async function proxy(req: NextRequest, path: string[]) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const upstream = await fetch(target, init)
-      const body = await upstream.arrayBuffer()
       const responseHeaders = new Headers()
       const upstreamType = upstream.headers.get('content-type')
       const setCookie = upstream.headers.get('set-cookie')
       const upstreamRequestId = upstream.headers.get('x-request-id')
       if (upstreamType) responseHeaders.set('content-type', upstreamType)
+      if (upstreamType?.includes('text/event-stream')) {
+        responseHeaders.set('cache-control', 'no-cache, no-transform')
+        responseHeaders.set('x-accel-buffering', 'no')
+        if (upstream.status >= 400) console.warn(JSON.stringify({ event: 'backend_api_proxy_error', requestId, path: `/api/v5/${path.join('/')}`, status: upstream.status }))
+        return new NextResponse(upstream.body, { status: upstream.status, headers: responseHeaders })
+      }
+      const body = await upstream.arrayBuffer()
       if (setCookie) responseHeaders.set('set-cookie', setCookie)
       responseHeaders.set('x-request-id', upstreamRequestId && /^[A-Za-z0-9._:-]{1,128}$/.test(upstreamRequestId) ? upstreamRequestId : requestId)
       if (upstream.status >= 400) console.warn(JSON.stringify({ event: 'backend_api_proxy_error', requestId, path: `/api/v5/${path.join('/')}`, status: upstream.status }))

@@ -1,15 +1,18 @@
 import type { CoreClient } from './client'
 
 export class CoreEvents {
-  private static readonly maxAttempts = 5
   private socket?: WebSocket
   private stopped = false
-  private retry = 250
+  private retry = 500
   private attempts = 0
   private opening = false
   private timer?: number
   private lastEventId?: string
   private generation = 0
+  private listenersAttached = false
+  private readonly resumeOnFocus = () => {
+    if (document.visibilityState === 'visible') this.retryNow()
+  }
 
   constructor(
     private readonly client: CoreClient,
@@ -20,11 +23,18 @@ export class CoreEvents {
 
   connect() {
     this.stopped = false
+    if (!this.listenersAttached) {
+      window.addEventListener('online', this.resumeOnFocus)
+      window.addEventListener('focus', this.resumeOnFocus)
+      document.addEventListener('visibilitychange', this.resumeOnFocus)
+      this.listenersAttached = true
+    }
     if (this.opening || this.socket?.readyState === WebSocket.CONNECTING || this.socket?.readyState === WebSocket.OPEN) return
     void this.open()
   }
 
   retryNow() {
+    if (this.socket?.readyState === WebSocket.OPEN || this.socket?.readyState === WebSocket.CONNECTING || this.opening) return
     this.generation += 1
     if (this.timer) window.clearTimeout(this.timer)
     this.timer = undefined
@@ -43,8 +53,7 @@ export class CoreEvents {
       previous.onopen = null
       previous.close(1000, 'Retry requested')
     }
-    this.attempts = 0
-    this.retry = 250
+    this.retry = 500
     this.stopped = false
     void this.open()
   }
@@ -115,12 +124,8 @@ export class CoreEvents {
   }
 
   private scheduleRetry() {
-    if (this.attempts >= CoreEvents.maxAttempts) {
-      this.onError(`Connection paused after ${CoreEvents.maxAttempts} attempts. Retry to reconnect.`)
-      return
-    }
     const delay = Math.round(this.retry * (0.75 + Math.random() * 0.5))
-    this.retry = Math.min(this.retry * 2, 10_000)
+    this.retry = Math.min(this.retry * 2, 15_000)
     this.timer = window.setTimeout(() => {
       this.timer = undefined
       void this.open()
@@ -137,5 +142,11 @@ export class CoreEvents {
     if (this.timer) window.clearTimeout(this.timer)
     this.timer = undefined
     this.socket?.close(1000, 'Builder closed')
+    if (this.listenersAttached) {
+      window.removeEventListener('online', this.resumeOnFocus)
+      window.removeEventListener('focus', this.resumeOnFocus)
+      document.removeEventListener('visibilitychange', this.resumeOnFocus)
+      this.listenersAttached = false
+    }
   }
 }

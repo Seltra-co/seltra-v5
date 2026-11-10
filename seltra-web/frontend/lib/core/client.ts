@@ -131,7 +131,7 @@ export class CoreClient {
     return unwrapCoreIpcEnvelope<T>(result.result)
   }
 
-  async probePreview(appId: number): Promise<{ ready: boolean; status: number }> {
+  async probePreview(appId: number): Promise<{ ready: boolean; status: number; previewUrl?: string }> {
     const session = await this.currentSession()
     const response = await fetch(`${this.baseUrl}/api/preview/probe`, {
       method: 'POST',
@@ -139,9 +139,9 @@ export class CoreClient {
       body: JSON.stringify({ appId }),
       cache: 'no-store',
     })
-    const result = await response.json().catch(() => ({})) as { ready?: unknown; status?: unknown; error?: { message?: string } }
+    const result = await response.json().catch(() => ({})) as { ready?: unknown; status?: unknown; previewUrl?: unknown; error?: { message?: string } }
     if (!response.ok || typeof result.ready !== 'boolean' || typeof result.status !== 'number') throw new Error(result.error?.message || 'Could not verify the app preview.')
-    return { ready: result.ready, status: result.status }
+    return { ready: result.ready, status: result.status, ...(typeof result.previewUrl === 'string' ? { previewUrl: result.previewUrl } : {}) }
   }
 
   async prewarm(intent: 'user_send' | 'user_approve' | 'restore' = 'user_send'): Promise<void> {

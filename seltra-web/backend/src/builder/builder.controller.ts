@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Post, Query, UseGuards } from '@nestjs/common'
+import { Body, Controller, Get, Headers, Param, Post, Query, UseGuards } from '@nestjs/common'
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger'
 import { BuilderIntentDto, BuilderSessionDto, SyncCoreAppStateDto, SyncTenantAppDto } from './builder.dto'
 import { BuilderService } from './builder.service'
@@ -46,9 +46,20 @@ export class BuilderController {
     return this.builder.syncCoreAppState(authorization, body)
   }
 
+  @Post('apps/:appId/assets/:slot/retry')
+  retryAsset(@Headers('authorization') authorization: string | undefined, @Param('appId') appId: string, @Param('slot') slot: string, @Body() body: { tenantId: string; prompt: string }) {
+    return this.builder.retryAsset(authorization, body.tenantId, appId, slot, body.prompt)
+  }
+
   @Post('workspace/files-sync')
   @UseGuards(CoreServiceGuard)
   syncWorkspaceFiles(@Body() body: { tenantId: string; workspaceId?: string; coreAppId?: number; runId?: string; files: Array<{ path: string; content: string }> }) {
     return this.builder.syncWorkspaceFiles(body)
+  }
+
+  @Post('workspace/files-verify')
+  @UseGuards(CoreServiceGuard)
+  verifyWorkspaceFiles(@Body() body: { tenantId: string; files: Array<{ path: string; sha256: string }> }) {
+    return this.builder.verifyWorkspaceFiles(body)
   }
 }
