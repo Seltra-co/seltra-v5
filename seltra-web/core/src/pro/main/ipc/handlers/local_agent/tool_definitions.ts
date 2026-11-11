@@ -1,7 +1,9 @@
+// core/src/pro/main/ipc/handlers/local_agent/tool_definitions.ts
 import { withReferencedAppRead } from "./tools/referenced_app_read";
 import { recordShellReviewOutcome } from "./shell_review_history";
 import { runShellTool } from "./tools/run_shell";
 import { isShellExperimentAvailable } from "@/shared/shell_capability";
+import { hasFullToolAccess } from "@/shared/agent_tool_access";
 /**
  * Tool definitions for Local Agent v2
  * Each tool includes a zod schema, description, and execute function
@@ -508,6 +510,26 @@ export const BUILD_MODE_TOOL_NAMES = [
   "write_app_blueprint",
   "read_experiment_artifacts",
   "write_experiment_artifacts",
+  "explore_chat_history",
+  "run_type_checks",
+  "run_tests",
+  "read_logs",
+  "code_search",
+  "web_search",
+  "web_fetch",
+  "web_crawl",
+  "git_status",
+  "git_diff",
+  "git_log",
+  "git_show_commit",
+  "git_show_file",
+  "spawn_agent",
+  "list_agents",
+  "wait_agents",
+  "cancel_agent",
+  "send_message",
+  "followup_task",
+  "explore_code",
 ] as const satisfies readonly AgentToolName[];
 
 const BUILD_MODE_TOOL_NAME_SET = new Set<AgentToolName>(BUILD_MODE_TOOL_NAMES);
@@ -743,14 +765,28 @@ export function shouldIncludeTool(
   options: BuildAgentToolSetOptions = {},
   phase: "discovery" | "invocation" = "discovery",
 ): boolean {
+  const fullToolAccess = hasFullToolAccess();
+  const effectiveCtx = fullToolAccess
+    ? {
+        ...ctx,
+        isDyadPro: true,
+        freeModelMode: false,
+        canUseExplorerSubagent: true,
+        canUseImplementerSubagent: true,
+        canUseAdvancedSubagentTools: true,
+      }
+    : ctx;
   if (
     tool.name === "run_shell" &&
     !isShellExperimentAvailable({
-      settings: ctx.inferenceSettings ?? readSettings(),
-      isDyadPro: ctx.isDyadPro,
+      settings: fullToolAccess
+        ? { ...(ctx.inferenceSettings ?? readSettings()), enableShellTool: true, runtimeMode2: "host" }
+        : ctx.inferenceSettings ?? readSettings(),
       ...options,
-      freeModelMode: options.freeModelMode ?? ctx.freeModelMode,
-      isChild: !!ctx.mutationActivityOwner?.persona,
+      isDyadPro: fullToolAccess || effectiveCtx.isDyadPro,
+      freeModelMode: fullToolAccess ? false : options.freeModelMode ?? ctx.freeModelMode,
+      toolProfile: fullToolAccess ? "agent" : options.toolProfile,
+      isChild: !!effectiveCtx.mutationActivityOwner?.persona,
     })
   )
     return false;
@@ -766,8 +802,8 @@ export function shouldIncludeTool(
   // In plan mode, skip state-modifying tools unless they're planning-specific.
   if (
     options.planModeOnly &&
-    toolModifiesState(tool, ctx) &&
-    !toolAllowedInReadOnlyModes(tool, ctx) &&
+    toolModifiesState(tool, effectiveCtx) &&
+    !toolAllowedInReadOnlyModes(tool, effectiveCtx) &&
     !PLANNING_SPECIFIC_TOOLS.has(tool.name)
   ) {
     return false;
@@ -777,17 +813,17 @@ export function shouldIncludeTool(
     return false;
   }
   // Skip Pro-only tools in basic agent mode.
-  if (options.basicAgentMode && PRO_AGENT_ONLY_TOOLS.has(tool.name)) {
+  if (!fullToolAccess && options.basicAgentMode && PRO_AGENT_ONLY_TOOLS.has(tool.name)) {
     return false;
   }
   if (
-    options.freeModelMode &&
+    !fullToolAccess && options.freeModelMode &&
     tool.usesEngineEndpoint &&
     !tool.allowInFreeModelMode
   ) {
     return false;
   }
-  if (tool.subagentOnly && !ctx.isDyadPro) {
+  if (tool.subagentOnly && !fullToolAccess && !ctx.isDyadPro) {
     return false;
   }
   // search_chats is superseded by the explore_chat_history sub-agent wherever
@@ -797,8 +833,9 @@ export function shouldIncludeTool(
   // history stays reachable.
   if (
     phase === "discovery" &&
+    !fullToolAccess &&
     tool.name === "search_chats" &&
-    shouldIncludeTool(exploreChatHistoryTool, ctx, options)
+    shouldIncludeTool(exploreChatHistoryTool, effectiveCtx, options)
   ) {
     return false;
   }
@@ -812,16 +849,21 @@ export function shouldIncludeTool(
   // In read-only mode, skip tools that modify state.
   if (
     options.readOnly &&
-    toolModifiesState(tool, ctx) &&
-    !toolAllowedInReadOnlyModes(tool, ctx)
+    toolModifiesState(tool, effectiveCtx) &&
+    !toolAllowedInReadOnlyModes(tool, effectiveCtx)
   ) {
     return false;
   }
-  if (phase === "discovery" && tool.isDiscoverable && !tool.isDiscoverable(ctx))
+  if (
+    phase === "discovery" &&
+    tool.isDiscoverable &&
+    !fullToolAccess &&
+    !tool.isDiscoverable(effectiveCtx)
+  )
     return false;
   if (tool.isEnabled) {
-    const enabled = tool.isEnabled(ctx);
-    if (!enabled) {
+    const enabled = tool.isEnabled(effectiveCtx);
+    if (!enabled && !(fullToolAccess && (tool.usesEngineEndpoint || tool.subagentOnly))) {
       return false;
     }
   }

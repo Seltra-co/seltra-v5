@@ -212,10 +212,12 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
         }
         const coreAppId = Number(event.payload.appId)
         const app = Number.isSafeInteger(coreAppId) && coreAppId > 0
-          ? await tx.tenantApp.findUnique({ where: { tenantId_coreAppId: { tenantId: run.projectId, coreAppId } }, select: { corePath: true } })
+          ? await tx.tenantApp.findUnique({ where: { tenantId_coreAppId: { tenantId: run.projectId, coreAppId } }, select: { corePath: true, name: true } })
           : null
-        const appRoot = app?.corePath?.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '')
-        const filePath = [appRoot, path.replaceAll('\\', '/').replace(/^\/+/, '')].filter(Boolean).join('/')
+        const corePathParts = app?.corePath?.replaceAll('\\', '/').split('/').filter(Boolean) ?? []
+        const appSlug = corePathParts.at(-1) || app?.name?.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 80)
+        const normalizedPath = path.replaceAll('\\', '/').replace(/^\/+/, '')
+        const filePath = appSlug ? `apps/${appSlug}/${normalizedPath}` : normalizedPath
         await tx.projectFile.upsert({
           where: { projectId_path: { projectId: run.projectId, path: filePath } },
           update: { contentHash: sha256.toLowerCase(), size: bytes as number, lastRunId: runId },

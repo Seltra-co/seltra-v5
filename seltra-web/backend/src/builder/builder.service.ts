@@ -1,3 +1,4 @@
+// seltra-web/backend/src/builder/builder.service.ts
 import { ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
@@ -14,6 +15,13 @@ function workspaceFileMime(filePath: string) {
   const extension = filePath.toLowerCase().split('.').pop()
   const types: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif', svg: 'image/svg+xml' }
   return extension ? types[extension] : undefined
+}
+
+function appManifestRoot(app: { corePath?: string | null; name?: string | null }) {
+  const corePathParts = app.corePath?.replaceAll('\\', '/').split('/').filter(Boolean) ?? []
+  const slug = corePathParts.at(-1)
+    || app.name?.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 80)
+  return slug ? `apps/${slug}` : undefined
 }
 
 function redactedErrorStack(error: unknown) {
@@ -377,10 +385,9 @@ export class BuilderService {
       const manifest = Object.fromEntries(files.map((file) => [file.path, file.contentHash]))
       const apps = await prisma.tenantApp.findMany({ where: { tenantId: input.tenantId }, select: { id: true, coreAppId: true, corePath: true, name: true } })
       for (const app of apps) {
-        const appSlug = app.corePath?.replaceAll('\\', '/').split('/').filter(Boolean).at(-1)
-          || app.name.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 80)
-        if (!appSlug) continue
-        const prefix = `apps/${appSlug}/`
+        const root = appManifestRoot(app)
+        if (!root) continue
+        const prefix = `${root}/`
         const appFiles = Object.fromEntries(Object.entries(manifest)
           .filter(([path]) => path.startsWith(prefix))
           .map(([path, hash]) => [path.slice(prefix.length), hash]))
@@ -424,7 +431,7 @@ export class BuilderService {
     const changed = [...manifest.keys()].filter((path) => workspace.has(path) && workspace.get(path) !== manifest.get(path))
     const mismatches = [...missing.map((path) => `missing:${path}`), ...extra.map((path) => `extra:${path}`), ...changed.map((path) => `changed:${path}`)]
     const app = apps.at(-1)
-    const root = app?.corePath?.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '')
+    const root = app ? appManifestRoot(app) : undefined
     const appFiles = manifestRows.filter((file) => !root || file.path.replaceAll('\\', '/').startsWith(`${root}/`))
     const packageFile = appFiles.find((file) => file.path.replaceAll('\\', '/').endsWith('/package.json') || file.path === 'package.json')
     let packageScriptsValid = false
@@ -432,7 +439,7 @@ export class BuilderService {
       const scripts = JSON.parse(packageFile?.inlineContent ?? '{}').scripts
       packageScriptsValid = typeof scripts?.dev === 'string' && typeof scripts?.build === 'string'
     } catch { packageScriptsValid = false }
-    const routeFiles = appFiles.filter((file) => /(?:^|\/)(?:app|pages)\/(?:.*\/)?(?:page|index)\.[cm]?[jt]sx?$/.test(file.path.replaceAll('\\', '/')))
+    const routeFiles = appFiles.filter((file) => /(?:^|\/)(?:app|pages)\/(?:.*\/)?(?:page|index)\.[cm]?[jt]sx?$/i.test(file.path.replaceAll('\\', '/')))
     const viteEntry = appFiles.find((file) => /(?:^|\/)src\/main\.[jt]sx?$/.test(file.path.replaceAll('\\', '/')))
     const viteApp = appFiles.find((file) => /(?:^|\/)src\/App\.[jt]sx?$/.test(file.path.replaceAll('\\', '/')))
     const pagesRouted = routeFiles.length > 0 || Boolean(viteEntry?.inlineContent && viteApp?.inlineContent && /(?:from\s+|import\s*)['"]\.\/App['"]/.test(viteEntry.inlineContent))

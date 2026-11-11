@@ -10,7 +10,7 @@ import {
 } from "./tool_definitions";
 
 describe("Build mode tool profile", () => {
-  it("is an exact, non-sub-agent allowlist with explicitly authorized engine capabilities", () => {
+  it("is an explicit Build allowlist containing registered capabilities", () => {
     expect(BUILD_MODE_TOOL_NAMES).toEqual([
       "generate_image",
       "repair_app",
@@ -39,6 +39,26 @@ describe("Build mode tool profile", () => {
       "write_app_blueprint",
       "read_experiment_artifacts",
       "write_experiment_artifacts",
+      "explore_chat_history",
+      "run_type_checks",
+      "run_tests",
+      "read_logs",
+      "code_search",
+      "web_search",
+      "web_fetch",
+      "web_crawl",
+      "git_status",
+      "git_diff",
+      "git_log",
+      "git_show_commit",
+      "git_show_file",
+      "spawn_agent",
+      "list_agents",
+      "wait_agents",
+      "cancel_agent",
+      "send_message",
+      "followup_task",
+      "explore_code",
     ]);
 
     const definitions = new Map(
@@ -50,10 +70,9 @@ describe("Build mode tool profile", () => {
         definition,
         `${name} must exist in TOOL_DEFINITIONS`,
       ).toBeDefined();
-      if (definition?.usesEngineEndpoint) {
+      if (definition?.usesEngineEndpoint && name === "generate_image") {
         expect(definition.allowInFreeModelMode, name).toBe(true);
       }
-      expect(definition?.subagentOnly, name).not.toBe(true);
     }
   });
 
@@ -157,6 +176,56 @@ describe("Build mode tool profile", () => {
 });
 
 describe("discovery versus invocation availability", () => {
+  it("exposes the requested Build tools in the hosted web runtime on a free plan", () => {
+    const previousRuntime = process.env.DYAD_WEB_RUNTIME;
+    process.env.DYAD_WEB_RUNTIME = "1";
+    const expected = [
+      "run_type_checks", "run_tests", "read_logs", "code_search",
+      "web_search", "web_fetch", "web_crawl", "git_status", "git_diff",
+      "git_log", "git_show_commit", "git_show_file", "spawn_agent",
+      "explore_chat_history",
+      "list_agents", "wait_agents", "cancel_agent", "send_message",
+      "followup_task", "explore_code",
+    ];
+    const ctx = {
+      isDyadPro: false,
+      freeModelMode: true,
+      testingEnabled: true,
+      canUseExplorerSubagent: true,
+      canUseImplementerSubagent: true,
+      canUseAdvancedSubagentTools: true,
+      inferenceSettings: { enableShellTool: false },
+    } as unknown as import("./tools/types").AgentContext;
+    try {
+      const tools = buildAgentToolSet(ctx, {
+        toolProfile: "build",
+        isDyadPro: false,
+        freeModelMode: true,
+        basicAgentMode: true,
+        enableAppBlueprint: true,
+      });
+      expect(Object.keys(tools)).toEqual(expect.arrayContaining(expected));
+      expect(Object.keys(tools)).toContain("run_shell");
+    } finally {
+      if (previousRuntime === undefined) delete process.env.DYAD_WEB_RUNTIME;
+      else process.env.DYAD_WEB_RUNTIME = previousRuntime;
+    }
+  });
+
+  it("preserves desktop Pro and free-model gates when hosted runtime is unset", () => {
+    const previousRuntime = process.env.DYAD_WEB_RUNTIME;
+    delete process.env.DYAD_WEB_RUNTIME;
+    try {
+      const context = { isDyadPro: false } as import("./tools/types").AgentContext;
+      const subagent = TOOL_DEFINITIONS.find((tool) => tool.name === "spawn_agent")!;
+      const engineTool = TOOL_DEFINITIONS.find((tool) => tool.name === "web_search")!;
+      expect(shouldIncludeTool(subagent, context, { toolProfile: "build" })).toBe(false);
+      expect(shouldIncludeTool(engineTool, context, { freeModelMode: true })).toBe(false);
+    } finally {
+      if (previousRuntime !== undefined) process.env.DYAD_WEB_RUNTIME = previousRuntime;
+    }
+  });
+
   it("exposes image generation only with a configured Seltra Engine URL and key", () => {
     const tool = TOOL_DEFINITIONS.find((entry) => entry.name === "generate_image")!;
     const ctx = { isDyadPro: false } as import("./tools/types").AgentContext;

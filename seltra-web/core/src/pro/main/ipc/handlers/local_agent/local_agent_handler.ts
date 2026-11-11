@@ -1,5 +1,7 @@
+//core/src/pro/main/ipc/handlers/local_agent/local_agent_handler.ts
 import { recordShellReviewOutcome } from "./shell_review_history";
 import { shellExecutionGuidance } from "@/shared/shell_capability";
+import { hasFullToolAccess } from "@/shared/agent_tool_access";
 import { SubscriptionBillingError } from "@/shared/subscription_billing_error";
 import {
   getInferenceSource,
@@ -814,6 +816,7 @@ export async function handleLocalAgentStream(
     !buildMode &&
     !readOnly &&
     !planModeOnly &&
+    !hasFullToolAccess() &&
     !isDyadProEnabled(settings) &&
     selectedModel.provider !== "claude-code" &&
     !isBasicAgentMode(settings)
@@ -1069,25 +1072,22 @@ export async function handleLocalAgentStream(
       appBlueprintQuestionnaireCompleted: hasCompletedAppBlueprintQuestionnaire(
         chat.messages,
       ),
-      isDyadPro: isDyadProEnabled(settings),
+      isDyadPro: hasFullToolAccess() || isDyadProEnabled(settings),
       canUseExplorerSubagent:
-        !buildMode &&
-        isDyadProEnabled(settings) &&
-        settings.enableExplorerSubagent !== false &&
+        (hasFullToolAccess() || (!buildMode && isDyadProEnabled(settings))) &&
+        (hasFullToolAccess() || settings.enableExplorerSubagent !== false) &&
         settings.agentToolConsents?.spawn_agent !== "never",
       canUseImplementerSubagent:
-        !buildMode &&
-        isDyadProEnabled(settings) &&
-        isImplementerSubagentEnabled(settings) &&
+        (hasFullToolAccess() || (!buildMode && isDyadProEnabled(settings))) &&
+        (hasFullToolAccess() || isImplementerSubagentEnabled(settings)) &&
         !readOnly &&
         !planModeOnly,
       canUseAdvancedSubagentTools:
-        !buildMode &&
-        isDyadProEnabled(settings) &&
-        settings.enableAdvancedSubagents === true,
+        (hasFullToolAccess() || (!buildMode && isDyadProEnabled(settings))) &&
+        (hasFullToolAccess() || settings.enableAdvancedSubagents === true),
       runTypeScriptForWholeProject:
         settings.runTypeScriptForWholeProject === true,
-      freeModelMode: effectiveFreeModelMode,
+      freeModelMode: hasFullToolAccess() ? false : effectiveFreeModelMode,
       onXmlStream: (accumulatedXml: string) => {
         // Stream the in-progress tool XML as a sidecar preview overlay.
         // Does NOT enter `message.content` or `fullResponse` — the patch

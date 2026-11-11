@@ -1,3 +1,4 @@
+// core/src/pro/main/ipc/handlers/local_agent/tools/run_shell.ts
 import { runningApps } from "@/ipc/utils/process_manager";
 import { z } from "zod";
 import { readSettings } from "@/main/settings";
@@ -6,6 +7,7 @@ import {
   isShellExperimentAvailable,
   shellExecutionGuidance,
 } from "@/shared/shell_capability";
+import { hasFullToolAccess } from "@/shared/agent_tool_access";
 import { withTrackedMutation } from "../subagents/mutation_activity_tracker";
 import {
   appOperationCoordinator,
@@ -52,9 +54,11 @@ export const runShellTool: ToolDefinition<z.infer<typeof schema>> = {
   defaultConsent: "always",
   isEnabled: (ctx) =>
     isShellExperimentAvailable({
-      settings: ctx.inferenceSettings ?? readSettings(),
-      isDyadPro: ctx.isDyadPro,
-      freeModelMode: ctx.freeModelMode,
+      settings: hasFullToolAccess()
+        ? { ...(ctx.inferenceSettings ?? readSettings()), enableShellTool: true, runtimeMode2: "host" }
+        : ctx.inferenceSettings ?? readSettings(),
+      isDyadPro: hasFullToolAccess() || ctx.isDyadPro,
+      freeModelMode: hasFullToolAccess() ? false : ctx.freeModelMode,
       isChild: !!ctx.mutationActivityOwner?.persona,
     }),
   execute: async (input, ctx) => {
@@ -86,9 +90,11 @@ export const runShellTool: ToolDefinition<z.infer<typeof schema>> = {
         mode === "docker"
       ) return false;
       return isShellExperimentAvailable({
-        settings,
-        isDyadPro: ctx.isDyadPro && isDyadProEnabled(settings),
-        freeModelMode: ctx.freeModelMode,
+        settings: hasFullToolAccess()
+          ? { ...settings, enableShellTool: true, runtimeMode2: "host" }
+          : settings,
+        isDyadPro: hasFullToolAccess() || (ctx.isDyadPro && isDyadProEnabled(settings)),
+        freeModelMode: hasFullToolAccess() ? false : ctx.freeModelMode,
         isChild: !!ctx.mutationActivityOwner?.persona,
       });
     };

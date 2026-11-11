@@ -14,6 +14,7 @@ import log from "electron-log";
 import type { AgentTool, SetAgentToolConsentParams } from "@/ipc/types";
 import { agentContracts } from "@/ipc/types/agent";
 import { isDyadProEnabled } from "@/lib/schemas";
+import { hasFullToolAccess } from "@/shared/agent_tool_access";
 import { readSettings } from "@/main/settings";
 import { resolveToolDescription } from "./tools/types";
 import {
@@ -46,7 +47,7 @@ export function registerAgentToolHandlers() {
         settings.runTypeScriptForWholeProject === true,
     };
     return TOOL_DEFINITIONS.filter(
-      (tool) => isDyadProEnabled(settings) || !tool.subagentOnly,
+      (tool) => hasFullToolAccess() || isDyadProEnabled(settings) || !tool.subagentOnly,
     ).map((tool) => ({
       name: tool.name,
       description: resolveToolDescription(tool, descriptionContext),
