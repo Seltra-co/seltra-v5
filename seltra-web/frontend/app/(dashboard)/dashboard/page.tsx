@@ -348,6 +348,11 @@ function getActivityStageDuration(stage: ActivityStage, phase: ActivityPhase): n
 type PlannerQuestion = { id: string; question: string; why: string; options?: string[] }
 type PlannerResult = { readyToBuild: boolean; questions: PlannerQuestion[]; inferredSummary: string }
 
+// Keep this noise list aligned with isIgnoredBrowserNoise in core/tools/repair_app.ts.
+function isIgnoredPreviewNoise(message: string): boolean {
+  return /\[vite\].*websocket|websocket.*handshake|failed to connect to websocket|\[dyad-screenshot\]|favicon\.ico.*(?:404|not found|failed)|ResizeObserver loop (?:limit exceeded|completed with undelivered notifications)/i.test(message)
+}
+
 type MessageAttachment = {
   type: 'image'
   url: string
@@ -908,6 +913,9 @@ export default function DashboardPage() {
   const workflowEventsRef = useRef<WorkflowEvent[]>([])
   const [workflowRunId, setWorkflowRunId] = useState('')
   const coreRunEventQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const pendingBrowserQaRef = useRef<Array<Record<string, unknown>>>([])
+  const flushPendingBrowserQaRef = useRef<() => void>(() => undefined)
+  const previewOverlayReasonsRef = useRef(new Set<string>())
   const persistRunEventRef = useRef<(type: string, phase?: string, state?: 'running' | 'waiting_for_user' | 'completed' | 'failed' | 'stopped', payload?: Record<string, unknown>) => Promise<void>>(async () => undefined)
   const coreRunProjectRef = useRef<string>()
   const coreRunHeartbeatRef = useRef<number>()
@@ -938,6 +946,7 @@ export default function DashboardPage() {
   const corePreviewScreenshotRequestRef = useRef<string>()
   const coreSnapshotRequestRef = useRef<string>()
   const coreSnapshotCapturedForRef = useRef('')
+  const coreSnapshotRetryRef = useRef({ key: '', count: 0 })
   const [corePreviewScreenshot, setCorePreviewScreenshot] = useState('')
   const [coreElementPickerActive, setCoreElementPickerActive] = useState(false)
   const [coreSelectedComponents, setCoreSelectedComponents] = useState<Array<{ id: string; name: string; runtimeId?: string; relativePath: string; lineNumber: number; columnNumber: number }>>([])
@@ -945,6 +954,7 @@ export default function DashboardPage() {
   const [corePreviewConsole, setCorePreviewConsole] = useState<Array<{ level: string; message: string; timestamp: string }>>([])
   const [corePreviewConsoleOpen, setCorePreviewConsoleOpen] = useState(false)
   const [corePreviewError, setCorePreviewError] = useState('')
+  const [coreGatewayError, setCoreGatewayError] = useState('')
   const [previewTipIndex, setPreviewTipIndex] = useState(0)
   const [previewTipsDismissed, setPreviewTipsDismissed] = useState(false)
   const [previewTipPaused, setPreviewTipPaused] = useState(false)
@@ -1017,7 +1027,7 @@ export default function DashboardPage() {
       if (!store) {
         coreQuestionnaireInFlightRef.current.delete(questionnaire.requestId)
         setCoreQuestionnaire((current) => current?.requestId === questionnaire.requestId ? { ...current, isResponding: false } : current)
-        setCoreConnectionError('Seltra could not create this project. Retry your prompt to continue.')
+        setCoreGatewayError('Seltra could not create this project. Retry your prompt to continue.')
         return
       }
       agentTimingRef.current.answeredAt = Date.now()
@@ -1317,6 +1327,15 @@ export default function DashboardPage() {
     setPreviewRecoveryError('')
   }, [corePreviewUrl, previewRecovering])
 
+  const setPreviewOverlayError = useCallback((reason: string, message: string) => {
+    if (!previewOverlayReasonsRef.current.has(reason)) {
+      previewOverlayReasonsRef.current.add(reason)
+      console.warn(`[preview-overlay] reason=${reason}`)
+    }
+    setCorePreviewError(message)
+    setCoreConnectionError(message)
+  }, [])
+
   useEffect(() => {
     if (!corePreviewUrl) return
     let expectedOrigin: string
@@ -1350,26 +1369,24 @@ export default function DashboardPage() {
       if (data.type === 'dyad-screenshot-response' && data.requestId === corePreviewScreenshotRequestRef.current) {
         corePreviewScreenshotRequestRef.current = undefined
         if (data.success && typeof data.dataUrl === 'string' && data.dataUrl.startsWith('data:image/')) setCorePreviewScreenshot(data.dataUrl)
-        else { console.warn('[agent-stream] preview capture failed', data.error); setCorePreviewError('Seltra could not capture the preview.') }
+        else console.warn('[dashboard] Core did not return a preview screenshot.')
         return
       }
       if (data.type === 'console-log') {
         const level = ['log', 'info', 'debug', 'warn', 'error'].includes(data.level ?? '') ? data.level! : 'log'
         const message = Array.isArray(data.args) ? data.args.map((item) => typeof item === 'string' ? item : JSON.stringify(item)).join(' ') : ''
         setCorePreviewConsole((current) => [...current, { level, message: message.slice(0, 2000), timestamp: data.timestamp || new Date().toISOString() }].slice(-100))
-        if (level === 'error' && message) { console.warn('[agent-stream] preview reported an error'); setCorePreviewError('The app reported an error before its preview was ready.') }
         return
       }
-      if (['window-error', 'unhandled-rejection', 'iframe-sourcemapped-error', 'build-error-report'].includes(data.type ?? '')) {
+      if (['window-error', 'unhandled-rejection', 'iframe-sourcemapped-error'].includes(data.type ?? '')) {
         const message = data.payload?.message || data.payload?.reason || `Preview reported ${data.type}${data.payload?.file ? ` in ${data.payload.file}` : ''}.`
-        console.warn('[agent-stream] preview frame failed')
-        setCorePreviewError('The app preview could not be reached.')
+        if (!isIgnoredPreviewNoise(message)) setPreviewOverlayError('UNCAUGHT_PAGE_ERROR', 'The app preview could not be reached.')
         setCorePreviewConsole((current) => [...current, { level: 'error', message: message.slice(0, 2000), timestamp: new Date().toISOString() }].slice(-100))
       }
     }
     window.addEventListener('message', handlePreviewMessage)
     return () => window.removeEventListener('message', handlePreviewMessage)
-  }, [corePreviewUrl, recoverCorePreview])
+  }, [corePreviewUrl, recoverCorePreview, setPreviewOverlayError])
 
   const captureCorePreview = () => {
     const frame = corePreviewFrameRef.current
@@ -1380,7 +1397,7 @@ export default function DashboardPage() {
     window.setTimeout(() => {
       if (corePreviewScreenshotRequestRef.current === requestId) {
         corePreviewScreenshotRequestRef.current = undefined
-        setCorePreviewError('Core did not return a preview screenshot. Reload the preview and try again.')
+        console.warn('[dashboard] Core preview snapshot request timed out.')
       }
     }, 10_000)
   }
@@ -1395,17 +1412,28 @@ export default function DashboardPage() {
 
     const captureKey = `${activeStore.id}:${appId}:${activeStore.dashboardApp?.version ?? ''}:${corePreviewUrl}`
     if (coreSnapshotCapturedForRef.current === captureKey) return
+    if (coreSnapshotRetryRef.current.key !== captureKey) coreSnapshotRetryRef.current = { key: captureKey, count: 0 }
     coreSnapshotCapturedForRef.current = captureKey
     const requestId = crypto.randomUUID()
     const origin = new URL(corePreviewUrl).origin
     coreSnapshotRequestRef.current = requestId
+    const retryOrFail = () => {
+      if (coreSnapshotRetryRef.current.count < 1) {
+        coreSnapshotRetryRef.current.count += 1
+        coreSnapshotCapturedForRef.current = ''
+        setCorePreviewLoaded(false)
+        setPreviewReloadKey((key) => key + 1)
+      } else {
+        setPreviewOverlayError('PREVIEW_SNAPSHOT_FAILED', 'Seltra could not capture the preview after retrying.')
+      }
+    }
 
     const timeout = window.setTimeout(() => {
       if (coreSnapshotRequestRef.current !== requestId) return
       coreSnapshotRequestRef.current = undefined
       coreSnapshotCapturedForRef.current = ''
       window.removeEventListener('message', handleSnapshot)
-      console.warn('[dashboard] Core did not return a preview snapshot.')
+      retryOrFail()
     }, 15_000)
     const handleSnapshot = async (event: MessageEvent) => {
       const data = event.data as { type?: string; requestId?: string; success?: boolean; dataUrl?: string }
@@ -1416,9 +1444,10 @@ export default function DashboardPage() {
       coreSnapshotRequestRef.current = undefined
       if (!data.success || typeof data.dataUrl !== 'string' || !data.dataUrl.startsWith('data:image/')) {
         coreSnapshotCapturedForRef.current = ''
-        console.warn('[dashboard] Core could not capture a preview snapshot.')
+        retryOrFail()
         return
       }
+      coreSnapshotRetryRef.current.count = 0
 
       const { data: saved, error } = await apiFetch<{ url: string }>(
         `/api/v5/seltra/store/${encodeURIComponent(activeStore.id!)}/hero-snapshot`,
@@ -1448,7 +1477,7 @@ export default function DashboardPage() {
       window.removeEventListener('message', handleSnapshot)
       if (coreSnapshotRequestRef.current === requestId) coreSnapshotRequestRef.current = undefined
     }
-  }, [activeStore?.id, activeStore?.dashboardApp?.coreAppId, activeStore?.dashboardApp?.version, activeStore?.apps, corePreviewLoaded, corePreviewUrl])
+  }, [activeStore?.id, activeStore?.dashboardApp?.coreAppId, activeStore?.dashboardApp?.version, activeStore?.apps, corePreviewLoaded, corePreviewUrl, setPreviewOverlayError])
 
   const toggleCoreElementPicker = () => {
     if (!corePreviewFrameRef.current?.contentWindow || !corePreviewUrl) return
@@ -1592,13 +1621,13 @@ export default function DashboardPage() {
       coreRuntimeRef.current = undefined
       coreTenantRef.current = undefined
       setCoreConnected(false)
-      setCoreConnectionError('')
+      setCoreGatewayError('')
       return
     }
     const tenantId = activeStore.id
     const existingClient = coreTenantRef.current === tenantId ? coreClientRef.current : null
     coreTenantRef.current = tenantId
-    setCoreConnectionError('')
+    setCoreGatewayError('')
     coreRuntimeRef.current = undefined
     try {
       const saved = JSON.parse(localStorage.getItem(`seltra:core:last-app:${tenantId}`) ?? 'null') as { appId?: number; chatId?: number } | null
@@ -1634,7 +1663,10 @@ export default function DashboardPage() {
         }
       } catch (error) {
         console.warn('[agent-stream] failed to restore preview')
-        if (coreRuntimeRef.current === runtimeId) setCoreConnectionError('Seltra could not reconnect to the app preview.')
+        if (coreRuntimeRef.current === runtimeId && coreRunRef.current?.id) {
+          void persistRunEventRef.current('preview.failed', 'verify', 'running', { error: 'Preview could not reconnect.' })
+          setPreviewOverlayError('PREVIEW_FAILED', 'Seltra could not reconnect to the app preview.')
+        } else if (coreRuntimeRef.current === runtimeId) setCoreGatewayError('Seltra could not reconnect to the app preview.')
       }
     }
     const recoverLatestProjectChat = async (runtimeId: string, appId: number) => {
@@ -1671,7 +1703,26 @@ export default function DashboardPage() {
         )
         return coreRunEventQueueRef.current.then(() => undefined)
       }
+      flushPendingBrowserQaRef.current = () => {
+        if (!coreRunRef.current?.id || pendingBrowserQaRef.current.length === 0) return
+        const buffered = pendingBrowserQaRef.current.splice(0)
+        for (const payload of buffered) void persistRunEvent('browser.qa', 'verifying', 'running', payload)
+      }
       persistRunEventRef.current = persistRunEvent
+      const syncBeforeRunCompleted = async () => {
+        const client = coreClientRef.current
+        if (!client) {
+          console.warn('[builder] Workspace sync before completion failed: CORE_CLIENT_UNAVAILABLE')
+          return
+        }
+        try {
+          const result = await client.syncNow()
+          if (result.verified !== true) console.warn('[builder] Workspace sync before completion failed: MANIFEST_NOT_VERIFIED')
+        } catch (error) {
+          const code = typeof error === 'object' && error && 'code' in error && typeof error.code === 'string' ? error.code : 'WORKSPACE_SYNC_FAILED'
+          console.warn(`[builder] Workspace sync before completion failed: ${code}`)
+        }
+      }
       const persistAppState = async (eventType: string, values: { name?: string; status?: 'draft' | 'planning' | 'awaiting_answers' | 'building' | 'preview_ready' | 'published' | 'live' | 'failed' | 'stopped'; previewUrl?: string; blueprint?: Record<string, unknown>; approved?: boolean; errorCode?: string; errorDetail?: string } = {}) => {
         const appId = coreAppRef.current
         if (!appId) return
@@ -1712,15 +1763,26 @@ export default function DashboardPage() {
         }
       }
       if (channel === 'agent-tool:browser-qa') {
-        const payload = frame.payload as { appId?: number; chatId?: number; consoleErrors?: string[]; failedRequests?: string[]; screenshotPath?: string; screenshotBytes?: number; screenshotSha256?: string }
+        const payload = frame.payload as { appId?: number; chatId?: number; status?: 'passed' | 'failed' | 'unavailable'; reason?: string | null; ignoredNoise?: string[]; consoleErrors?: string[]; failedRequests?: string[]; screenshotPath?: string | null; screenshotBytes?: number | null; screenshotSha256?: string | null }
         if (payload.appId === coreAppRef.current && payload.chatId === coreChatRef.current) {
-          persistRunEvent('browser.qa', 'verifying', 'running', {
+          const qaPayload = {
+            status: payload.status ?? 'unavailable',
+            reason: payload.reason ?? null,
             consoleErrors: payload.consoleErrors ?? [],
             failedRequests: payload.failedRequests ?? [],
+            ignoredNoise: payload.ignoredNoise ?? [],
             screenshotPath: payload.screenshotPath ?? null,
             screenshotBytes: payload.screenshotBytes ?? null,
             screenshotSha256: payload.screenshotSha256 ?? null,
-          })
+          }
+          if (coreRunRef.current?.id) persistRunEvent('browser.qa', 'verifying', 'running', qaPayload)
+          else {
+            if (pendingBrowserQaRef.current.length >= 50) {
+              pendingBrowserQaRef.current.shift()
+              console.warn('[builder] Dropped buffered browser.qa event because the run event buffer reached 50 entries.')
+            }
+            pendingBrowserQaRef.current.push(qaPayload)
+          }
         }
       }
       if (frame.channel === 'agent-tool:todos-update') {
@@ -1935,6 +1997,7 @@ export default function DashboardPage() {
               setPreviewOpen(true)
               void (async () => {
                 let attempt = 0
+                let documentServerErrors = 0
                 while (probeGeneration === previewProbeGenerationRef.current) {
                   try {
                     const probe = await client.probePreview(value.encodedKey!.appId!)
@@ -1951,10 +2014,16 @@ export default function DashboardPage() {
                       await persistAppState('app.preview.ready', { status: 'preview_ready', previewUrl: readyPreviewUrl })
                       await persistRunEvent('preview.ready', 'verifying', undefined, { status: probe.status, previewUrl: readyPreviewUrl })
                       if (coreRunCompletedRef.current) {
+                        await syncBeforeRunCompleted()
                         await persistRunEvent('run.completed', 'verify', 'completed', { chatId: coreChatRef.current, outcome: 'completed' })
                         coreRunCompletedRef.current = false
                         coreRunRef.current = undefined
                       }
+                      return
+                    }
+                    documentServerErrors = probe.status >= 500 ? documentServerErrors + 1 : 0
+                    if (documentServerErrors >= 3) {
+                      setPreviewOverlayError('PREVIEW_DOCUMENT_5XX', 'The app preview returned a server error.')
                       return
                     }
                   } catch {
@@ -1972,6 +2041,7 @@ export default function DashboardPage() {
             dispatchWorkbench({ type: 'failed', friendlyMessage: 'Something went wrong on our side. Try again.' })
             captureWorkbenchEvent({ type: 'failed', friendlyMessage: 'Something went wrong on our side. Try again.' })
             setPreviewOpen(true)
+            setPreviewOverlayError('PREVIEW_FAILED', 'The app preview could not be reached.')
             setSending(false)
             setCoreStartupStatus('')
             persistAppState('app.preview.failed', { status: 'failed' })
@@ -2007,8 +2077,9 @@ export default function DashboardPage() {
               if (completion.outcome === 'completed') {
                 coreRunCompletedRef.current = true
                 if (corePreviewUrlRef.current) {
-                  persistRunEvent('run.completed', 'verify', 'completed', { chatId: coreChatRef.current, outcome: 'completed' })
-                  coreRunCompletedRef.current = false
+                  void syncBeforeRunCompleted().then(() => persistRunEvent('run.completed', 'verify', 'completed', { chatId: coreChatRef.current, outcome: 'completed' })).then(() => {
+                    coreRunCompletedRef.current = false
+                  })
                 }
               }
               if (completion.outcome === 'completed') {
@@ -2080,10 +2151,10 @@ export default function DashboardPage() {
       if (!connected) coreRuntimeRef.current = undefined
     }, (message) => {
       if (!message || /reconnect/i.test(message)) {
-        setCoreConnectionError('')
+        setCoreGatewayError('')
         return
       }
-      setCoreConnectionError(message)
+      setCoreGatewayError(message)
     })
     coreEventsRef.current = events
     events.connect()
@@ -2139,14 +2210,27 @@ export default function DashboardPage() {
   // Returns null when nothing needs asking (ready to build immediately), or the
   // PlannerResult (with questions) when the merchant should be prompted first.
   const runPlanner = useCallback(async (prompt: string, signal?: AbortSignal): Promise<PlannerResult | null> => {
-    const { data, aborted } = await apiFetch<PlannerResult>('/api/v5/seltra/store/plan', {
-      method: 'POST',
-      body: JSON.stringify({ prompt }),
-      signal,
-    })
-    if (aborted || signal?.aborted) return null
-    if (!data || data.readyToBuild || data.questions.length === 0) return null
-    return data
+    const lower = prompt.toLowerCase()
+    const product = /coffee|tea|drink|beverage/.test(lower) ? 'drinks'
+      : /clothing|fashion|shirt|dress|apparel/.test(lower) ? 'clothing'
+        : /skin|beauty|cosmetic|soap/.test(lower) ? 'beauty products'
+          : /food|bakery|cake|restaurant/.test(lower) ? 'food'
+            : /jewel|accessor/.test(lower) ? 'accessories' : 'products'
+    const fallback: PlannerResult = {
+      readyToBuild: false,
+      questions: [{ id: 'launch_focus', question: `Who are the main customers for your ${product}, and what design style should the store use?`, why: 'This helps shape the storefront and product presentation around the right audience.', options: ['Everyday shoppers', 'Premium buyers', 'Gift shoppers'] }],
+      inferredSummary: '',
+    }
+    try {
+      const { data, aborted } = await apiFetch<PlannerResult>('/api/v5/seltra/store/plan', {
+        method: 'POST', body: JSON.stringify({ prompt }), signal,
+      })
+      if (aborted || signal?.aborted) return null
+      if (!data || data.readyToBuild || !Array.isArray(data.questions) || data.questions.length === 0) return fallback
+      return data
+    } catch {
+      return fallback
+    }
   }, [])
 
   useEffect(() => {
@@ -2305,6 +2389,7 @@ export default function DashboardPage() {
         return
       }
       coreRunRef.current = { id: data.id, idempotencyKey: '' }
+      flushPendingBrowserQaRef.current()
       setWorkflowRunId(data.id)
       if (data.state === 'stopped' || data.state === 'interrupted' || data.state === 'paused_no_credits' || data.state === 'failed') {
         setSending(false)
@@ -2868,7 +2953,7 @@ export default function DashboardPage() {
       // before its event socket supplies the RPC session ID.
       while (!coreRuntimeRef.current && Date.now() - runtimeStarted < CORE_RUNTIME_CONNECTION_TIMEOUT_MS) await new Promise((resolve) => setTimeout(resolve, 100))
       const runtime = coreRuntimeRef.current
-      if (!runtime) throw new Error(coreConnectionError || 'Seltra runtime did not connect within 10 minutes. Check the Core service status and try again.')
+      if (!runtime) throw new Error(coreGatewayError || 'Seltra runtime did not connect within 10 minutes. Check the Core service status and try again.')
       logCorePhase('workspace ready')
       setAgentStreamPhase('narrating')
       setCoreStartupStatus('Workspace is ready')
@@ -3061,6 +3146,7 @@ export default function DashboardPage() {
       setWorkflowEvents([])
       coreRunCompletedRef.current = false
       coreRunRef.current = { id: runStart.data.id, idempotencyKey: runKey }
+      flushPendingBrowserQaRef.current()
       setWorkflowRunId(runStart.data.id)
       const dispatchRunId = runStart.data.id
       const plannerHandoff = plannerHandoffRef.current
@@ -3185,7 +3271,7 @@ export default function DashboardPage() {
           setProjectLimitOpen(true)
         }
         setAgentStreamPhase('error')
-        setCorePreviewError('Seltra could not prepare the app preview.')
+        setCoreGatewayError('Seltra could not prepare the app preview.')
         toast.error('Seltra could not prepare this app. Retry your request.')
         setSending(false)
         return
@@ -3540,7 +3626,7 @@ const send = async () => {
           if (!corePreviewUrl) {
             void savedClient.invoke('restart-app', [{ appId: savedAppId }], savedRuntime).catch((error) => {
               console.warn('[builder] Saved preview could not be started automatically.', error)
-              setCorePreviewError('The saved preview could not be restarted. Use Retry preview.')
+              setCoreGatewayError('The saved preview could not be restarted. Use Retry preview.')
             })
           }
         }
@@ -4037,7 +4123,7 @@ const handleAgentAttach = async (f: File) => {
               )}
               <section className={cn('flex h-full min-h-0 min-w-0 flex-col overflow-x-clip', mobileView === 'store' && 'hidden lg:flex')}>
                 <div className="relative mx-auto flex min-h-0 w-full min-w-0 max-w-[760px] flex-1 flex-col">
-                {coreConnectionError && <div role="status" className="mx-3 mt-3 flex items-center justify-between gap-3 rounded-xl border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-xs text-amber-100"><span>{coreConnectionError}</span><button type="button" className="shrink-0 rounded-lg bg-amber-200/10 px-2.5 py-1.5 font-medium hover:bg-amber-200/20" onClick={() => void retryCoreConnection()}>Retry connection</button></div>}
+                {coreGatewayError && <div role="status" className="mx-3 mt-3 flex items-center justify-between gap-3 rounded-xl border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-xs text-amber-100"><span>{coreGatewayError}</span><button type="button" className="shrink-0 rounded-lg bg-amber-200/10 px-2.5 py-1.5 font-medium hover:bg-amber-200/20" onClick={() => void retryCoreConnection()}>Retry connection</button></div>}
                 {sending && coreWorkspaceOpened && !coreConnected && <p role="status" className="mx-4 mt-2 text-xs text-white/45">Reconnecting…</p>}
                 <div ref={scrollRef} onScroll={(event) => { const viewport = event.currentTarget; shouldFollowStreamRef.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 96; if (shouldFollowStreamRef.current) setHasNewActivity(false) }} className="workbench-scroll flex min-h-0 w-full min-w-0 flex-1 flex-col gap-6 overflow-x-clip overflow-y-auto overscroll-y-contain px-3 py-6 sm:px-4">
                   {resumeProjectAvailable && activeStore && (
@@ -4211,7 +4297,7 @@ const handleAgentAttach = async (f: File) => {
                     <div className="min-h-0 flex-1">
                       {corePreviewUrl && corePreviewUrl !== 'about:blank#seltra-replay' ? (
                         <div className="relative h-full min-w-0 overflow-hidden">
-                          <iframe ref={corePreviewFrameRef} key={previewReloadKey} title="Seltra app preview" src={corePreviewDisplayUrl} onLoad={() => setCorePreviewLoaded(true)} sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-orientation-lock allow-pointer-lock allow-presentation allow-downloads" className={cn('absolute inset-0 h-full border-0 bg-white transition-opacity duration-500', !corePreviewLoaded && 'opacity-0', previewDevice === 'mobile' ? 'mx-auto w-[375px] max-w-full' : previewDevice === 'tablet' ? 'mx-auto w-[768px] max-w-full' : 'w-full')} allow="clipboard-read; clipboard-write; fullscreen; microphone; camera; display-capture; geolocation; autoplay; picture-in-picture" />
+                          <iframe ref={corePreviewFrameRef} key={previewReloadKey} title="Seltra app preview" src={corePreviewDisplayUrl} onLoad={() => { setCorePreviewLoaded(true); setCorePreviewError(''); setCoreConnectionError('') }} sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-orientation-lock allow-pointer-lock allow-presentation allow-downloads" className={cn('absolute inset-0 h-full border-0 bg-white transition-opacity duration-500', !corePreviewLoaded && 'opacity-0', previewDevice === 'mobile' ? 'mx-auto w-[375px] max-w-full' : previewDevice === 'tablet' ? 'mx-auto w-[768px] max-w-full' : 'w-full')} allow="clipboard-read; clipboard-write; fullscreen; microphone; camera; display-capture; geolocation; autoplay; picture-in-picture" />
                           {!corePreviewLoaded && <div className="absolute inset-0 z-10"><WorkbenchPreviewSurface questionnaire={Boolean(coreQuestionnaire)} planReady={Boolean(coreBlueprint)} replay={false} tip={previewTipIndex} paused={previewTipPaused} dismissed={previewTipsDismissed} onPause={() => setPreviewTipPaused((value) => !value)} onDismiss={() => setPreviewTipsDismissed(true)} onTip={setPreviewTipIndex} /></div>}
                           {(previewRecovering || previewRecoveryError) && <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#141615]/95 px-6 text-center text-white backdrop-blur-sm" role={previewRecoveryError && !previewRecovering ? 'alert' : 'status'}>
                             <div className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-400/10 text-emerald-300">{previewRecovering ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}</div>
@@ -4220,7 +4306,7 @@ const handleAgentAttach = async (f: File) => {
                             {!previewRecovering && previewRecoveryError && <details className="max-w-full text-left text-xs text-white/45"><summary className="cursor-pointer hover:text-white/70">Show details</summary><pre className="mt-2 max-h-32 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{previewRecoveryError}</pre></details>}
                             {!previewRecovering && <button type="button" onClick={() => void recoverCorePreview()} className="mt-1 rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-[#082012] hover:bg-emerald-300">Try again</button>}
                           </div>}
-                          {(corePreviewError || coreConnectionError) && <div role="alert" className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#141615]/95 px-6 text-center"><img src="/assets/brand/mark.png" alt="" className="h-12 w-12 object-contain"/><p className="max-w-sm text-sm text-white/80">Seltra couldn’t start the app preview.</p><button type="button" className="rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-[#082012] hover:bg-emerald-300" onClick={() => { setCorePreviewError(''); setCoreConnectionError(''); if (!coreRuntimeRef.current) void retryCoreConnection().then(() => { if (corePreviewUrl) void recoverCorePreview(); else { const last = coreLastPromptRef.current; if (last?.store) void runCorePrompt(last.text, last.mode, last.store) } }); else if (corePreviewUrl) void recoverCorePreview(); else { const last = coreLastPromptRef.current; if (last?.store) void runCorePrompt(last.text, last.mode, last.store) } }}>Retry preview</button></div>}
+                          {(corePreviewError || coreConnectionError) && <div role="alert" className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#141615]/95 px-6 text-center"><img src="/assets/brand/mark.png" alt="" className="h-12 w-12 object-contain"/><p className="max-w-sm text-sm text-white/80">Seltra couldn’t start the app preview.</p><button type="button" className="rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-[#082012] hover:bg-emerald-300" onClick={() => { setCorePreviewError(''); setCoreConnectionError(''); setCorePreviewLoaded(false); if (corePreviewUrl) { setPreviewReloadKey((key) => key + 1); void recoverCorePreview() } else if (!coreRuntimeRef.current) void retryCoreConnection().then(() => { const last = coreLastPromptRef.current; if (last?.store) void runCorePrompt(last.text, last.mode, last.store) }); else { const last = coreLastPromptRef.current; if (last?.store) void runCorePrompt(last.text, last.mode, last.store) } }}>Retry preview</button></div>}
                           {corePreviewConsoleOpen && <section aria-label="Core preview console" className="absolute inset-x-0 bottom-0 z-10 flex h-[38%] min-h-28 flex-col border-t border-white/15 bg-[#111312]/95 text-[11px] text-white backdrop-blur"><div className="flex items-center justify-between border-b border-white/10 px-3 py-2"><span>Core preview console</span><button type="button" onClick={() => setCorePreviewConsole([])} className="text-white/55 hover:text-white">Clear</button></div><div className="min-h-0 flex-1 overflow-y-auto p-2 font-mono">{corePreviewConsole.length ? corePreviewConsole.map((entry, index) => <p key={`${entry.timestamp}-${index}`} className={cn('whitespace-pre-wrap break-words py-0.5', entry.level === 'error' ? 'text-red-300' : entry.level === 'warn' ? 'text-amber-200' : 'text-white/70')}><span className="mr-2 text-white/35">{new Date(entry.timestamp).toLocaleTimeString()}</span>{entry.message || `[${entry.level}]`}</p>) : <p className="p-2 text-white/40">No console messages yet.</p>}</div></section>}
                           {corePreviewScreenshot && <CorePreviewAnnotator screenshot={corePreviewScreenshot} onCancel={() => setCorePreviewScreenshot('')} onAttach={(file) => { setCoreFiles((current) => [...current, file]); setCorePreviewScreenshot(''); toast.success('Annotated Core preview attached to your next message.') }} />}
                           {publishPanelOpen && FF_PUBLISH && activeStore && <div className="absolute inset-0 z-30 flex items-start justify-end bg-slate-950/10 p-3 backdrop-blur-[1px] sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setPublishPanelOpen(false) }}>
