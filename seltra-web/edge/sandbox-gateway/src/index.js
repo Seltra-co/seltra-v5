@@ -16,6 +16,7 @@ const ALLOWED_RUNTIME_ENV = new Set([
   "RUNTIME_RPC_PORT", "RUNTIME_RPC_SECRET", "RUNTIME_SECRETS_KEY",
   "WORKSPACE_MODEL_TOKEN", "SELTRA_ENGINE_API_KEY", "SELTRA_ENGINE_CREDIT_IDENTITY",
   "MODEL_GATEWAY_URL", "VITE_SELTRA_API_URL", "VITE_SELTRA_STORE_SLUG",
+  "PREVIEW_BASE_DOMAIN", "PREVIEW_PUBLIC_SCHEME", "PREVIEW_PUBLIC_PORT",
   "SELTRA_GATEWAY_SELF_TEST",
 ]);
 
@@ -90,6 +91,12 @@ function proxyRequest(target, source, body, options = {}) {
   const method = source.method.toUpperCase();
   const headers = proxyHeaders(source.headers, options);
   if (options.previewHost) headers.set("x-seltra-preview-host", options.previewHost);
+  if (options.websocketUpgrade) {
+    for (const name of ["upgrade", "connection", "sec-websocket-key", "sec-websocket-version", "sec-websocket-protocol"]) {
+      const value = source.headers.get(name);
+      if (value !== null) headers.set(name, value);
+    }
+  }
   return new Request(target, {
     method,
     headers,
@@ -373,6 +380,7 @@ export class WorkspaceSandbox extends DurableObject {
       // Container fetch owns Host; attach the preview authority before constructing its immutable request.
       const previewRequest = proxyRequest(`http://container${previewPath}`, request, bytes, {
         previewHost: `${target.previewHost}:${target.port}`,
+        websocketUpgrade: request.headers.get("upgrade")?.toLowerCase() === "websocket",
       });
       return container.getTcpPort(target.port).fetch(previewRequest);
     }

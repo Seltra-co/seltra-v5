@@ -27,6 +27,7 @@ import {
 } from "./neon_preview_domain_service";
 
 import { getAppPort, getAppProxyPort } from "../../../shared/ports";
+import { detectFrameworkType } from "@/ipc/utils/framework_utils";
 import { db } from "@/db";
 import { apps } from "@/db/schema";
 import { readSettings } from "@/main/settings";
@@ -45,6 +46,8 @@ import {
 } from "@/state_machines/invocation_ref";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
 import { appProcessEnvironment } from "@/web/app_process_env";
+import { getPublicViteHmrEnvironment } from "@/web/vite_hmr_config";
+import { VITE_CONFIG_FILES } from "@/lib/framework_constants";
 import { addLog, clearLogs } from "@/lib/log_store";
 import { getDyadAppPath } from "@/paths/paths";
 import { startProxy } from "@/ipc/utils/start_proxy_server";
@@ -955,14 +958,20 @@ async function executeAppLocalNode({
     onPnpmMinimumReleaseAgeWarning: (message) =>
       emitPnpmMinimumReleaseAgeWarning({ appId, output, message }),
   });
+  const webRuntime = process.env.DYAD_WEB_RUNTIME === "1";
+  let launchCommand = command.command;
+  if (webRuntime && !command.isCustom && ["vite", "vite-nitro"].includes(detectFrameworkType(appPath) ?? "")) {
+    const hmrConfigPath = ensureWebRuntimeViteHmrConfig(appPath);
+    if (hmrConfigPath) launchCommand += ` --config ${hmrConfigPath}`;
+  }
   let env = { ...process.env };
   if (!command.isCustom && command.packageManager === "pnpm") {
     env = getPackageManagerCommandEnv();
   }
-  const webRuntime = process.env.DYAD_WEB_RUNTIME === "1";
   if (webRuntime) {
     env.VITE_SELTRA_API_URL = process.env.VITE_SELTRA_API_URL;
     env.VITE_SELTRA_STORE_SLUG = process.env.VITE_SELTRA_STORE_SLUG;
+    Object.assign(env, getPublicViteHmrEnvironment(process.env, appId));
   }
   env = appProcessEnvironment(env, webRuntime);
   // The app's dev server must not inherit the host service's NODE_ENV. With
@@ -972,7 +981,7 @@ async function executeAppLocalNode({
     env = { ...env, NODE_ENV: "development" };
   }
 
-  const spawnedProcess = spawn(command.command, [], {
+  const spawnedProcess = spawn(launchCommand, [], {
     cwd: appPath,
     env,
     shell: true,
@@ -1094,6 +1103,19 @@ Details: ${details || "n/a"}
         : undefined,
   });
   await initializeRunningPreviewAuth(appId, appInfo, previewAuthOptions);
+}
+
+/** Generate a hidden root-level wrapper so relative paths in user config resolve from the app root. */
+export function ensureWebRuntimeViteHmrConfig(appPath: string): string {
+  const userConfig = VITE_CONFIG_FILES.find((name) => fs.existsSync(path.join(appPath, name)));
+  const wrapperPath = path.join(appPath, ".dyad-vite-hmr.config.mjs");
+  fs.mkdirSync(path.dirname(wrapperPath), { recursive: true });
+  const userImport = userConfig
+    ? `import userConfig from ${JSON.stringify(`./${userConfig}`)};`
+    : `const userConfig = {};`;
+  const source = `${userImport}\nimport { mergeConfig } from "vite";\nexport default async (env) => {\n  const base = typeof userConfig === "function" ? await userConfig(env) : userConfig;\n  return mergeConfig(base ?? {}, { server: { hmr: { host: process.env.VITE_HMR_HOST, clientPort: Number(process.env.VITE_HMR_CLIENT_PORT), protocol: process.env.VITE_HMR_PROTOCOL, path: process.env.VITE_HMR_PATH } } });\n};\n`;
+  fs.writeFileSync(wrapperPath, source, "utf8");
+  return ".dyad-vite-hmr.config.mjs";
 }
 
 let cloudSandboxSyncUpdateListenerRegistered = false;

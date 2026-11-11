@@ -8,6 +8,7 @@ import {
 } from "./supabase_preview_redirect_service";
 import type { PreviewAuthTarget } from "./preview_auth_target";
 import {
+  ensureWebRuntimeViteHmrConfig,
   reconcileRunningNeonPreview,
   reconcileRunningSupabasePreview,
 } from "./app_runtime_service";
@@ -15,7 +16,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import type { Worker } from "node:worker_threads";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { IpcMainInvokeEvent, WebContents } from "electron";
@@ -289,6 +290,21 @@ async function waitForAssertion(assertion: () => void): Promise<void> {
 }
 
 describe("executeApp", () => {
+  it("generates an HMR wrapper without changing the app's Vite config", async () => {
+    const appPath = await mkdtemp(path.join(os.tmpdir(), "dyad-vite-hmr-test-"));
+    const original = 'export default { server: { hmr: { host: "localhost", clientPort: 32101 } } };\n';
+    try {
+      await writeFile(path.join(appPath, "vite.config.ts"), original);
+      const wrapperPath = ensureWebRuntimeViteHmrConfig(appPath);
+      const wrapper = await readFile(path.join(appPath, wrapperPath), "utf8");
+      expect(wrapper).toContain("./vite.config.ts");
+      expect(wrapper).toContain("clientPort: Number(process.env.VITE_HMR_CLIENT_PORT)");
+      expect(await readFile(path.join(appPath, "vite.config.ts"), "utf8")).toBe(original);
+    } finally {
+      await rm(appPath, { recursive: true, force: true });
+    }
+  });
+
   beforeEach(async () => {
     await Promise.all(
       [...runningApps.values()].map((appInfo) => {

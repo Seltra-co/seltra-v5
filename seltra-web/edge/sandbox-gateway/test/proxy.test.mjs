@@ -30,6 +30,7 @@ async function loadWorkerModule() {
 async function createHarness() {
   const worker = await loadWorkerModule();
   const upstreamRequests = [];
+  let upgradeResponse;
   const container = {
     running: false,
     images: { base: "test-image" },
@@ -49,6 +50,7 @@ async function createHarness() {
             body,
           });
           if (requestUrl.pathname === "/internal/preview-target/7") return Response.json({ appId: 7, host: "127.0.0.1", previewHost: "app-7.localhost", port: 43127 });
+          if (port === 43127 && request instanceof Request && request.headers.get("upgrade")?.toLowerCase() === "websocket") return upgradeResponse;
           if (port === 43127) return new Response("preview-mapped-ok", { status: 200 });
           return Response.json({ ok: true, result: { apps: [] } });
         },
@@ -112,7 +114,7 @@ async function createHarness() {
     REGISTRY: { idFromName(name) { return name; }, get() { return registryNamespace; } },
   };
   Object.assign(sandboxEnv, env);
-  return { worker, env, upstreamRequests, container, workspaceRecords, projectCreateTimes, storage };
+  return { worker, env, upstreamRequests, container, workspaceRecords, projectCreateTimes, storage, setUpgradeResponse(value) { upgradeResponse = value; } };
 }
 
 async function signedRequest(pathname, { body, signingSecret = secret, headers = {}, method = "POST" } = {}) {
@@ -157,6 +159,35 @@ test("preview route forwards the registered preview hostname to its mapped proxy
   assert.equal(upstreamRequests[1].port, 43127);
   assert.equal(upstreamRequests[1].headers.has("host"), false);
   assert.equal(upstreamRequests[1].headers.get("x-seltra-preview-host"), "app-7.localhost:43127");
+});
+
+test("preview WebSocket upgrade forwards protocol headers and preserves the 101 webSocket", async () => {
+  const { worker, env, upstreamRequests, setUpgradeResponse } = await createHarness();
+  const socket = { marker: "upgraded-socket" };
+  setUpgradeResponse({ status: 101, ok: false, webSocket: socket });
+  const pathname = `/v1/workspaces/${workspaceKey}/preview/7/@vite/client`;
+  const response = await worker.default.fetch(await signedRequest(pathname, {
+    method: "GET",
+    headers: {
+      upgrade: "websocket",
+      connection: "Upgrade",
+      "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+      "sec-websocket-version": "13",
+      "sec-websocket-protocol": "vite-hmr",
+    },
+  }), env);
+
+  assert.equal(response.status, 101);
+  assert.equal(response.webSocket, socket);
+  const forwarded = upstreamRequests.at(-1);
+  assert.equal(forwarded.port, 43127);
+  for (const [name, value] of Object.entries({
+    upgrade: "websocket",
+    connection: "Upgrade",
+    "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+    "sec-websocket-version": "13",
+    "sec-websocket-protocol": "vite-hmr",
+  })) assert.equal(forwarded.headers.get(name), value);
 });
 
 test("signed runtime RPC POST forwards identical JSON bytes and runtime headers", async () => {
