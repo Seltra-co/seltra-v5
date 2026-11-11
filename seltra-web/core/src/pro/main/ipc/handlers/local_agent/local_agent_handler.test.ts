@@ -1249,6 +1249,68 @@ describe("handleLocalAgentStream", () => {
     mockSubagentManager.waitForOwnedSubagentsAndSealTurn.mockResolvedValue([]);
   });
 
+  it.each([
+    { runtime: "1", requiresBuildQa: true },
+    { runtime: undefined, requiresBuildQa: false },
+  ])(
+    "adds mandatory build QA guidance only in web runtime",
+    async ({ runtime, requiresBuildQa }) => {
+      const previousRuntime = process.env.DYAD_WEB_RUNTIME;
+      if (runtime === undefined) delete process.env.DYAD_WEB_RUNTIME;
+      else process.env.DYAD_WEB_RUNTIME = runtime;
+      try {
+        const { event } = createFakeEvent();
+        mockSettings = buildTestSettings({ enableDyadPro: true });
+        mockChatData = buildTestChat();
+        mockStreamResult = createFakeStream([]);
+        vi.mocked(buildAgentToolSet).mockReturnValue({
+          run_build: {} as any,
+          repair_app: {} as any,
+        });
+
+        await handleLocalAgentStreamImpl(
+          event,
+          { chatId: 1, prompt: "Build this app" },
+          new AbortController(),
+          {
+            placeholderMessageId: 10,
+            systemPrompt: "Root rules",
+            dyadRequestId,
+          },
+        );
+
+        expect(streamText).toHaveBeenCalledOnce();
+        const streamOptions = vi.mocked(streamText).mock.calls[0]?.[0] as {
+          system?: string;
+        };
+        if (requiresBuildQa) {
+          expect(streamOptions.system).toContain(
+            "For web runtime, you must run `run_build` once after the last file write",
+          );
+          expect(streamOptions.system).toContain(
+            "then run `repair_app` on the resulting preview and repair and reverify every real error",
+          );
+          expect(streamOptions.system).toContain(
+            "With a running Vite preview, the build is in-place and cheap; for non-Vite or isolated builds, report the added clean-install cost.",
+          );
+          expect(streamOptions.system).toContain(
+            "If a build guard refuses the build, report the refusal and remaining issue without retrying.",
+          );
+        } else {
+          expect(streamOptions.system).not.toContain(
+            "For web runtime, you must run `run_build` once after the last file write",
+          );
+          expect(streamOptions.system).not.toContain(
+            "report the added clean-install cost",
+          );
+        }
+      } finally {
+        if (previousRuntime === undefined) delete process.env.DYAD_WEB_RUNTIME;
+        else process.env.DYAD_WEB_RUNTIME = previousRuntime;
+      }
+    },
+  );
+
   it("projects the capability-aware Implementer prompt into the root tool context", async () => {
     const { event } = createFakeEvent();
     mockSettings = buildTestSettings({ enableDyadPro: true });
@@ -1256,7 +1318,7 @@ describe("handleLocalAgentStream", () => {
     let seenContextFactory: AgentContext["refreshImplementerContext"];
     let seenSupabaseProviderToolsAvailable: boolean | undefined;
     let seenNeonProviderToolsAvailable: boolean | undefined;
-    vi.mocked(buildAgentToolSet).mockImplementationOnce((ctx) => {
+    vi.mocked(buildAgentToolSet).mockImplementationOnce((ctx: AgentContext) => {
       seenContextFactory = ctx.refreshImplementerContext;
       seenSupabaseProviderToolsAvailable = ctx.supabaseProviderToolsAvailable;
       seenNeonProviderToolsAvailable = ctx.neonProviderToolsAvailable;
