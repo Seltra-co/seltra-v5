@@ -1,5 +1,6 @@
+// seltra-web/frontend/lib/builder/run-events.ts
 export type WorkflowPhase = 'planning' | 'awaiting_approval' | 'preparing' | 'building' | 'verifying' | 'ready' | 'failed'
-export type WorkflowEventType = 'phase_changed' | 'status' | 'task_updated' | 'asset_updated' | 'preview_state' | 'message' | 'error'
+export type WorkflowEventType = 'phase_changed' | 'status' | 'task_updated' | 'file_written' | 'asset_updated' | 'preview_state' | 'message' | 'error'
 
 export type WorkflowEvent = {
   runId: string
@@ -17,7 +18,7 @@ export function isWorkflowEvent(value: unknown): value is WorkflowEvent {
   return typeof event.runId === 'string' && Number.isSafeInteger(event.seq) && (event.seq ?? 0) > 0 &&
     typeof event.ts === 'string' && ['planning', 'awaiting_approval', 'preparing', 'building', 'verifying', 'ready', 'failed'].includes(event.phase ?? '') &&
     (event.actor === undefined || ['planner', 'builder', 'supervisor'].includes(event.actor)) &&
-    ['phase_changed', 'status', 'task_updated', 'asset_updated', 'preview_state', 'message', 'error'].includes(event.type ?? '') &&
+    ['phase_changed', 'status', 'task_updated', 'file_written', 'asset_updated', 'preview_state', 'message', 'error'].includes(event.type ?? '') &&
     Boolean(event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload))
 }
 

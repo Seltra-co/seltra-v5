@@ -23,10 +23,12 @@ function workflowPhase(type: string, phase: string | null): WorkflowPhase {
   return 'planning'
 }
 
-function workflowEventType(type: string): string {
+export function workflowEventType(type: string): string {
   if (type === 'phase.changed') return 'phase_changed'
   if (type === 'blueprint.ready' || type === 'blueprint.approved') return 'phase_changed'
   if (type === 'step.progress') return 'task_updated'
+  if (type === 'file.written') return 'file_written'
+  if (type === 'build.result') return 'status'
   if (type === 'assets.planned' || type === 'asset.updated' || type === 'asset.generated' || type === 'asset.failed') return 'asset_updated'
   if (/^preview\./.test(type)) return 'preview_state'
   if (type === 'run.failed') return 'error'
@@ -35,8 +37,22 @@ function workflowEventType(type: string): string {
   return 'status'
 }
 
-function workflowPayload(type: string, payload: unknown): Record<string, unknown> {
+export function workflowPayload(type: string, payload: unknown): Record<string, unknown> {
   const value = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
+  if (type === 'file.written') {
+    const rawPath = typeof value.path === 'string' ? value.path.trim().replaceAll('\\', '/') : ''
+    const path = rawPath.split('/').filter((part) => part && part !== '.').join('/').slice(0, 240)
+    const bytes = Number.isSafeInteger(value.bytes) && (value.bytes as number) >= 0 ? value.bytes as number : 0
+    return { path, bytes }
+  }
+  if (type === 'build.result') {
+    const message = value.timedOut === true
+      ? 'Build timed out'
+      : value.executed === true && value.exitCode === 0
+        ? 'Build passed'
+        : `Build failed (exit ${Number.isSafeInteger(value.exitCode) ? value.exitCode : 'unknown'})`
+    return { message }
+  }
   if (type === 'preview.ready') return { state: 'ready', reason: null }
   if (type === 'preview.restoring') return { state: 'restoring', reason: 'Preview is reconnecting.' }
   if (type === 'preview.failed') return { state: 'unavailable', reason: 'The preview could not start.' }

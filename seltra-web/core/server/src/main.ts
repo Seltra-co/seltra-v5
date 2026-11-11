@@ -32,6 +32,7 @@ import { isPrimaryGatewayHost } from "../../src/web/primary_gateway_host.js";
 import { rewritePreviewUrls } from "../../src/web/preview_urls.js";
 import { WorkspaceSupervisor, type WorkspaceRuntime } from "./workspace_supervisor.js";
 import { browserPreviewProbeUrl } from "./preview_probe.js";
+import { previewProxyOptions } from "./preview_proxy_options.js";
 import {
   parseFigmaFileUrl,
   retrieveFigmaReference,
@@ -2127,9 +2128,9 @@ async function main(): Promise<void> {
       //   proxyTimeout: 120_000,
       // });
       if (remoteRuntime) previewRuntimes.set(request, remoteRuntime);
+      const target = remoteRuntime ? port as string : "http://127.0.0.1:" + port;
       previewProxy.web(request, response, {
-        target: remoteRuntime ? port as string : "http://127.0.0.1:" + port,
-        ...(internalPreviewHost ? { headers: { host: internalPreviewHost } } : {}),
+        ...previewProxyOptions(target, Boolean(remoteRuntime), internalPreviewHost ? { host: internalPreviewHost } : undefined),
         proxyTimeout: 120_000,
       });
       return;
@@ -2648,10 +2649,12 @@ async function main(): Promise<void> {
           const internalPreviewHost = remoteRuntime ? undefined : `app-${label.match(/-app-(\d+)$/)?.[1]}.localhost:${port}`;
           const internalPreviewOrigin = internalPreviewHost ? "http://" + internalPreviewHost : undefined;
           if (remoteRuntime) previewRuntimes.set(request, remoteRuntime);
-          previewProxy.ws(request, socket, head, {
-            target: remoteRuntime ? port as string : "http://127.0.0.1:" + port,
-            ...(internalPreviewHost && internalPreviewOrigin ? { headers: { host: internalPreviewHost, origin: internalPreviewOrigin } } : {}),
-          });
+          const target = remoteRuntime ? port as string : "http://127.0.0.1:" + port;
+          previewProxy.ws(request, socket, head, previewProxyOptions(
+            target,
+            Boolean(remoteRuntime),
+            internalPreviewHost && internalPreviewOrigin ? { host: internalPreviewHost, origin: internalPreviewOrigin } : undefined,
+          ));
           return;
         }
         if (url.pathname !== "/api/events")

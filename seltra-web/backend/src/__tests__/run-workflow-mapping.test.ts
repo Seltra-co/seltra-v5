@@ -1,0 +1,33 @@
+jest.mock('../db', () => ({ prisma: {} }))
+jest.mock('../auth/resolve-user', () => ({ resolveUserIdFromAuthorization: jest.fn() }))
+
+import { workflowEventType, workflowPayload } from '../build/run.service'
+
+describe('run workflow event mapping', () => {
+  it('maps file.written to a normalized, bounded path and byte count only', () => {
+    const payload = workflowPayload('file.written', {
+      path: '  src\\pages\\.\\index.tsx  ',
+      bytes: 128,
+      sha256: 'a'.repeat(64),
+      content: 'must not be forwarded',
+    })
+
+    expect(workflowEventType('file.written')).toBe('file_written')
+    expect(payload).toEqual({ path: 'src/pages/index.tsx', bytes: 128 })
+    expect(Object.keys(payload)).toEqual(['path', 'bytes'])
+  })
+
+  it('limits the file path to 240 characters', () => {
+    const payload = workflowPayload('file.written', { path: `${'a'.repeat(250)}.tsx`, bytes: 1 })
+    expect((payload.path as string)).toHaveLength(240)
+  })
+
+  it.each([
+    [{ executed: true, exitCode: 0 }, 'Build passed'],
+    [{ executed: true, exitCode: 2 }, 'Build failed (exit 2)'],
+    [{ executed: true, exitCode: 2, timedOut: true }, 'Build timed out'],
+  ])('maps build.result to status message %s', (payload, message) => {
+    expect(workflowEventType('build.result')).toBe('status')
+    expect(workflowPayload('build.result', payload)).toEqual({ message })
+  })
+})
