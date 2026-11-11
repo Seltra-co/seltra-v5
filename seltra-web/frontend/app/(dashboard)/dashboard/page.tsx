@@ -29,6 +29,7 @@ import { useStore } from '@/context/StoreContext'
 import { useWorkspace } from '@/context/WorkspaceContext'
 import { CoreClient, type CoreSession } from '@/lib/core/client'
 import { CoreEvents } from '@/lib/core/events'
+import { enqueueBrowserQaEvent, previewOverlayTransition, takePendingBrowserQaEvents } from '@/lib/core/preview-qa'
 import { takePendingBuild } from '@/lib/builder/pending'
 import { applyWorkflowEvent, isWorkflowEvent, type WorkflowEvent } from '@/lib/builder/run-events'
 import { fetchSeltraAuthMe, fetchWithSeltraAuth } from '@/lib/auth-session'
@@ -347,11 +348,6 @@ function getActivityStageDuration(stage: ActivityStage, phase: ActivityPhase): n
 // ── Business Planner Agent types (mirrors backend/src/ai/agents/business-planner.agent.ts) ──
 type PlannerQuestion = { id: string; question: string; why: string; options?: string[] }
 type PlannerResult = { readyToBuild: boolean; questions: PlannerQuestion[]; inferredSummary: string }
-
-// Keep this noise list aligned with isIgnoredBrowserNoise in core/tools/repair_app.ts.
-function isIgnoredPreviewNoise(message: string): boolean {
-  return /\[vite\].*websocket|websocket.*handshake|failed to connect to websocket|\[dyad-screenshot\]|favicon\.ico.*(?:404|not found|failed)|ResizeObserver loop (?:limit exceeded|completed with undelivered notifications)/i.test(message)
-}
 
 type MessageAttachment = {
   type: 'image'
@@ -1380,7 +1376,8 @@ export default function DashboardPage() {
       }
       if (['window-error', 'unhandled-rejection', 'iframe-sourcemapped-error'].includes(data.type ?? '')) {
         const message = data.payload?.message || data.payload?.reason || `Preview reported ${data.type}${data.payload?.file ? ` in ${data.payload.file}` : ''}.`
-        if (!isIgnoredPreviewNoise(message)) setPreviewOverlayError('UNCAUGHT_PAGE_ERROR', 'The app preview could not be reached.')
+        const overlayTransition = previewOverlayTransition({ type: data.type ?? '', message })
+        if (overlayTransition?.action === 'set') setPreviewOverlayError(overlayTransition.reason, 'The app preview could not be reached.')
         setCorePreviewConsole((current) => [...current, { level: 'error', message: message.slice(0, 2000), timestamp: new Date().toISOString() }].slice(-100))
       }
     }
@@ -1705,7 +1702,7 @@ export default function DashboardPage() {
       }
       flushPendingBrowserQaRef.current = () => {
         if (!coreRunRef.current?.id || pendingBrowserQaRef.current.length === 0) return
-        const buffered = pendingBrowserQaRef.current.splice(0)
+        const buffered = takePendingBrowserQaEvents(pendingBrowserQaRef.current, coreRunRef.current.id)
         for (const payload of buffered) void persistRunEvent('browser.qa', 'verifying', 'running', payload)
       }
       persistRunEventRef.current = persistRunEvent
@@ -1777,11 +1774,9 @@ export default function DashboardPage() {
           }
           if (coreRunRef.current?.id) persistRunEvent('browser.qa', 'verifying', 'running', qaPayload)
           else {
-            if (pendingBrowserQaRef.current.length >= 50) {
-              pendingBrowserQaRef.current.shift()
+            if (enqueueBrowserQaEvent(pendingBrowserQaRef.current, qaPayload, 50)) {
               console.warn('[builder] Dropped buffered browser.qa event because the run event buffer reached 50 entries.')
             }
-            pendingBrowserQaRef.current.push(qaPayload)
           }
         }
       }
@@ -2007,8 +2002,10 @@ export default function DashboardPage() {
                       captureWorkbenchEvent({ type: 'preview-ready', url: previewUrl })
                       setAgentStreamPhase('ready')
                       setCoreStartupStatus('Preview is ready')
-                      setCorePreviewError('')
-                      setCoreConnectionError('')
+                      if (previewOverlayTransition({ type: 'preview.ready' })?.action === 'clear') {
+                        setCorePreviewError('')
+                        setCoreConnectionError('')
+                      }
                       logCorePhase('preview browser path returned 200')
                       const readyPreviewUrl = probe.previewUrl ?? previewUrl
                       await persistAppState('app.preview.ready', { status: 'preview_ready', previewUrl: readyPreviewUrl })
@@ -2041,7 +2038,8 @@ export default function DashboardPage() {
             dispatchWorkbench({ type: 'failed', friendlyMessage: 'Something went wrong on our side. Try again.' })
             captureWorkbenchEvent({ type: 'failed', friendlyMessage: 'Something went wrong on our side. Try again.' })
             setPreviewOpen(true)
-            setPreviewOverlayError('PREVIEW_FAILED', 'The app preview could not be reached.')
+            const overlayTransition = previewOverlayTransition({ type: 'preview.failed' })
+            if (overlayTransition?.action === 'set') setPreviewOverlayError(overlayTransition.reason, 'The app preview could not be reached.')
             setSending(false)
             setCoreStartupStatus('')
             persistAppState('app.preview.failed', { status: 'failed' })
