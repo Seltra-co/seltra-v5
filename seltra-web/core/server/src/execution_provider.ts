@@ -22,7 +22,7 @@ export interface WorkspaceExecutionProvider {
   readonly mode: ExecutionMode
   assertReady(): Promise<void>
   spawn(request: ExecutionRequest): ChildProcess
-  startRemote?(request: ExecutionRequest): Promise<{ child: ChildProcess; baseUrl: string; signRequest: (method: string, path: string) => Record<string, string>; syncFromExecution: () => Promise<void> }>
+  startRemote?(request: ExecutionRequest): Promise<{ child: ChildProcess; baseUrl: string; signRequest: (method: string, path: string) => Record<string, string>; syncFromExecution: (scope?: 'apps') => Promise<void> }>
   stop(name: string, child: ChildProcess, context?: { caller?: string; traceId?: string; reason?: 'delete' | 'idle' | 'destroy' }): Promise<void>
   release?(name: string, child: ChildProcess): void
   destroyWorkspace?(workspaceKey: string, context?: { caller?: string; traceId?: string; reason?: 'delete' | 'idle' | 'destroy' }): Promise<void>
@@ -54,6 +54,7 @@ const REMOTE_RUNTIME_ENV = new Set([
 
 export class CloudflareSandboxProvider implements WorkspaceExecutionProvider {
   readonly mode = 'cloudflare' as const
+  private readonly workspaceDownloads = new Map<string, Promise<void>>()
   readonly runtimePort = 8787
   private readonly gatewayUrl: string
   private readonly signingSecret: string
@@ -100,7 +101,7 @@ export class CloudflareSandboxProvider implements WorkspaceExecutionProvider {
       child: createRemoteHandle(),
       baseUrl: `${this.gatewayUrl}/v1/workspaces/${workspaceKey}/runtime`,
       signRequest: (method: string, requestPath: string) => this.signRequest(method, requestPath),
-      syncFromExecution: () => this.downloadWorkspace(request.workspaceRoot, workspaceKey),
+      syncFromExecution: (scope?: 'apps') => this.downloadWorkspace(request.workspaceRoot, workspaceKey, scope),
     }
   }
 
@@ -199,14 +200,32 @@ export class CloudflareSandboxProvider implements WorkspaceExecutionProvider {
     await flush();
   }
 
-  private async downloadWorkspace(root: string, workspaceKey: string) {
+  private async downloadWorkspace(root: string, workspaceKey: string, scope?: 'apps'): Promise<void> {
+    const active = this.workspaceDownloads.get(workspaceKey)
+    if (active) {
+      await active
+      return this.downloadWorkspace(root, workspaceKey, scope)
+    }
+    const operation = this.performDownloadWorkspace(root, workspaceKey, scope)
+    this.workspaceDownloads.set(workspaceKey, operation)
+    try {
+      await operation
+    } finally {
+      if (this.workspaceDownloads.get(workspaceKey) === operation) this.workspaceDownloads.delete(workspaceKey)
+    }
+  }
+
+  private async performDownloadWorkspace(root: string, workspaceKey: string, scope?: 'apps') {
     const listRoute = `/v1/workspaces/${workspaceKey}/files?list=1`
     const listResponse = await this.send(listRoute, 'GET')
     if (!listResponse.ok) throw new Error(`Cloudflare workspace file listing failed (${listResponse.status}).`)
     const manifest = await listResponse.json().catch(() => ({})) as { files?: string[] }
     if (!Array.isArray(manifest.files) || manifest.files.some((name) => typeof name !== 'string' || !name || name.startsWith('/') || name.split(/[\\/]/).includes('..'))) throw new Error('Cloudflare workspace returned an invalid file listing.')
     const ignored = new Set(['node_modules', '.git', '.next', 'dist', 'out', 'logs', 'tmp'])
-    const paths = manifest.files.filter((name) => !name.split(/[\\/]/).some((part) => ignored.has(part)))
+    const paths = manifest.files.filter((name) =>
+      (!scope || name.replaceAll('\\', '/').startsWith(`${scope}/`)) &&
+      !name.split(/[\\/]/).some((part) => ignored.has(part)),
+    )
     const remotePaths = new Set(paths.map((name) => name.replaceAll('\\', '/')))
     const removeStale = async (directory: string, relative = ''): Promise<void> => {
       for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
@@ -222,7 +241,9 @@ export class CloudflareSandboxProvider implements WorkspaceExecutionProvider {
         }
       }
     }
-    await removeStale(root)
+    const staleRoot = scope ? path.join(root, scope) : root
+    if (scope) await fs.mkdir(staleRoot, { recursive: true })
+    await removeStale(staleRoot, scope ?? '')
     for (let offset = 0; offset < paths.length; offset += 20) {
       const batch = paths.slice(offset, offset + 20)
       const route = `/v1/workspaces/${workspaceKey}/files`

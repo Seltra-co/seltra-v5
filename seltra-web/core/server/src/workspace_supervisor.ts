@@ -17,7 +17,7 @@ export type WorkspaceRuntime = {
   runtimeSecretsKey: string
   modelToken: string
   signGatewayRequest?: (method: string, path: string) => Record<string, string>
-  syncFromExecution?: () => Promise<void>
+  syncFromExecution?: (scope?: 'apps') => Promise<void>
   child: ChildProcess
   executionName: string
   traceId?: string

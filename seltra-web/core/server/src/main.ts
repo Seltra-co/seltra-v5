@@ -45,6 +45,7 @@ import { EditLeaseClient } from "./publish/edit_lease.js";
 import { VercelPublisher } from "./publish/vercel.js";
 import { PublishOrchestrator } from "./publish/orchestrator.js";
 import { resolvePromptIntent } from "./prompt_intent.js";
+import { WorkspaceSyncState } from "./workspace_sync.js";
 
 const encoder = new TextEncoder();
 // Chat attachments are sent as base64 in the distributed-machine intent.
@@ -113,21 +114,31 @@ type EventSession = { userId: string; workspaceId: string; browser: WebSocket; r
 // A workspace may have more than one browser/RPC socket. Share one durable
 // file snapshot sync across those sockets to avoid duplicate blob inserts and
 // connection-pool pressure. The periodic sync will pick up edits made mid-run.
-const workspaceFileSyncs = new Map<string, Promise<void>>();
+const workspaceFileSyncs = new Map<string, Promise<{ verified: boolean }>>();
+const workspaceSyncStates = new Map<string, WorkspaceSyncState>();
+
+function workspaceSyncState(workspaceId: string): WorkspaceSyncState {
+  let state = workspaceSyncStates.get(workspaceId);
+  if (!state) {
+    state = new WorkspaceSyncState();
+    workspaceSyncStates.set(workspaceId, state);
+  }
+  return state;
+}
 
 async function syncWorkspaceFileBatches(
   config: GatewayConfig,
   claims: Pick<SessionClaims, "workspaceId" | "creditWorkspaceId">,
   files: Array<{ path: string; content: string }>,
   appId?: number,
-): Promise<void> {
-  const key = claims.workspaceId;
+): Promise<{ verified: boolean }> {
+  const key = `${claims.workspaceId}:${appId ?? "all"}`;
   const active = workspaceFileSyncs.get(key);
   if (active) return active;
   const operation = performWorkspaceFileBatches(config, claims, files, appId);
   workspaceFileSyncs.set(key, operation);
   try {
-    await operation;
+    return await operation;
   } finally {
     if (workspaceFileSyncs.get(key) === operation) workspaceFileSyncs.delete(key);
   }
@@ -138,7 +149,7 @@ async function performWorkspaceFileBatches(
   claims: Pick<SessionClaims, "workspaceId" | "creditWorkspaceId">,
   files: Array<{ path: string; content: string }>,
   appId?: number,
-): Promise<void> {
+): Promise<{ verified: boolean }> {
   const batches: Array<Array<{ path: string; content: string }>> = [];
   let batch: Array<{ path: string; content: string }> = [];
   for (const file of files) {
@@ -150,13 +161,13 @@ async function performWorkspaceFileBatches(
       const singleFileBody = JSON.stringify({ tenantId: claims.workspaceId, workspaceId: claims.creditWorkspaceId ?? claims.workspaceId, ...(appId ? { coreAppId: appId } : {}), files: batch });
       if (Buffer.byteLength(singleFileBody, "utf8") > MAX_WORKSPACE_SYNC_BODY_BYTES) {
         batch = [];
-        console.error(JSON.stringify({ event: "workspace_file_sync_skipped", tenantId: claims.workspaceId, path: file.path, reason: "file_exceeds_sync_payload_limit" }));
+        throw Object.assign(new Error("Workspace file exceeds the sync request limit."), { code: "file_exceeds_sync_payload_limit" });
       }
     } else {
       batch = candidate;
     }
   }
-  if (batch.length) batches.push(batch);
+  if (batch.length || batches.length === 0) batches.push(batch);
 
   for (const filesBatch of batches) {
     const response = await fetch(`${config.NEST_INTERNAL_URL.replace(/\/+$/, "")}/api/v5/builder/workspace/files-sync`, {
@@ -166,8 +177,7 @@ async function performWorkspaceFileBatches(
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) {
-      console.error(JSON.stringify({ event: "workspace_files_sync_failed", tenantId: claims.workspaceId, appId, status: response.status }));
-      return;
+      throw Object.assign(new Error("Backend rejected workspace file sync."), { code: "files_sync_rejected", status: response.status });
     }
   }
   const verifiedFiles = files.map((file) => {
@@ -183,11 +193,43 @@ async function performWorkspaceFileBatches(
     signal: AbortSignal.timeout(15_000),
   });
   if (!verification.ok) {
-    console.error(JSON.stringify({ event: "workspace_files_verify_failed", tenantId: claims.workspaceId, status: verification.status }));
-    return;
+    throw Object.assign(new Error("Backend rejected workspace file verification."), { code: "files_verify_rejected", status: verification.status });
   }
-  const result = await verification.json().catch(() => null) as { verified?: boolean; mismatches?: string[] } | null;
-  console.info(JSON.stringify({ event: "workspace_manifest_verified", tenantId: claims.workspaceId, verified: result?.verified === true, mismatches: result?.mismatches ?? [] }));
+  const result = await verification.json().catch(() => null) as { verified?: boolean } | null;
+  if (typeof result?.verified !== "boolean")
+    throw Object.assign(new Error("Backend returned an invalid workspace verification response."), { code: "invalid_verify_response" });
+  if (!result.verified)
+    throw Object.assign(new Error("Backend did not verify the workspace manifest."), { code: "manifest_not_verified" });
+  return { verified: true };
+}
+
+async function syncWorkspaceAppsNow(
+  config: GatewayConfig,
+  claims: SessionClaims,
+  runtime: WorkspaceRuntime,
+): Promise<import("./workspace_sync.js").WorkspaceSyncResult> {
+  const startedAt = Date.now();
+  return workspaceSyncState(claims.workspaceId).synchronize({
+    appsRoot: path.resolve(config.WORKSPACE_ROOT, "ws", claims.coreWorkspaceKey, "apps"),
+    syncFromExecution: runtime.syncFromExecution,
+    isAllowed: isWorkspaceSyncPathAllowed,
+    syncBackend: (files) => syncWorkspaceFileBatches(config, claims, files),
+    onFailure: (reasonCode, error) => console.error(JSON.stringify({
+      event: "workspace_sync_failed",
+      tenantId: claims.workspaceId,
+      reasonCode,
+      errorName: error instanceof Error ? error.name : undefined,
+    })),
+    onSuccess: (result) => console.info(JSON.stringify({
+      event: "workspace_sync_completed",
+      tenantId: claims.workspaceId,
+      filesCount: result.filesCount,
+      unchanged: result.unchanged,
+      verified: result.verified,
+      syncFromExecutionMs: result.syncFromExecutionMs,
+      durationMs: Date.now() - startedAt,
+    })),
+  });
 }
 
 class HttpError extends Error {
@@ -2236,6 +2278,13 @@ async function main(): Promise<void> {
         sendJson(response, 200, { ready: true });
         return;
       }
+      if (request.method === "POST" && url.pathname === "/api/workspace/sync-now") {
+        checkOrigin(request);
+        const runtime = await runtimeFor(claims, "workspace_sync_now", undefined, "user_send");
+        const result = await syncWorkspaceAppsNow(config, claims, runtime);
+        sendJson(response, 200, { ok: true, ...result });
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/api/builder/intent") {
         checkOrigin(request);
         let body: { prompt?: unknown };
@@ -2564,7 +2613,8 @@ async function main(): Promise<void> {
                 const files: Array<{ path: string; content: string }> = []
                 const walk = async (root: string, relative = ""): Promise<void> => {
                   let entries: Array<import("node:fs").Dirent>
-                  try { entries = await fs.readdir(root, { withFileTypes: true }) } catch { return }
+                  try { entries = await fs.readdir(root, { withFileTypes: true }) }
+                  catch (error) { throw Object.assign(new Error("Workspace app directory could not be read."), { code: "workspace_directory_read_failed", cause: error }) }
                   for (const entry of entries) {
                     if ((entry.name.startsWith(".") && entry.name !== ".dyad") || files.length >= 2000) continue
                     const absolute = path.join(root, entry.name)
@@ -2584,14 +2634,14 @@ async function main(): Promise<void> {
                         if (stat.size > 10 * 1024 * 1024) continue
                         const content = await fs.readFile(absolute, "utf8")
                         files.push({ path: path.join("apps", path.basename(appPath), relativePath).replaceAll("\\", "/"), content })
-                      } catch { /* unreadable files are not part of the durable manifest */ }
+                      } catch (error) { throw Object.assign(new Error("Workspace app file could not be read."), { code: "workspace_file_read_failed", cause: error }) }
                     }
                   }
                 }
                 await walk(appPath)
                 if (!files.length) return
-                await syncWorkspaceFileBatches(config, claims, files, coreAppId).catch((error) => console.error(JSON.stringify({ event: "workspace_files_sync_failed", tenantId: claims.workspaceId, appId: coreAppId, reason: error instanceof Error ? error.message : String(error) })))
-              })()
+                await syncWorkspaceFileBatches(config, claims, files, coreAppId)
+              })().catch((error) => console.error(JSON.stringify({ event: "workspace_sync_failed", tenantId: claims.workspaceId, reasonCode: typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "workspace_sync_failed", errorName: error instanceof Error ? error.name : undefined })))
             }
           }
         }
@@ -2756,42 +2806,10 @@ async function main(): Promise<void> {
           const syncWorkspaceFiles = async () => {
             if (workspaceSyncInFlight) return;
             workspaceSyncInFlight = true;
-            const appsRoot = path.resolve(config.WORKSPACE_ROOT, "ws", claims.coreWorkspaceKey, "apps");
-            const files: Array<{ path: string; content: string }> = [];
-            const walk = async (directory: string, relative = ""): Promise<void> => {
-              let entries: Array<import("node:fs").Dirent>;
-              try {
-                entries = await fs.readdir(directory, { withFileTypes: true });
-              } catch {
-                return;
-              }
-              for (const entry of entries) {
-                    if ((entry.name.startsWith(".") && entry.name !== ".dyad") || files.length >= 2000) continue;
-                const absolute = path.join(directory, entry.name);
-                const relativePath = path.join(relative, entry.name).replaceAll("\\", "/");
-                if (!isWorkspaceSyncPathAllowed(relativePath)) continue;
-                if (entry.isDirectory()) {
-                  await walk(absolute, relativePath);
-                } else if (entry.isFile()) {
-                  try {
-                    const stat = await fs.stat(absolute);
-                    if (stat.size > 10 * 1024 * 1024) continue;
-                    if (isRasterImagePath(relativePath)) {
-                      if (stat.size <= 6 * 1024 * 1024) files.push({ path: relativePath, content: `base64:${(await fs.readFile(absolute)).toString("base64")}` });
-                    } else {
-                      files.push({ path: relativePath, content: await fs.readFile(absolute, "utf8") });
-                    }
-                  } catch {
-                    continue;
-                  }
-                }
-              }
-            };
             try {
-              await walk(appsRoot, "apps");
-              if (files.length) {
-                await syncWorkspaceFileBatches(config, claims, files).catch((error) => console.error(JSON.stringify({ event: "workspace_files_sync_failed", tenantId: claims.workspaceId, reason: error instanceof Error ? error.message : String(error) })));
-              }
+              await syncWorkspaceAppsNow(config, claims, workspaceRuntime);
+            } catch {
+              // syncWorkspaceAppsNow emits the structured workspace_sync_failed event.
             } finally {
               workspaceSyncInFlight = false;
             }
