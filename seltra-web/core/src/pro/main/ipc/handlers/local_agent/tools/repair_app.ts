@@ -27,7 +27,28 @@ export type BrowserEvidence = {
   errors: string[];
   consoleErrors: string[];
   failedRequests: string[];
+  ignoredNoise: string[];
 };
+
+/** Keep in sync with the dashboard preview console filter. */
+export function isIgnoredBrowserNoise(message: string, baseUrl?: string): boolean {
+  if (/\[vite\]\s+failed to connect to websocket|\[vite\].*websocket|websocket.*handshake|failed to connect to websocket/i.test(message)) return true;
+  if (/\[dyad-screenshot\]/i.test(message)) return true;
+  if (/favicon\.ico(?:\b|\?|$)/i.test(message) && /(?:404|not found|failed)/i.test(message)) return true;
+  if (/ResizeObserver loop (?:limit exceeded|completed with undelivered notifications)/i.test(message)) return true;
+  if (/websocket|wss?:\/\//i.test(message)) {
+    try {
+      const base = baseUrl ? new URL(baseUrl) : undefined;
+      const candidate = message.match(/wss?:\/\/[^\s'"<>]+/i)?.[0];
+      const socket = candidate ? new URL(candidate) : undefined;
+      if (socket && ["ws:", "wss:"].includes(socket.protocol) && base && (socket.hostname === base.hostname || socket.hostname === "localhost" || socket.hostname === "127.0.0.1")) return true;
+      if (base && message.toLowerCase().includes(base.hostname.toLowerCase())) return true;
+      if (/(?:localhost|127\.0\.0\.1):\d+/i.test(message)) return true;
+      if (socket && /^(localhost|127\.0\.0\.1)$/.test(socket.hostname)) return true;
+    } catch { /* classify as real if a malformed URL cannot be checked */ }
+  }
+  return false;
+}
 
 export async function captureBrowserEvidence(
   ctx: AgentContext,
@@ -62,17 +83,29 @@ export async function captureBrowserEvidence(
     const errors: string[] = [];
     const consoleErrors: string[] = [];
     const failedRequests: string[] = [];
+    const ignoredNoise: string[] = [];
+    const keepOrIgnore = (entry: string): boolean => {
+      if (!isIgnoredBrowserNoise(entry, baseUrl)) return true;
+      ignoredNoise.push(entry);
+      return false;
+    };
     page.on("console", (message) => {
+      const text = message.text();
       if (message.type() === "error") {
-        errors.push(`console.error: ${message.text()}`);
-        consoleErrors.push(message.text());
+        errors.push(`console.error: ${text}`);
+        if (keepOrIgnore(text)) consoleErrors.push(text);
+      } else if (message.type() === "warning" && isIgnoredBrowserNoise(text, baseUrl)) {
+        ignoredNoise.push(text);
       }
     });
-    page.on("pageerror", (error) => errors.push(`uncaught: ${error.message}`));
+    page.on("pageerror", (error) => {
+      errors.push(`uncaught: ${error.message}`);
+      consoleErrors.push(`uncaught: ${error.message}`);
+    });
     page.on("requestfailed", (request) => {
       const failure = `${request.method()} ${request.url()} (${request.failure()?.errorText ?? "unknown"})`;
       errors.push(`request failed: ${failure}`);
-      failedRequests.push(failure);
+      if (keepOrIgnore(failure)) failedRequests.push(failure);
     });
     page.on("response", (response) => {
       if (response.status() >= 400) {
@@ -80,20 +113,22 @@ export async function captureBrowserEvidence(
         errors.push(
           failure,
         );
-        failedRequests.push(failure);
+        if (keepOrIgnore(failure)) failedRequests.push(failure);
       }
     });
-    await page
-      .goto(target.toString(), {
-        waitUntil: "domcontentloaded",
-        timeout: 20_000,
-      })
-      .catch((error: unknown) => {
-        errors.push(
-          `navigation: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
-    await page.waitForTimeout(3_000);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 20_000 });
+        break;
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`navigation: ${message}`);
+        if (keepOrIgnore(`navigation: ${message}`)) failedRequests.push(`navigation: ${message}`);
+        if (attempt === 1 || !/timeout/i.test(message)) break;
+      }
+    }
+    await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => undefined);
+    await page.waitForTimeout(1_000);
     const screenshot = await page.screenshot({
       type: "png",
       fullPage: false,
@@ -105,6 +140,7 @@ export async function captureBrowserEvidence(
       errors: [...new Set(errors)].slice(0, 40),
       consoleErrors: [...new Set(consoleErrors)].slice(0, 40),
       failedRequests: [...new Set(failedRequests)].slice(0, 40),
+      ignoredNoise: [...new Set(ignoredNoise)].slice(0, 40),
     };
   } finally {
     await browser.close();

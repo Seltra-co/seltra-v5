@@ -10,6 +10,7 @@ const mockProjectFileUpsert = jest.fn(async ({ where, create, update }: { where:
   mockProjectFiles.set(where.projectId_path.path, { ...old, ...(old ? update : create), path: where.projectId_path.path })
 })
 const mockRunEventCreate = jest.fn()
+const mockProjectAssetCreate = jest.fn()
 const mockTx = {
   runEvent: { findUnique: jest.fn().mockResolvedValue(null), create: mockRunEventCreate },
   tenantApp: { findUnique: jest.fn().mockResolvedValue(mockApp) },
@@ -29,7 +30,7 @@ jest.mock('../db', () => ({
       findMany: jest.fn().mockResolvedValue([mockApp]),
     },
     projectFile: { findMany: (...args: unknown[]) => mockProjectFileFindMany(...args as Parameters<typeof mockProjectFileFindMany>), upsert: (...args: unknown[]) => mockProjectFileUpsert(...args as Parameters<typeof mockProjectFileUpsert>) },
-    projectAsset: { findMany: jest.fn().mockResolvedValue([]) },
+    projectAsset: { findMany: jest.fn().mockResolvedValue([]), create: mockProjectAssetCreate, findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
     fileBlob: { createMany: jest.fn().mockResolvedValue({ count: 1 }) },
     projectSnapshot: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn() },
     $transaction: jest.fn((callback: (tx: typeof mockTx) => unknown) => callback(mockTx)),
@@ -47,6 +48,7 @@ describe('workspace file keys and verification evidence', () => {
     mockProjectFiles.clear()
     mockProjectFileUpsert.mockClear()
     mockProjectFileFindMany.mockClear()
+    mockProjectAssetCreate.mockClear()
     mockTx.runEvent.findUnique.mockReset().mockResolvedValue(null)
     mockTx.runEvent.create.mockReset()
     mockTx.$queryRaw.mockReset().mockResolvedValue([{ lastEventSeq: 1 }])
@@ -94,5 +96,33 @@ describe('workspace file keys and verification evidence', () => {
 
     expect(result.pagesRouted).toBe(true)
     expect(result.verified).toBe(true)
+  })
+
+  it('syncs QA screenshots as files without registering them as generated merchant assets', async () => {
+    const builder = new BuilderService({} as never, {} as never)
+    const content = Buffer.from('png-bytes').toString('base64')
+    await builder.syncWorkspaceFiles({ tenantId: 'tenant-1', coreAppId: 7, files: [{ path: 'apps/catalog/.dyad/media/qa-screenshot.png', content: `base64:${content}` }] })
+
+    expect(mockProjectFiles.has('apps/catalog/.dyad/media/qa-screenshot.png')).toBe(true)
+    expect(mockProjectAssetCreate).not.toHaveBeenCalled()
+  })
+
+  it('accepts browser QA evidence with clean arrays and a valid persisted screenshot', async () => {
+    const run = new RunService({} as never)
+    const events = [
+      { type: 'build.result', payload: { executed: true, exitCode: 0 } },
+      { type: 'browser.qa', payload: { status: 'passed', consoleErrors: [], failedRequests: [], screenshotPath: '.dyad/media/qa-screenshot.png', screenshotBytes: 8, screenshotSha256: contentHash('png-bytes') } },
+      { type: 'manifest.verified', payload: { verified: true, pagesRouted: true, assetsVerified: true, packageScriptsValid: true, mismatches: [] } },
+      { type: 'preview.ready', payload: { status: 200, previewUrl: 'https://preview.example.test/' } },
+    ]
+    const tx = {
+      runEvent: { findMany: jest.fn().mockResolvedValue(events) },
+      tenantApp: { findMany: jest.fn().mockResolvedValue([{ status: 'preview_ready', previewUrl: 'https://preview.example.test/' }]) },
+      projectFile: { count: jest.fn().mockResolvedValue(1) },
+      projectAsset: { findMany: jest.fn().mockResolvedValue([]) },
+    }
+
+    const failures = await (run as any).completionFailures(tx, 'run-1', 'tenant-1') as string[]
+    expect(failures).not.toContain('browser.qa must record a clean browser result and a saved screenshot')
   })
 })

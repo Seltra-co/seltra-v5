@@ -350,7 +350,8 @@ export class BuilderService {
           create: { projectId: input.tenantId, path: normalizedPath, contentHash, size: binary?.byteLength ?? Buffer.byteLength(file.content), mime: workspaceFileMime(normalizedPath), storageRef: encodedImage ? contentHash : null, inlineContent: file.content, lastRunId: runId },
         })
         const mime = workspaceFileMime(normalizedPath)
-        if (encodedImage && mime?.startsWith('image/')) {
+        // QA evidence is a workspace file, not a generated merchant asset.
+        if (encodedImage && mime?.startsWith('image/') && !/\/\.dyad\/media\/qa-screenshot\.png$/i.test(normalizedPath)) {
           const storageRef = `core:${input.coreAppId ?? 'unknown'}:${normalizedPath}`
           const asset = await prisma.projectAsset.findFirst({ where: { projectId: input.tenantId, storageRef }, select: { id: true } })
           const data = { kind: normalizedPath.includes('/.dyad/media/') ? 'generated_image' : 'image', storageRef }
@@ -460,6 +461,8 @@ export class BuilderService {
         const updated = await tx.run.update({ where: { id: activeRun.id }, data: { lastEventSeq: { increment: 1 }, lastHeartbeatAt: new Date() }, select: { lastEventSeq: true } })
         await tx.runEvent.create({ data: { runId: activeRun.id, seq: updated.lastEventSeq, type: 'manifest.verified', phase: 'verifying', agent: 'supervisor', payload: evidence } })
       })
+    } else {
+      console.warn(JSON.stringify({ event: 'manifest_verify_no_active_run', tenantId: input.tenantId }))
     }
     return { ...evidence, workspaceFiles: workspace.size, manifestFiles: manifest.size }
   }

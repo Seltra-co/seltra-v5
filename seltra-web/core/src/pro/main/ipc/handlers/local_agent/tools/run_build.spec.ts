@@ -19,6 +19,7 @@ vi.mock("@/ipc/services/app_operation_coordinator", () => ({
 
 import {
   accumulateBuildOutput,
+  capturedBrowserQaPayload,
   copySnapshotEntriesOnWindows,
   createBuildOutputPreview,
   createBuildWorktree,
@@ -31,6 +32,7 @@ import {
   removeStaleSnapshots,
   secureSnapshotSymlinks,
   selectBuildExecutionMode,
+  unavailableBrowserQaPayload,
   type BuildProjectFacts,
 } from "./run_build";
 
@@ -74,6 +76,22 @@ describe("run_build", () => {
         }),
       ),
     );
+  });
+
+  it("emits an explicit unavailable QA result with empty screenshot fields", () => {
+    expect(unavailableBrowserQaPayload(7, 9, "PLAYWRIGHT_UNAVAILABLE")).toMatchObject({
+      status: "unavailable", reason: "PLAYWRIGHT_UNAVAILABLE", consoleErrors: [], failedRequests: [],
+      screenshotPath: null, screenshotBytes: null, screenshotSha256: null,
+    });
+  });
+
+  it("builds a passed QA payload pointing at the persisted .dyad screenshot", () => {
+    const evidence = { screenshot: Buffer.from("png-bytes"), consoleErrors: [], failedRequests: [], ignoredNoise: ["vite websocket"] };
+    const payload = capturedBrowserQaPayload({ appId: 7, chatId: 9, evidence, screenshotPath: ".dyad/media/qa-screenshot.png" });
+    expect(payload).toMatchObject({
+      status: "passed", screenshotPath: ".dyad/media/qa-screenshot.png", screenshotBytes: 9,
+      screenshotSha256: expect.stringMatching(/^[a-f0-9]{64}$/), ignoredNoise: ["vite websocket"],
+    });
   });
 
   it("normalizes Git paths before comparing them with filesystem paths", () => {

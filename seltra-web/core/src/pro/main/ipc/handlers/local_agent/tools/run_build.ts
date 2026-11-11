@@ -75,6 +75,34 @@ export interface BuildProjectFacts {
   hasBuildLifecycleHooks: boolean;
 }
 
+export function unavailableBrowserQaPayload(appId: number, chatId: number, reason: string) {
+  return {
+    appId, chatId, status: "unavailable" as const, reason,
+    consoleErrors: [] as string[], failedRequests: [] as string[], ignoredNoise: [] as string[],
+    screenshotPath: null, screenshotBytes: null, screenshotSha256: null,
+  };
+}
+
+export function capturedBrowserQaPayload(input: {
+  appId: number;
+  chatId: number;
+  evidence: { consoleErrors: string[]; failedRequests: string[]; ignoredNoise: string[]; screenshot: Buffer };
+  screenshotPath: string;
+}) {
+  const { appId, chatId, evidence, screenshotPath } = input;
+  return {
+    appId, chatId,
+    status: evidence.consoleErrors.length || evidence.failedRequests.length ? "failed" as const : "passed" as const,
+    reason: null,
+    consoleErrors: evidence.consoleErrors,
+    failedRequests: evidence.failedRequests,
+    ignoredNoise: evidence.ignoredNoise,
+    screenshotPath,
+    screenshotBytes: evidence.screenshot.byteLength,
+    screenshotSha256: createHash("sha256").update(evidence.screenshot).digest("hex"),
+  };
+}
+
 export function selectBuildExecutionMode(
   facts: BuildProjectFacts,
 ): BuildExecutionMode {
@@ -626,12 +654,16 @@ export const runBuildTool: ToolDefinition<z.infer<typeof runBuildSchema>> = {
             let body = `Production build passed. ${timing}${output ? `\n\n${output}` : ""}`;
             let statusTitle = "Build passed";
             let status: "finished" | "warning" = "finished";
+            const emitBrowserQaUnavailable = (reason: string) => broadcastToRegisteredWindows(ctx.event.sender, "agent-tool:browser-qa", unavailableBrowserQaPayload(ctx.appId, ctx.chatId, reason));
             if (!isPlaywrightAvailable()) {
+              emitBrowserQaUnavailable("PLAYWRIGHT_UNAVAILABLE");
               body +=
                 "\n\nBrowser QA unavailable in this environment because Playwright Chromium is not installed or failed its startup check.";
               statusTitle = "Build passed; browser QA unavailable";
               status = "warning";
             } else if (!runningApps.get(ctx.appId)) {
+              // run_build has no safe app-start lifecycle entry point; the dashboard owns app_run startup.
+              emitBrowserQaUnavailable("NO_ACTIVE_PREVIEW");
               body +=
                 "\n\nBrowser runtime QA was not run because no preview is active. Start the preview and run repair_app before declaring a new app or major user flow complete.";
               statusTitle = "Build passed; browser QA unavailable";
@@ -641,27 +673,17 @@ export const runBuildTool: ToolDefinition<z.infer<typeof runBuildSchema>> = {
                 const { captureBrowserEvidence } = await import("./repair_app");
                 const evidence = await captureBrowserEvidence(ctx);
                 if (!evidence) {
+                  emitBrowserQaUnavailable("NO_ACTIVE_PREVIEW");
                   body +=
                     "\n\nBrowser runtime QA was not run because no preview URL is available. Run repair_app after the preview is available before declaring the work complete.";
                   statusTitle = "Build passed; browser QA unavailable";
                   status = "warning";
                 } else {
-                  const screenshotPath = "public/assets/qa-screenshot.png";
+                  const screenshotPath = ".dyad/media/qa-screenshot.png";
                   const screenshotFile = path.join(ctx.appPath, screenshotPath);
                   await fs.mkdir(path.dirname(screenshotFile), { recursive: true });
                   await fs.writeFile(screenshotFile, evidence.screenshot);
-                  const screenshotSha256 = createHash("sha256")
-                    .update(evidence.screenshot)
-                    .digest("hex");
-                  broadcastToRegisteredWindows(ctx.event.sender, "agent-tool:browser-qa", {
-                    appId: ctx.appId,
-                    chatId: ctx.chatId,
-                    consoleErrors: evidence.consoleErrors,
-                    failedRequests: evidence.failedRequests,
-                    screenshotPath,
-                    screenshotBytes: evidence.screenshot.byteLength,
-                    screenshotSha256,
-                  });
+                  broadcastToRegisteredWindows(ctx.event.sender, "agent-tool:browser-qa", capturedBrowserQaPayload({ appId: ctx.appId, chatId: ctx.chatId, evidence, screenshotPath }));
                   if (evidence.errors.length > 0) {
                   body += `\n\nBrowser runtime QA found ${evidence.errors.length} issue(s):\n${evidence.errors.join("\n")}\n\nTreat these as defects even though compilation passed. Apply a targeted fix and rerun browser QA.`;
                   statusTitle = "Build passed; browser errors detected";
@@ -674,6 +696,7 @@ export const runBuildTool: ToolDefinition<z.infer<typeof runBuildSchema>> = {
               } catch (error) {
                 const reason =
                   error instanceof Error ? error.message : String(error);
+                emitBrowserQaUnavailable("CAPTURE_FAILED");
                 body += `\n\nBrowser runtime QA could not complete: ${reason}. Do not treat compilation success as runtime verification; run repair_app when the preview is available.`;
                 statusTitle = "Build passed; browser QA failed";
                 status = "warning";
