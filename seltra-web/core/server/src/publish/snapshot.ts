@@ -1,3 +1,4 @@
+// seltra-web/core/server/src/publish/snapshot.ts
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";

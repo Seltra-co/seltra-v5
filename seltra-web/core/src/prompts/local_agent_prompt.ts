@@ -1,3 +1,4 @@
+//core/src/prompts/local_agent_prompt.ts
 /**
  * System prompt for Local Agent v2 mode
  * Tool-based agent with parallel execution support

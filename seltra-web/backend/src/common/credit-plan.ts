@@ -1,3 +1,4 @@
+//backend/src/common/credit-plan.ts
 export const TOKENS_PER_CREDIT = 1_000
 
 export function tokenAllowanceForPlan(plan?: string | null) {

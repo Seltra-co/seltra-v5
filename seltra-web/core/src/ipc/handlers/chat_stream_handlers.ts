@@ -1,3 +1,4 @@
+// core/src/ipc/handlers/chat_stream_handlers.ts
 import { SubscriptionBillingError } from "@/shared/subscription_billing_error";
 import { modelForChatBackend } from "@/shared/execution_backend";
 import { isDotenvFilePath } from "@/utils/dotenv_redaction";

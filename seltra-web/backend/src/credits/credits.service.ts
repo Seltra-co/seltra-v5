@@ -1,3 +1,4 @@
+//backend/src/credits/credits.service.ts
 import { Injectable } from '@nestjs/common'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../db'

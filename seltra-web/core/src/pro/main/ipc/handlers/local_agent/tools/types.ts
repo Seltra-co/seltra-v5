@@ -1,3 +1,4 @@
+// core/src/pro/main/ipc/handlers/local_agent/tools/types.ts
 /**
  * Shared types and utilities for Local Agent tools
  */

@@ -1,3 +1,4 @@
+// core/src/shared/shell_capability.ts
 import type { UserSettings } from "@/lib/schemas";
 
 export function isShellExperimentAvailable({

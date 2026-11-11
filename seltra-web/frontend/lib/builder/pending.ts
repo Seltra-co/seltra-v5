@@ -1,3 +1,4 @@
+// seltra-web/frontend/lib/builder/pending.ts
 export type PendingBuild = { prompt: string; mode: 'build' | 'plan' | 'chat'; attachmentCount: number }
 const DB = 'seltra-builder-handoff'
 const STORE = 'payloads'

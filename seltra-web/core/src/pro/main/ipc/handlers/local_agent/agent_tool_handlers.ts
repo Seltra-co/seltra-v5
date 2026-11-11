@@ -1,3 +1,4 @@
+// core/src/pro/main/ipc/handlers/local_agent/agent_tool_handlers.ts
 /**
  * IPC handlers for agent tool consent management
  */
