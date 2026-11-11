@@ -21,7 +21,7 @@ you. Your job is to read the prompt like a sharp co-founder would, and ask ONLY 
 would meaningfully change how the store gets built.
 
 Rules:
-- Ask 0 to 4 questions. If the prompt is already specific and complete, ask 0 and set readyToBuild: true.
+- Always ask at least one question. Ask 1 to 4 questions and set readyToBuild: false.
 - Never ask generic boilerplate ("what's your business about?", "who's your audience?") if the prompt
   already answers it. Only ask what's genuinely missing or ambiguous given THIS prompt.
 - Prioritize questions whose answer changes a structural decision: fulfillment (pickup vs delivery vs
@@ -56,12 +56,22 @@ function cleanJSON(raw: string): string {
 }
 
 function fallbackPlan(prompt: string): PlannerResult {
+  const lower = prompt.toLowerCase()
+  const product = /coffee|tea|drink|beverage/.test(lower) ? 'drinks'
+    : /clothing|fashion|shirt|dress|apparel/.test(lower) ? 'clothing'
+      : /skin|beauty|cosmetic|soap/.test(lower) ? 'beauty products'
+        : /food|bakery|cake|restaurant/.test(lower) ? 'food'
+          : /jewel|accessor/.test(lower) ? 'accessories'
+            : 'products'
   return {
-    // If the planner is unavailable, proceed with the user's prompt instead of
-    // fabricating product questions that were never chosen by the model.
-    readyToBuild: true,
+    readyToBuild: false,
     inferredSummary: `Building a first version based on: "${prompt.slice(0, 140)}"`,
-    questions: [],
+    questions: [{
+      id: 'launch_focus',
+      question: `Who are the main customers for your ${product}, and what design style should the store use?`,
+      why: 'This helps shape the storefront and product presentation around the right audience.',
+      options: ['Everyday shoppers', 'Premium buyers', 'Gift shoppers'],
+    }],
   }
 }
 
@@ -96,8 +106,9 @@ export async function planFromPrompt(prompt: string): Promise<PlannerResult> {
       .filter((q) => !/whats\s?app|phone|contact number|customer.*reach/i.test(q.question))
       .map((q) => ({ ...q, question: q.question.trim().slice(0, 240), why: q.why.trim().slice(0, 180), options: Array.isArray(q.options) ? q.options.filter((option): option is string => typeof option === 'string' && Boolean(option.trim())).slice(0, 4).map((option) => option.trim().slice(0, 120)) : undefined }))
       .slice(0, 4)
+    if (!questions.length || parsed.readyToBuild) return fallbackPlan(prompt)
     return {
-      readyToBuild: parsed.readyToBuild && questions.length === 0,
+      readyToBuild: false,
       questions,
       inferredSummary: parsed.inferredSummary || fallbackPlan(prompt).inferredSummary,
     }
