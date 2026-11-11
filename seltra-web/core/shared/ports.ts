@@ -1,3 +1,4 @@
+// seltra-web/core/shared/ports.ts
 /**
  * Calculate the port for a given app based on its ID.
  * Uses a base port of 32100 and offsets by appId % 10_000.

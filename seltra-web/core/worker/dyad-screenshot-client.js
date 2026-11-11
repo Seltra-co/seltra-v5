@@ -1,3 +1,4 @@
+// seltra-web/core/worker/dyad-screenshot-client.js
 (() => {
   // Keep the raw RGBA canvas at or below ~16 MiB. html-to-image may allocate
   // more than one intermediate surface, so relying on its 16,384px

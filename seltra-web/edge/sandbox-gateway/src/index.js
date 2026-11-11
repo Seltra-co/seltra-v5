@@ -1,3 +1,4 @@
+// seltra-web/edge/sandbox-gateway/src/index.js
 import { DurableObject } from "cloudflare:workers";
 import { sandboxId, signRequest, verifyRequest } from "../auth.mjs";
 

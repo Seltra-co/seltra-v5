@@ -1,3 +1,4 @@
+// core/src/web/playwright_health.ts
 import type { Browser } from "playwright";
 import path from "node:path";
 import log from "electron-log/main";
