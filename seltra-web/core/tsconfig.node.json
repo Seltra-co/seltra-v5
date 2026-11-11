@@ -9,6 +9,7 @@
     "noImplicitAny": true,
     "sourceMap": true,
     "outDir": "dist",
+    "rootDir": "..",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "paths": {

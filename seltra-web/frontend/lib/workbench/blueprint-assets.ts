@@ -44,15 +44,23 @@ export async function generateBlueprintPhotoAssets<TGenerated, TFallback>(
       const generated = await withTimeout(options.generate(slot), timeoutMs)
       path = await withTimeout(options.saveGenerated(slot, generated), timeoutMs)
       if (!/^public\/assets\/[a-z0-9-]+\.(?:png|jpe?g|webp)$/i.test(path)) throw new Error('Generated image did not resolve to a public raster asset.')
-    } catch {
+    } catch (generationFailure) {
       status = 'fallback'
       try {
-        if (!options.fallback || !options.saveFallback) throw new Error('No fallback image source is configured.')
+        if (!options.fallback || !options.saveFallback) {
+          const reason = generationFailure instanceof Error ? generationFailure.message : String(generationFailure)
+          throw new Error(`Image generation failed: ${reason}. No fallback image source is configured.`)
+        }
         const fallback = await withTimeout(options.fallback(slot), timeoutMs)
         path = await withTimeout(options.saveFallback(slot, fallback), timeoutMs)
         if (!/^public\/assets\/[a-z0-9-]+\.(?:png|jpe?g|webp)$/i.test(path)) throw new Error('Fallback did not resolve to a public raster asset.')
       } catch (error) {
-        options.onTransition?.(slot, 'failed', undefined, error instanceof Error ? error.message : String(error))
+        const generationReason = generationFailure instanceof Error ? generationFailure.message : String(generationFailure)
+        const fallbackReason = error instanceof Error ? error.message : String(error)
+        const detail = fallbackReason.startsWith('Image generation failed:')
+          ? fallbackReason
+          : `Image generation failed: ${generationReason}. Fallback failed: ${fallbackReason}`
+        options.onTransition?.(slot, 'failed', undefined, detail)
         return { ...slot, status: 'skipped' as const }
       }
     }

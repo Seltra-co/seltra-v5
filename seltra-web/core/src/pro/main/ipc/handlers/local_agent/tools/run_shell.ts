@@ -1,4 +1,7 @@
 // core/src/pro/main/ipc/handlers/local_agent/tools/run_shell.ts
+/*
+Shell execution tool for Seltra. This tool allows running shell commands in an isolated app workspace, with safety reviews and consent checks. It handles command execution, output streaming, and tracks workspace mutations resulting from the command.
+ */
 import { runningApps } from "@/ipc/utils/process_manager";
 import { z } from "zod";
 import { readSettings } from "@/main/settings";

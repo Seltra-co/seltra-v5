@@ -3,12 +3,18 @@ import { getSeltraEngineBaseUrl } from "./seltra_engine_url";
 
 const originalSeltraUrl = process.env.SELTRA_ENGINE_URL;
 const originalLegacyUrl = process.env.DYAD_ENGINE_URL;
+const originalWebRuntime = process.env.DYAD_WEB_RUNTIME;
+const originalModelGatewayUrl = process.env.MODEL_GATEWAY_URL;
 
 afterEach(() => {
   if (originalSeltraUrl === undefined) delete process.env.SELTRA_ENGINE_URL;
   else process.env.SELTRA_ENGINE_URL = originalSeltraUrl;
   if (originalLegacyUrl === undefined) delete process.env.DYAD_ENGINE_URL;
   else process.env.DYAD_ENGINE_URL = originalLegacyUrl;
+  if (originalWebRuntime === undefined) delete process.env.DYAD_WEB_RUNTIME;
+  else process.env.DYAD_WEB_RUNTIME = originalWebRuntime;
+  if (originalModelGatewayUrl === undefined) delete process.env.MODEL_GATEWAY_URL;
+  else process.env.MODEL_GATEWAY_URL = originalModelGatewayUrl;
   vi.restoreAllMocks();
 });
 
@@ -27,9 +33,20 @@ describe("Seltra Engine URL resolution", () => {
     expect(warn).toHaveBeenCalledWith("[Seltra Engine] legacy engine settings in use; migrate to SELTRA_ENGINE_*");
   });
 
+  it("uses the workspace model gateway for isolated web runtimes", () => {
+    delete process.env.SELTRA_ENGINE_URL;
+    delete process.env.DYAD_ENGINE_URL;
+    process.env.DYAD_WEB_RUNTIME = "1";
+    process.env.MODEL_GATEWAY_URL = "http://127.0.0.1:8080/v1/";
+
+    expect(getSeltraEngineBaseUrl()).toBe("http://127.0.0.1:8080/v1");
+  });
+
   it("never falls back to a hosted legacy default", () => {
     delete process.env.SELTRA_ENGINE_URL;
     delete process.env.DYAD_ENGINE_URL;
+    delete process.env.DYAD_WEB_RUNTIME;
+    delete process.env.MODEL_GATEWAY_URL;
     expect(() => getSeltraEngineBaseUrl()).toThrow(/SELTRA_ENGINE_URL/);
   });
 });

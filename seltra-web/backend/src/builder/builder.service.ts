@@ -48,6 +48,11 @@ export class BuilderService {
     return secret
   }
 
+  private async runIsTerminal(runId: string) {
+    const run = await prisma.run.findUnique({ where: { id: runId }, select: { state: true } })
+    return !run || ['completed', 'failed', 'stopped', 'interrupted'].includes(run.state)
+  }
+
   private async measureSessionStage<T>(projectId: string, requestId: string, stage: string, work: () => Promise<T>): Promise<T> {
     const startedAt = Date.now()
     try { return await work() }
@@ -362,14 +367,15 @@ export class BuilderService {
         manifestChanges.set(normalizedPath, contentHash)
       }))
     }
+    const terminal = runId ? await this.runIsTerminal(runId) : true
     if (runId) {
-      if (manifestChanges.size) {
+      if (manifestChanges.size && !terminal) {
         await prisma.$transaction(async (tx) => {
           const run = await tx.run.findUnique({ where: { id: runId }, select: { state: true } })
-          if (!run) return
+          if (!run || ['completed', 'failed', 'stopped', 'interrupted'].includes(run.state)) return
           const updated = await tx.run.update({
             where: { id: runId },
-            data: { lastEventSeq: { increment: 1 }, lastHeartbeatAt: new Date(), ...(run.state === 'completed' || run.state === 'failed' || run.state === 'stopped' ? {} : { phase: 'build' }) },
+            data: { lastEventSeq: { increment: 1 }, lastHeartbeatAt: new Date(), phase: 'build' },
             select: { lastEventSeq: true },
           })
           await tx.runEvent.create({ data: {
@@ -397,7 +403,7 @@ export class BuilderService {
         }
       }
       const latest = await prisma.projectSnapshot.findFirst({ where: { projectId: input.tenantId, runId }, orderBy: { createdAt: 'desc' }, select: { manifest: true } })
-      if (manifestChanges.size || !latest) {
+      if (!terminal && (manifestChanges.size || !latest)) {
         await prisma.projectSnapshot.create({
           data: {
             projectId: input.tenantId,
@@ -409,7 +415,7 @@ export class BuilderService {
         })
       }
     }
-    return { synced: textFiles.length, changed: manifestChanges.size, snapshotted: Boolean(manifestChanges.size && runId) }
+    return { synced: textFiles.length, changed: manifestChanges.size, snapshotted: Boolean(manifestChanges.size && runId && !terminal) }
   }
 
   async verifyWorkspaceFiles(input: { tenantId: string; files: Array<{ path: string; sha256: string }> }) {
@@ -428,7 +434,8 @@ export class BuilderService {
     ])
     const manifest = new Map(manifestRows.map((file) => [file.path.replaceAll('\\', '/'), file.contentHash.toLowerCase()]))
     const missing = [...manifest.keys()].filter((path) => !workspace.has(path))
-    const extra = [...workspace.keys()].filter((path) => !manifest.has(path))
+    const NEVER_PERSISTED = /\.(?:ico|woff2?|ttf|otf|eot|mp4|webm|pdf|zip)$/i
+    const extra = [...workspace.keys()].filter((path) => !manifest.has(path) && !NEVER_PERSISTED.test(path))
     const changed = [...manifest.keys()].filter((path) => workspace.has(path) && workspace.get(path) !== manifest.get(path))
     const mismatches = [...missing.map((path) => `missing:${path}`), ...extra.map((path) => `extra:${path}`), ...changed.map((path) => `changed:${path}`)]
     const app = apps.at(-1)
@@ -456,8 +463,14 @@ export class BuilderService {
     })
     if (activeRun) {
       await prisma.$transaction(async (tx) => {
-        const run = await tx.run.findUnique({ where: { id: activeRun.id }, select: { lastEventSeq: true } })
-        if (!run) return
+        const run = await tx.run.findUnique({ where: { id: activeRun.id }, select: { lastEventSeq: true, state: true } })
+        if (!run || ['completed', 'failed', 'stopped', 'interrupted'].includes(run.state)) return
+        const last = await tx.runEvent.findFirst({ where: { runId: activeRun.id, type: 'manifest.verified' }, orderBy: { seq: 'desc' }, select: { payload: true } })
+        const prev = last?.payload as { verified?: boolean; mismatches?: string[] } | null
+        if (prev && prev.verified === evidence.verified && JSON.stringify(prev.mismatches ?? []) === JSON.stringify(evidence.mismatches)) {
+          await tx.run.update({ where: { id: activeRun.id }, data: { lastHeartbeatAt: new Date() } })
+          return
+        }
         const updated = await tx.run.update({ where: { id: activeRun.id }, data: { lastEventSeq: { increment: 1 }, lastHeartbeatAt: new Date() }, select: { lastEventSeq: true } })
         await tx.runEvent.create({ data: { runId: activeRun.id, seq: updated.lastEventSeq, type: 'manifest.verified', phase: 'verifying', agent: 'supervisor', payload: evidence } })
       })

@@ -14,9 +14,11 @@ import { getSeltraEngineBaseUrl } from "@/ipc/utils/seltra_engine_url";
 let warnedLegacyKey = false;
 
 function getSeltraEngineApiKey(settings = readSettings()): string | undefined {
+  if (process.env.DYAD_WEB_RUNTIME === "1") {
+    return process.env.WORKSPACE_MODEL_TOKEN?.trim();
+  }
   const seltraKey = process.env.SELTRA_ENGINE_API_KEY?.trim();
   if (seltraKey) return seltraKey;
-  if (process.env.DYAD_WEB_RUNTIME === "1") return undefined;
   const configuredKey = settings.seltraEngineApiKey?.value;
   if (configuredKey) return configuredKey;
   if (process.env.SELTRA_ENGINE_URL) return undefined;

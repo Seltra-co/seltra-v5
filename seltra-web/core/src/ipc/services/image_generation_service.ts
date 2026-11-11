@@ -153,15 +153,18 @@ export class ImageGenerationService {
   ) {
     const timeoutMs = params.assetSlot ? 30_000 : IMAGE_GENERATION_TIMEOUT_MS;
     const settings = readSettings();
-    const apiKey =
-      process.env.SELTRA_ENGINE_API_KEY ??
-      (process.env.DYAD_WEB_RUNTIME === "1" ? undefined :
-      settings.seltraEngineApiKey?.value ??
-      (process.env.SELTRA_ENGINE_URL ? undefined : settings.providerSettings?.auto?.apiKey?.value));
+    const webRuntime = process.env.DYAD_WEB_RUNTIME === "1";
+    const apiKey = webRuntime
+      ? process.env.WORKSPACE_MODEL_TOKEN?.trim()
+      : process.env.SELTRA_ENGINE_API_KEY ??
+        settings.seltraEngineApiKey?.value ??
+        (process.env.SELTRA_ENGINE_URL ? undefined : settings.providerSettings?.auto?.apiKey?.value);
 
     if (!apiKey) {
       throw new DyadError(
-        "Seltra engine API key is required for image generation",
+        webRuntime
+          ? "Workspace model token is required for image generation"
+          : "Seltra engine API key is required for image generation",
         DyadErrorKind.Auth,
       );
     }

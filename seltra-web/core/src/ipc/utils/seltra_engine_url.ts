@@ -1,6 +1,9 @@
 let warnedLegacyUrl = false
 
 export function getSeltraEngineBaseUrl(): string {
+  const modelGatewayUrl = process.env.DYAD_WEB_RUNTIME === '1' ? process.env.MODEL_GATEWAY_URL?.trim() : undefined
+  if (modelGatewayUrl) return modelGatewayUrl.replace(/\/$/, '')
+
   const seltraUrl = process.env.SELTRA_ENGINE_URL?.trim()
   if (seltraUrl) return seltraUrl.replace(/\/$/, '')
 
@@ -17,5 +20,9 @@ export function getSeltraEngineBaseUrl(): string {
 }
 
 export function isSeltraEngineUrlConfigured(): boolean {
-  return Boolean(process.env.SELTRA_ENGINE_URL?.trim() || process.env.DYAD_ENGINE_URL?.trim())
+  return Boolean(
+    process.env.SELTRA_ENGINE_URL?.trim() ||
+    (process.env.DYAD_WEB_RUNTIME === '1' && process.env.MODEL_GATEWAY_URL?.trim()) ||
+    process.env.DYAD_ENGINE_URL?.trim(),
+  )
 }

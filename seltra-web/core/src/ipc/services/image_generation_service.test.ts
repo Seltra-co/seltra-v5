@@ -115,6 +115,30 @@ describe("ImageGenerationService", () => {
     await expect(fs.promises.readFile(path.join(tempBase, "test-app", "public", "assets", "photo-1-lighthouse.png"))).resolves.toEqual(imageBytes);
   });
 
+  it("routes isolated web image generation through the workspace model gateway", async () => {
+    vi.stubEnv("DYAD_WEB_RUNTIME", "1");
+    vi.stubEnv("MODEL_GATEWAY_URL", "http://127.0.0.1:8080/v1/");
+    vi.stubEnv("WORKSPACE_MODEL_TOKEN", "workspace-model-token");
+    vi.stubEnv("SELTRA_ENGINE_API_KEY", "engine-api-key");
+    vi.stubEnv("SELTRA_ENGINE_URL", "");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      created: 1,
+      data: [{ b64_json: Buffer.from("test-png-bytes").toString("base64") }],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generate("web-runtime-image");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:8080/v1/images/generations",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer workspace-model-token",
+        }),
+      }),
+    );
+  });
+
   async function cancel(requestId: string): Promise<{ cancelled: boolean }> {
     return { cancelled: service.cancel(requestId) };
   }

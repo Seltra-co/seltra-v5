@@ -10,9 +10,12 @@ const originalSeltraUrl = process.env.SELTRA_ENGINE_URL;
 const originalSeltraKey = process.env.SELTRA_ENGINE_API_KEY;
 const originalCreditIdentity = process.env.SELTRA_ENGINE_CREDIT_IDENTITY;
 const originalLegacyUrl = process.env.DYAD_ENGINE_URL;
+const originalWebRuntime = process.env.DYAD_WEB_RUNTIME;
+const originalModelGatewayUrl = process.env.MODEL_GATEWAY_URL;
+const originalWorkspaceModelToken = process.env.WORKSPACE_MODEL_TOKEN;
 
 afterEach(() => {
-  for (const [name, value] of [["SELTRA_ENGINE_URL", originalSeltraUrl], ["SELTRA_ENGINE_API_KEY", originalSeltraKey], ["SELTRA_ENGINE_CREDIT_IDENTITY", originalCreditIdentity], ["DYAD_ENGINE_URL", originalLegacyUrl]] as const) {
+  for (const [name, value] of [["SELTRA_ENGINE_URL", originalSeltraUrl], ["SELTRA_ENGINE_API_KEY", originalSeltraKey], ["SELTRA_ENGINE_CREDIT_IDENTITY", originalCreditIdentity], ["DYAD_ENGINE_URL", originalLegacyUrl], ["DYAD_WEB_RUNTIME", originalWebRuntime], ["MODEL_GATEWAY_URL", originalModelGatewayUrl], ["WORKSPACE_MODEL_TOKEN", originalWorkspaceModelToken]] as const) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
   }
@@ -42,6 +45,25 @@ describe("Seltra engine client", () => {
     await response.json();
     expect(fetch).toHaveBeenCalledWith("http://127.0.0.1:4321/v1/probe", expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer legacy-engine-key" }) }));
     expect(warn).toHaveBeenCalled();
+  });
+
+  it("uses the workspace token and model gateway in isolated web runtimes", async () => {
+    delete process.env.SELTRA_ENGINE_URL;
+    delete process.env.DYAD_ENGINE_URL;
+    delete process.env.SELTRA_ENGINE_API_KEY;
+    process.env.DYAD_WEB_RUNTIME = "1";
+    process.env.MODEL_GATEWAY_URL = "http://127.0.0.1:8080/v1/";
+    process.env.WORKSPACE_MODEL_TOKEN = "workspace-model-token";
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+
+    const response = await engineFetch({ dyadRequestId: "workspace-1", abortSignal: new AbortController().signal }, "/images/generations");
+    await response.json();
+
+    expect(fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:8080/v1/images/generations",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer workspace-model-token" }) }),
+    );
+    expect(isSeltraEngineConfigured()).toBe(true);
   });
 
   it("does not report configured without URL and key", () => {

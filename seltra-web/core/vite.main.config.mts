@@ -6,7 +6,7 @@ import { assertDeferredMainBootstrapBundle } from "./src/lib/main_bootstrap_bund
 const nodeBuiltins = builtinModules.flatMap((name) => [name, `node:${name}`]);
 
 // https://vitejs.dev/config
-export default defineConfig(({ forgeConfigSelf }) => ({
+export default defineConfig((configEnv) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
@@ -24,7 +24,9 @@ export default defineConfig(({ forgeConfigSelf }) => ({
     // Defining lib here makes the Forge/Vite contract explicit. Forge skips
     // its CommonJS defaults whenever the user config supplies this object.
     lib: {
-      entry: forgeConfigSelf.entry,
+      entry: (
+        configEnv as typeof configEnv & { forgeConfigSelf: { entry: string } }
+      ).forgeConfigSelf.entry,
       fileName: (_format, entryName) => `${entryName}.js`,
       formats: ["cjs"],
     },

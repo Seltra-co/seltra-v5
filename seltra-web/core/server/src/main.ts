@@ -1,4 +1,4 @@
-//server/src/main.ts
+//core/server/src/main.ts
 import "reflect-metadata";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
@@ -180,7 +180,7 @@ async function performWorkspaceFileBatches(
       throw Object.assign(new Error("Backend rejected workspace file sync."), { code: "files_sync_rejected", status: response.status });
     }
   }
-  const verifiedFiles = files.map((file) => {
+  const verifiedFiles = files.filter((file) => file.content.startsWith("base64:") || !file.content.includes("\0")).map((file) => {
     const bytes = file.content.startsWith("base64:")
       ? Buffer.from(file.content.slice(7), "base64")
       : Buffer.from(file.content, "utf8");
@@ -759,9 +759,14 @@ async function main(): Promise<void> {
   }
   durability.start(() => supervisor.listRuntimes());
   const entitlementCache = new Map<string, { expiresAt: number; active: boolean; reason?: string; engineApiKey: string }>();
+  type EntitlementEntry = { expiresAt: number; active: boolean; reason?: string; engineApiKey: string };
+  const entitlementInflight = new Map<string, Promise<EntitlementEntry>>();
+  const ENTITLEMENT_STALE_GRACE_MS = 10 * 60_000;
   const destroyingWorkspaceKeys = new Map<string, number>();
   const sessionOwners = new Map<string, SessionClaims>();
   const modelTokens = new Map<string, SessionClaims>();
+  const inflightModelCalls = new Map<string, Set<AbortController>>();
+  const stoppedWorkspaces = new Map<string, number>();
   let runtimeModelSelfCheck: Promise<void> | undefined;
   const eventSessions = new Set<EventSession>();
   const budgetStates = new Map<string, BudgetState>();
@@ -1041,6 +1046,29 @@ async function main(): Promise<void> {
     }
   }
 
+  async function fetchEntitlement(claims: SessionClaims): Promise<EntitlementEntry> {
+    let response: Response;
+    try {
+      response = await fetch(`${config.NEST_INTERNAL_URL.replace(/\/+$/, "")}/api/v5/internal/core/entitlement/${encodeURIComponent(claims.workspaceId)}`, {
+        headers: { "x-core-service-secret": config.CORE_SERVICE_SECRET },
+        signal: AbortSignal.timeout(12_000),
+      });
+    } catch {
+      throw new HttpError(503, "ENTITLEMENT_UNAVAILABLE", "Seltra could not verify builder access.");
+    }
+    if (!response.ok) {
+      if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429)
+        throw new HttpError(response.status === 401 ? 401 : 403, "WORKSPACE_FORBIDDEN", "Builder access could not be verified for this workspace.");
+      throw new HttpError(503, "ENTITLEMENT_UNAVAILABLE", "Seltra could not verify builder access.");
+    }
+    const entitlement = await response.json() as { active?: boolean; reason?: string; userId?: string; creditWorkspaceId?: string; coreWorkspaceKey?: string; storeSlug?: string; engineApiKey?: string };
+    if (entitlement.userId !== claims.sub || entitlement.coreWorkspaceKey !== claims.coreWorkspaceKey || entitlement.storeSlug !== claims.storeSlug)
+      throw new HttpError(403, "WORKSPACE_FORBIDDEN", "Builder token does not match this workspace.");
+    if (typeof entitlement.engineApiKey !== "string" || !/^sk_seltra_[A-Za-z0-9_-]{40,}$/.test(entitlement.engineApiKey))
+      throw new HttpError(503, "ENGINE_KEY_UNAVAILABLE", "A workspace-scoped Seltra Engine key is unavailable.");
+    return { active: entitlement.active === true, reason: entitlement.reason, engineApiKey: entitlement.engineApiKey, expiresAt: Date.now() + 60_000 };
+  }
+
   async function assertEntitlement(claims: SessionClaims, allowExhausted = false) {
     const destroyUntil = destroyingWorkspaceKeys.get(claims.coreWorkspaceKey);
     if (destroyUntil && destroyUntil > Date.now()) {
@@ -1048,25 +1076,23 @@ async function main(): Promise<void> {
     }
     if (destroyUntil) destroyingWorkspaceKeys.delete(claims.coreWorkspaceKey);
     const cached = entitlementCache.get(claims.workspaceId);
-    let result = cached && cached.expiresAt > Date.now() ? cached : undefined;
+    let result: EntitlementEntry | undefined = cached && cached.expiresAt > Date.now() ? cached : undefined;
     if (!result) {
-      let response: Response;
-      try {
-        response = await fetch(`${config.NEST_INTERNAL_URL.replace(/\/+$/, "")}/api/v5/internal/core/entitlement/${encodeURIComponent(claims.workspaceId)}`, {
-          headers: { "x-core-service-secret": config.CORE_SERVICE_SECRET },
-          signal: AbortSignal.timeout(5_000),
-        });
-      } catch {
-        throw new HttpError(503, "ENTITLEMENT_UNAVAILABLE", "Seltra could not verify builder access.");
+      let pending = entitlementInflight.get(claims.workspaceId);
+      if (!pending) {
+        pending = fetchEntitlement(claims).finally(() => entitlementInflight.delete(claims.workspaceId));
+        entitlementInflight.set(claims.workspaceId, pending);
       }
-      if (!response.ok) throw new HttpError(503, "ENTITLEMENT_UNAVAILABLE", "Seltra could not verify builder access.");
-      const entitlement = await response.json() as { active?: boolean; reason?: string; userId?: string; creditWorkspaceId?: string; coreWorkspaceKey?: string; storeSlug?: string; engineApiKey?: string };
-      if (entitlement.userId !== claims.sub || entitlement.coreWorkspaceKey !== claims.coreWorkspaceKey || entitlement.storeSlug !== claims.storeSlug)
-        throw new HttpError(403, "WORKSPACE_FORBIDDEN", "Builder token does not match this workspace.");
-      if (typeof entitlement.engineApiKey !== "string" || !/^sk_seltra_[A-Za-z0-9_-]{40,}$/.test(entitlement.engineApiKey))
-        throw new HttpError(503, "ENGINE_KEY_UNAVAILABLE", "A workspace-scoped Seltra Engine key is unavailable.");
-      result = { active: entitlement.active === true, reason: entitlement.reason, engineApiKey: entitlement.engineApiKey, expiresAt: Date.now() + 60_000 };
-      entitlementCache.set(claims.workspaceId, result);
+      try {
+        result = await pending;
+        entitlementCache.set(claims.workspaceId, result);
+      } catch (error) {
+        const transient = error instanceof HttpError && error.code === "ENTITLEMENT_UNAVAILABLE";
+        if (transient && cached?.active && Date.now() - cached.expiresAt < ENTITLEMENT_STALE_GRACE_MS) {
+          console.warn(JSON.stringify({ event: "entitlement_stale_served", tenantId: claims.workspaceId }));
+          result = cached;
+        } else throw error;
+      }
     }
     if (result.reason === "credits_exhausted" && !allowExhausted)
         throw new HttpError(402, "CREDITS_EXHAUSTED", "Seltra daily account token allowance is used. Your project and saved changes are safe; credits are shared across your projects and reset at midnight UTC.");
@@ -1461,6 +1487,12 @@ async function main(): Promise<void> {
     }
     console.info(JSON.stringify({ event: 'core_project_phase', projectId: modelClaims.workspaceId, phase: 'model call start', at: new Date().toISOString(), requestId }));
     await assertEntitlement(modelClaims);
+    const stopUntil = stoppedWorkspaces.get(modelClaims.workspaceId);
+    if (stopUntil && stopUntil > Date.now()) {
+      openAiError(response, 409, "RUN_STOPPED", "This run was stopped.");
+      return;
+    }
+    if (stopUntil) stoppedWorkspaces.delete(modelClaims.workspaceId);
     if (modelsOnly) {
       sendJson(response, 200, {
         object: "list",
@@ -1645,6 +1677,9 @@ async function main(): Promise<void> {
     const startedAt = Date.now();
     const inputTokensGuess = requestTokens;
     const controller = new AbortController();
+    const liveCalls = inflightModelCalls.get(claimsWorkspace) ?? new Set<AbortController>();
+    liveCalls.add(controller);
+    inflightModelCalls.set(claimsWorkspace, liveCalls);
     request.once("aborted", () => controller.abort());
     response.once("close", () => {
       if (!response.writableEnded) controller.abort();
@@ -1940,6 +1975,9 @@ async function main(): Promise<void> {
           message,
         );
     } finally {
+      const liveCalls = inflightModelCalls.get(claimsWorkspace);
+      liveCalls?.delete(controller);
+      if (!liveCalls?.size) inflightModelCalls.delete(claimsWorkspace);
       console.info(JSON.stringify({ event: 'core_project_phase', projectId: claimsWorkspace, phase: 'model call end', at: new Date().toISOString(), requestId: request.headers['x-request-id'] ?? null }));
       state.inFlight = Math.max(0, state.inFlight - 1);
       const reportedInput = (
@@ -1987,6 +2025,9 @@ async function main(): Promise<void> {
     if (!bearer || !modelClaims || !activeRuntime || activeRuntime.modelToken !== bearer)
       throw new HttpError(401, "UNAUTHORIZED", "Invalid workspace model token.");
     await assertEntitlement(modelClaims);
+    const stopUntil = stoppedWorkspaces.get(modelClaims.workspaceId);
+    if (stopUntil && stopUntil > Date.now()) throw new HttpError(409, "RUN_STOPPED", "This run was stopped.");
+    if (stopUntil) stoppedWorkspaces.delete(modelClaims.workspaceId);
 
     let body: Record<string, unknown>;
     try {
@@ -2020,11 +2061,23 @@ async function main(): Promise<void> {
           body: JSON.stringify({ prompt: body.prompt }),
         };
 
+    const runIdHeader = request.headers["x-seltra-run-id"];
+    const runId = typeof runIdHeader === "string" && runIdHeader.length <= 128 ? runIdHeader : modelClaims.workspaceId + "-" + utcDay();
+    const controller = new AbortController();
+    const liveCalls = inflightModelCalls.get(modelClaims.workspaceId) ?? new Set<AbortController>();
+    liveCalls.add(controller);
+    inflightModelCalls.set(modelClaims.workspaceId, liveCalls);
+    const timeout = setTimeout(() => controller.abort(new DOMException("Image request timed out.", "TimeoutError")), 90_000);
+    request.once("aborted", () => controller.abort());
+    response.once("close", () => {
+      if (!response.writableEnded) controller.abort();
+    });
+
     const startedAt = Date.now();
     let ok = false;
     let errorClass: string | undefined;
     try {
-      const upstream = await fetch(endpoint, { ...init, signal: AbortSignal.timeout(90_000) });
+      const upstream = await fetch(endpoint, { ...init, signal: controller.signal });
       if (!upstream.ok) {
         const detail = (await upstream.text().catch(() => "")).slice(0, 500);
         errorClass = upstream.status === 429 ? "rate_limit" : "provider_error";
@@ -2050,8 +2103,10 @@ async function main(): Promise<void> {
       errorClass ??= error instanceof Error && error.name === "TimeoutError" ? "timeout" : "provider_error";
       throw error;
     } finally {
-      const runIdHeader = request.headers["x-seltra-run-id"];
-      const runId = typeof runIdHeader === "string" && runIdHeader.length <= 128 ? runIdHeader : modelClaims.workspaceId + "-" + utcDay();
+      clearTimeout(timeout);
+      const liveCalls = inflightModelCalls.get(modelClaims.workspaceId);
+      liveCalls?.delete(controller);
+      if (!liveCalls?.size) inflightModelCalls.delete(modelClaims.workspaceId);
       const usage = {
         tenantId: modelClaims.workspaceId,
         workspaceId: modelClaims.creditWorkspaceId ?? modelClaims.workspaceId,
@@ -2106,6 +2161,22 @@ async function main(): Promise<void> {
       entitlementCache.set(body.workspaceId, { active: true, engineApiKey: entitlement.engineApiKey, expiresAt: Date.now() + 60_000 });
       const runtime = await runtimeFor(claims);
       sendJson(response, 200, { token: runtime.modelToken });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/internal/runs/stop") {
+      const suppliedHeader = request.headers["x-core-service-secret"];
+      const supplied = Buffer.from(Array.isArray(suppliedHeader) ? suppliedHeader[0] ?? "" : suppliedHeader ?? "");
+      const expected = Buffer.from(config.CORE_SERVICE_SECRET);
+      if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new HttpError(401, "UNAUTHORIZED", "Core service authentication is required.");
+      let body: { workspaceId?: unknown };
+      try { body = JSON.parse((await readBody(request, 4096)).toString("utf8")) as typeof body; }
+      catch { throw new HttpError(400, "INVALID_REQUEST", "A valid stop request is required."); }
+      if (typeof body.workspaceId !== "string" || !/^[a-f0-9-]{36}$/i.test(body.workspaceId)) throw new HttpError(400, "INVALID_REQUEST", "A valid workspace ID is required.");
+      stoppedWorkspaces.set(body.workspaceId, Date.now() + 15_000);
+      let aborted = 0;
+      for (const controller of inflightModelCalls.get(body.workspaceId) ?? []) { controller.abort(); aborted += 1; }
+      console.info(JSON.stringify({ event: "run_stop_applied", tenantId: body.workspaceId, aborted }));
+      sendJson(response, 200, { ok: true, aborted });
       return;
     }
     if (request.method === 'POST' && url.pathname === '/internal/workspaces/destroy') {
@@ -2772,7 +2843,12 @@ async function main(): Promise<void> {
           try {
             console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, ...(traceId ? { traceId } : {}), phase: "browser WS accepted", at: new Date().toISOString() }));
             console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, ...(traceId ? { traceId } : {}), phase: "workspace lookup requested", at: new Date().toISOString() }));
-            const existingRuntime = supervisor.getExisting(claims.workspaceId, claims.coreWorkspaceKey, claims.sub, claims.storeSlug)
+            let existingRuntime = supervisor.getExisting(claims.workspaceId, claims.coreWorkspaceKey, claims.sub, claims.storeSlug)
+            const runtimeWaitUntil = Date.now() + 90_000
+            while (!existingRuntime && Date.now() < runtimeWaitUntil && browser.readyState === WebSocket.OPEN) {
+              await new Promise((resolve) => setTimeout(resolve, 500))
+              existingRuntime = supervisor.getExisting(claims.workspaceId, claims.coreWorkspaceKey, claims.sub, claims.storeSlug)
+            }
             if (!existingRuntime) throw new HttpError(503, 'WORKSPACE_RUNTIME_UNAVAILABLE', 'Send a message or restore this project to reconnect.');
             workspaceRuntime = existingRuntime;
             console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, ...(traceId ? { traceId } : {}), phase: "workspace runtime ready", at: new Date().toISOString() }));
@@ -2793,6 +2869,7 @@ async function main(): Promise<void> {
           eventSessions.add(pair);
           const openedAt = Date.now();
           let runtimeSessionId: string | undefined;
+          const seenChannels = new Set<string>();
           let closed = false;
           let browserAlive = true;
           let runtimeAlive = true;
@@ -2907,6 +2984,10 @@ async function main(): Promise<void> {
                         channel?: string;
                         payload?: { id?: unknown; chatId?: unknown; intentId?: unknown };
                       };
+                      if (typeof frame.channel === "string" && !seenChannels.has(frame.channel)) {
+                        seenChannels.add(frame.channel);
+                        console.info(JSON.stringify({ event: "ws_frame_channel_seen", tenantId: claims.workspaceId, channel: frame.channel }));
+                      }
                       if (
                         frame.channel === "web:session" &&
                         typeof frame.payload?.id === "string"
@@ -2965,23 +3046,17 @@ async function main(): Promise<void> {
         });
       } catch (error) {
         const status = error instanceof HttpError ? error.status : 500;
+        const statusText: Record<number, string> = { 400: "Bad Request", 401: "Unauthorized", 402: "Payment Required", 403: "Forbidden", 404: "Not Found", 410: "Gone", 500: "Internal Server Error", 502: "Bad Gateway", 503: "Service Unavailable" };
+        let pathname = "unknown";
+        try { pathname = new URL(request.url ?? "/", "http://gateway.invalid").pathname; } catch { /* keep unknown */ }
         console.error(JSON.stringify({
           event: "websocket_upgrade_rejected",
-          endpoint: "/api/events",
+          scope: primaryHost(request, config) ? "builder" : "preview",
+          endpoint: pathname,
           status,
           code: error instanceof HttpError ? error.code : "INTERNAL_ERROR",
         }));
-        socket.write(
-          "HTTP/1.1 " +
-            status +
-            " " +
-            (status === 401
-              ? "Unauthorized"
-              : status === 403
-                ? "Forbidden"
-                : "Not Found") +
-            "\r\nConnection: close\r\n\r\n",
-        );
+        socket.write("HTTP/1.1 " + status + " " + (statusText[status] ?? "Error") + "\r\nConnection: close\r\n\r\n");
         socket.destroy();
       }
     })();

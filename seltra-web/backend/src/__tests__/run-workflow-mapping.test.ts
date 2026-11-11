@@ -30,4 +30,11 @@ describe('run workflow event mapping', () => {
     expect(workflowEventType('build.result')).toBe('status')
     expect(workflowPayload('build.result', payload)).toEqual({ message })
   })
+
+  it('maps agent narration to a bounded, user-visible workflow message', () => {
+    const narration = 'The agent is building the storefront.'
+    expect(workflowEventType('agent.narration')).toBe('message')
+    expect(workflowPayload('agent.narration', { summary: narration })).toEqual({ summary: narration })
+    expect(workflowPayload('agent.narration', { summary: 'a'.repeat(1300) }).summary).toHaveLength(1200)
+  })
 })

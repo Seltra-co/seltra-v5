@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Script } from "node:vm";
 import { afterEach, expect, it } from "vitest";
 import { brandWebBlankScaffold } from "./template_branding";
 
@@ -52,6 +53,9 @@ it("brands only the copied blank app when called by the web template path", asyn
   expect(html).toContain('"seltra:build-complete"');
   expect(html).toContain("seltra-attribution-seen");
   expect(html).toContain("window.top===window");
+  const inlineScripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/gi)];
+  expect(inlineScripts.length).toBeGreaterThan(0);
+  for (const [, script] of inlineScripts) new Script(script);
   expect(
     await fs.readFile(path.join(appPath, "public", "seltra-mark.png")),
   ).toEqual(Buffer.from([137, 80, 78, 71]));

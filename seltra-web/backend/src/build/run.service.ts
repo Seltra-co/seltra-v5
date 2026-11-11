@@ -13,6 +13,7 @@ type WorkflowPhase = 'planning' | 'awaiting_approval' | 'preparing' | 'building'
 
 function workflowPhase(type: string, phase: string | null): WorkflowPhase {
   if (type === 'run.failed' || phase === 'failed') return 'failed'
+  if (type === 'agent.narration') return phase === 'planning' || phase === 'preparing' || phase === 'verifying' ? phase : 'building'
   if (type === 'run.summary' || type === 'preview.ready' || phase === 'ready') return 'ready'
   if (phase === 'planning' || phase === 'awaiting_approval' || phase === 'preparing' || phase === 'building' || phase === 'verifying') return phase
   if (type === 'run.completed') return 'verifying'
@@ -32,13 +33,21 @@ export function workflowEventType(type: string): string {
   if (type === 'assets.planned' || type === 'asset.updated' || type === 'asset.generated' || type === 'asset.failed') return 'asset_updated'
   if (/^preview\./.test(type)) return 'preview_state'
   if (type === 'run.failed') return 'error'
-  if (type === 'run.summary') return 'message'
+  if (type === 'run.summary' || type === 'agent.narration') return 'message'
   if (type.startsWith('run.')) return 'phase_changed'
   return 'status'
 }
 
 export function workflowPayload(type: string, payload: unknown): Record<string, unknown> {
   const value = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
+  if (type === 'phase.changed') return { status: typeof value.status === 'string' ? value.status.slice(0, 160) : 'Working' }
+  if (type === 'blueprint.ready') return { status: 'Plan ready for your approval', ...(typeof value.appName === 'string' ? { appName: value.appName.slice(0, 120) } : {}), ...(value.blueprint && typeof value.blueprint === 'object' ? { blueprint: value.blueprint } : {}) }
+  if (type === 'blueprint.approved') return { status: 'Plan approved. Building your app.' }
+  if (type === 'files.persisted') {
+    const n = Number.isSafeInteger(value.changed) ? value.changed as number : 0
+    return { message: n ? `Saved ${n} file${n === 1 ? '' : 's'}` : 'Workspace checkpoint saved' }
+  }
+  if (type === 'manifest.verified') return { message: value.verified === true ? 'Workspace verified' : 'Verifying workspace' }
   if (type === 'file.written') {
     const rawPath = typeof value.path === 'string' ? value.path.trim().replaceAll('\\', '/') : ''
     const path = rawPath.split('/').filter((part) => part && part !== '.').join('/').slice(0, 240)
@@ -74,13 +83,21 @@ export function workflowPayload(type: string, payload: unknown): Record<string, 
     const total = todos.length
     return { summary: typeof value.summary === 'string' ? value.summary : total ? `Build complete. ${completed} of ${total} steps are complete; the preview passed its HTTP 200 check.` : 'Build complete. The preview passed its HTTP 200 check.' }
   }
+  if (type === 'agent.narration') {
+    return { summary: typeof value.summary === 'string' ? value.summary.slice(-1200) : '' }
+  }
   if (type === 'step.progress') {
-    const todos = Array.isArray(value.todos) ? value.todos.slice(0, 6).map((todo) => {
+    const todos = Array.isArray(value.todos) ? value.todos.slice(0, 20).map((todo) => {
       if (!todo || typeof todo !== 'object') return null
       const task = todo as Record<string, unknown>
       return { id: task.id, title: task.content, state: task.status }
     }).filter(Boolean) : []
-    return { tasks: todos }
+     return {
+      tasks: todos,
+      ...(typeof value.current === 'string' ? { current: value.current.slice(0, 160) } : {}),
+      ...(Number.isSafeInteger(value.completed) ? { completed: value.completed } : {}),
+      ...(Number.isSafeInteger(value.total) ? { total: value.total } : {}),
+    }
   }
   if (type === 'status') {
     const text = typeof value.message === 'string' ? value.message : typeof value.status === 'string' ? value.status : ''
@@ -176,6 +193,7 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
     const run = await prisma.run.findUnique({ where: { id: runId } })
     if (!run) throw new NotFoundException('Run not found.')
     await this.ownerId(run.projectId, authorization)
+    if (run.state === 'stopped' && event.type !== 'run.stopped') return run
     if (event.type === 'run.heartbeat') {
       return prisma.run.update({ where: { id: runId }, data: { lastHeartbeatAt: new Date() } })
     }
@@ -280,6 +298,7 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
   async appendInternal(runId: string, event: { type: string; phase?: string; agent?: string; payload: Record<string, unknown>; state?: PersistedRunState; eventKey?: string }) {
     const run = await prisma.run.findUnique({ where: { id: runId } })
     if (!run) return null
+    if (run.state === 'stopped' && event.type !== 'run.stopped') return null
     try {
     return await prisma.$transaction(async (tx) => {
       if (event.eventKey) {
@@ -336,13 +355,13 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
 
   private async completionFailures(tx: Prisma.TransactionClient, runId: string, projectId: string): Promise<string[]> {
     const [events, apps, fileCount, assets] = await Promise.all([
-      tx.runEvent.findMany({ where: { runId }, select: { type: true, payload: true } }),
+      tx.runEvent.findMany({ where: { runId }, orderBy: { seq: 'asc' }, select: { type: true, payload: true } }),
       tx.tenantApp.findMany({ where: { tenantId: projectId, lastRunId: runId }, select: { status: true, previewUrl: true } }),
       tx.projectFile.count({ where: { projectId, lastRunId: runId } }),
       tx.projectAsset.findMany({ where: { projectId, kind: 'generated_image', status: 'generated' }, select: { sourceUrl: true } }),
     ])
     const payload = (type: string) => {
-      const event = events.find((item) => item.type === type)
+      const event = [...events].reverse().find((item) => item.type === type)
       return event?.payload && typeof event.payload === 'object' && !Array.isArray(event.payload)
         ? event.payload as Record<string, unknown>
         : null
@@ -363,11 +382,12 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
     return failures
   }
 
-  async stop(runId: string, authorization?: string) {
+  //Make stop abort in-flight model calls.
+   async stop(runId: string, authorization?: string) {
     const run = await prisma.run.findUnique({ where: { id: runId } })
     if (!run) throw new NotFoundException('Run not found.')
     await this.ownerId(run.projectId, authorization)
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const filesWritten = await tx.projectFile.count({ where: { projectId: run.projectId, lastRunId: runId } })
       const checkpoint = { ...(run.checkpoint && typeof run.checkpoint === 'object' ? run.checkpoint as Record<string, unknown> : {}), stoppedAt: new Date().toISOString(), filesWritten }
       const stopped = await tx.run.update({
@@ -376,18 +396,32 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
       })
       const seq = stopped.lastEventSeq + 1
       await tx.runEvent.create({
-        data: {
-          runId,
-          seq,
-          type: 'run.stopped',
-          phase: run.phase,
-          payload: { reason: 'user_stop', filesWritten },
-        },
+        data: { runId, seq, type: 'run.stopped', phase: run.phase, payload: { reason: 'user_stop', filesWritten } },
       })
       await this.createWorkspaceSnapshot(tx, run.projectId, runId, 'stopped')
       await tx.run.update({ where: { id: runId }, data: { lastEventSeq: seq } })
       return stopped
     })
+    void this.notifyGatewayStop(run.projectId, runId)
+    return result
+  }
+
+  //Helper to notify the gateway that a run has been stopped, allowing it to abort any in-flight model calls or other processes associated with the run.
+  private async notifyGatewayStop(workspaceId: string, runId: string) {
+    const base = (process.env.CORE_PUBLIC_URL ?? '').replace(/\/+$/, '')
+    const secret = process.env.CORE_SERVICE_SECRET ?? ''
+    if (!base || secret.length < 32) { this.logger.warn('Gateway stop notification skipped: gateway URL or service secret is not configured.'); return }
+    try {
+      const response = await fetch(`${base}/internal/runs/stop`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-core-service-secret': secret },
+        body: JSON.stringify({ workspaceId, runId }),
+        signal: AbortSignal.timeout(5_000),
+      })
+      if (!response.ok) this.logger.warn(`Gateway stop notification failed (HTTP ${response.status}).`)
+    } catch (error) {
+      this.logger.warn(`Gateway stop notification failed: ${error instanceof Error ? error.name : 'unknown'}`)
+    }
   }
 
   async continueRun(runId: string, authorization?: string) {
@@ -498,6 +532,7 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
           }
           for (const event of run.events) {
             cursor = event.seq
+            if (event.type === 'manifest.verified' && (event.payload as { verified?: unknown } | null)?.verified !== true) continue
             const type = workflowEventType(event.type)
             const phase = workflowPhase(event.type, event.phase)
             observer.next({

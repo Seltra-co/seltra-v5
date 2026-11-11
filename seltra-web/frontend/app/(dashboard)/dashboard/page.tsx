@@ -922,6 +922,7 @@ export default function DashboardPage() {
   const coreRetryAssetRef = useRef<(prompt: string) => Promise<void>>(async () => undefined)
   const coreMessageRef = useRef<number>()
   const coreReplyRef = useRef('')
+  const agentNarrationPersistRef = useRef({ text: '', at: 0 })
   const coreDashboardConversationRef = useRef<string>()
   const coreEventsRef = useRef<CoreEvents | null>(null)
   const [corePreviewUrl, setCorePreviewUrl] = useState('')
@@ -1210,7 +1211,7 @@ export default function DashboardPage() {
 
       const visuals = blueprint.visuals?.length ? blueprint.visuals.map((visual) => `- ${visual.type}: ${visual.description}\n  Prompt: ${visual.prompt}`).join('\n') : 'No visuals planned'
       const assetManifest = generatedAssets.filter((asset) => asset.path).map(({ slot, path }) => `- ${slot}: ${path}`).join('\n') || 'No photo assets were available; continue without them.'
-      const prompt = ['The app blueprint has been approved. Please build the app based on the following approved blueprint.', 'This is a multi-step build: immediately use Core’s update_todos tool to create a concise plan before editing files, update it as work proceeds, and mark each step complete only after doing it. Continue implementation in this same turn; do not stop after writing the plan.', 'Before declaring completion, inspect the actual project files, resolve every planned page in the app router, and verify navigation destinations. Implement every page promised by the blueprint; a page file that is not imported and routed does not count as complete. Run the project build and fix import, compile, and browser-visible runtime errors before marking the build complete.', 'Core has already generated and saved the planned photo rasters. Use only the exact public paths in the asset manifest for those photo slots. Do not call generate_image again, use remote hotlinks, or substitute SVGs or gradients for photography. Keep SVG for logos, icons, and vector decoration. Verification fails if any manifest path is missing or not referenced by the page.', '', `App Name: ${finalAppName}`, `Template: ${blueprint.templateId}`, `Theme: ${blueprint.themeId}`, `Primary Color: ${blueprint.primaryColor}`, `Design Direction: ${blueprint.designDirection}`, '', 'Visual Assets:', visuals, '', 'Generated photo asset manifest:', assetManifest, '', `Original Prompt: ${blueprint.userPrompt}`].join('\n')
+      const prompt = ['The app blueprint has been approved. Please build the app based on the following approved blueprint.', 'This is a multi-step build: immediately use Core’s update_todos tool to create a concise plan before editing files, update it as work proceeds, and mark each step complete only after doing it. The first todo and first edits must create a runnable storefront shell in App.tsx and pages/Index.tsx, with a real navigation bar, hero and section placeholders, and footer; start the preview and verify that shell before doing data-heavy product/catalog work. Continue implementation in this same turn; do not stop after writing the plan.', 'Before declaring completion, inspect the actual project files, resolve every planned page in the app router, and verify navigation destinations. Implement every page promised by the blueprint; a page file that is not imported and routed does not count as complete. Run the project build and fix import, compile, and browser-visible runtime errors before marking the build complete.', 'Core has already generated and saved the planned photo rasters. Use only the exact public paths in the asset manifest for those photo slots. Do not call generate_image again, use remote hotlinks, or substitute SVGs or gradients for photography. Keep SVG for logos, icons, and vector decoration. Verification fails if any manifest path is missing or not referenced by the page.', '', `App Name: ${finalAppName}`, `Template: ${blueprint.templateId}`, `Theme: ${blueprint.themeId}`, `Primary Color: ${blueprint.primaryColor}`, `Design Direction: ${blueprint.designDirection}`, '', 'Visual Assets:', visuals, '', 'Generated photo asset manifest:', assetManifest, '', `Original Prompt: ${blueprint.userPrompt}`].join('\n')
       const visiblePrompt = blueprint.userPrompt || `Build ${finalAppName}`
       const machine = { protocolVersion: 1, machineId: 'chat_stream', encodedKey: { chatId } }
       setCoreStartupStatus('Building your app')
@@ -1230,6 +1231,7 @@ export default function DashboardPage() {
       coreIntentRef.current = intentId
       coreCompletedIntentRef.current = undefined
       coreReplyRef.current = ''
+      agentNarrationPersistRef.current = { text: '', at: 0 }
       shouldFollowStreamRef.current = true
       setMsgs((current) => {
         coreMessageRef.current = current.length + 1
@@ -1937,6 +1939,12 @@ export default function DashboardPage() {
           const assistant = payload.messages.filter((message) => message.role === 'assistant').at(-1)?.content
           if (typeof assistant === 'string') {
             coreReplyRef.current = assistant
+            const narrationState = agentNarrationPersistRef.current
+            if (assistant !== narrationState.text && (Date.now() - narrationState.at >= 1500 || /[.!?]\s*$/.test(assistant))) {
+              narrationState.text = assistant
+              narrationState.at = Date.now()
+              void persistRunEvent('agent.narration', 'building', 'running', { summary: assistant.slice(-1200) })
+            }
             const sentence = assistant.match(/^\s*([^\n.!?]+[.!?])/)
             if (sentence?.[1] && agentStreamPhaseRef.current !== 'building') {
               if (!agentTimingRef.current.firstNarrationLogged) { agentTimingRef.current.firstNarrationLogged = true; logAgentTiming('first_narration') }
@@ -1947,11 +1955,28 @@ export default function DashboardPage() {
         if (payload.streamingPatch) {
           const { offset, content } = payload.streamingPatch
           coreReplyRef.current = coreReplyRef.current.slice(0, offset) + content
+          const narration = coreReplyRef.current
+          const narrationState = agentNarrationPersistRef.current
+          if (narration !== narrationState.text && (Date.now() - narrationState.at >= 1500 || /[.!?]\s*$/.test(narration))) {
+            narrationState.text = narration
+            narrationState.at = Date.now()
+            void persistRunEvent('agent.narration', 'building', 'running', { summary: narration.slice(-1200) })
+          }
           const sentence = coreReplyRef.current.match(/^\s*([^\n.!?]+[.!?])/)
           if (sentence?.[1] && agentStreamPhaseRef.current !== 'building') {
             if (!agentTimingRef.current.firstNarrationLogged) { agentTimingRef.current.firstNarrationLogged = true; logAgentTiming('first_narration') }
           }
           queueWorkbenchTokenText(coreReplyRef.current, updateCoreAssistantMessage)
+        }
+      }
+      if (frame.channel === 'chat:response:end') {
+        const payload = frame.payload as { chatId?: number }
+        const narration = coreReplyRef.current
+        const narrationState = agentNarrationPersistRef.current
+        if (payload.chatId === coreChatRef.current && narration && narration !== narrationState.text) {
+          narrationState.text = narration
+          narrationState.at = Date.now()
+          void persistRunEvent('agent.narration', 'building', 'running', { summary: narration.slice(-1200) })
         }
       }
       if (frame.channel === 'chat:response:error') {
