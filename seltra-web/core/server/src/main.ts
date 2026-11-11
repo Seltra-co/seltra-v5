@@ -207,6 +207,7 @@ async function syncWorkspaceAppsNow(
   config: GatewayConfig,
   claims: SessionClaims,
   runtime: WorkspaceRuntime,
+  forceVerify = false,
 ): Promise<import("./workspace_sync.js").WorkspaceSyncResult> {
   const startedAt = Date.now();
   return workspaceSyncState(claims.workspaceId).synchronize({
@@ -214,6 +215,7 @@ async function syncWorkspaceAppsNow(
     syncFromExecution: runtime.syncFromExecution,
     isAllowed: isWorkspaceSyncPathAllowed,
     syncBackend: (files) => syncWorkspaceFileBatches(config, claims, files),
+    forceVerify,
     onFailure: (reasonCode, error) => console.error(JSON.stringify({
       event: "workspace_sync_failed",
       tenantId: claims.workspaceId,
@@ -2281,7 +2283,7 @@ async function main(): Promise<void> {
       if (request.method === "POST" && url.pathname === "/api/workspace/sync-now") {
         checkOrigin(request);
         const runtime = await runtimeFor(claims, "workspace_sync_now", undefined, "user_send");
-        const result = await syncWorkspaceAppsNow(config, claims, runtime);
+        const result = await syncWorkspaceAppsNow(config, claims, runtime, true);
         sendJson(response, 200, { ok: true, ...result });
         return;
       }

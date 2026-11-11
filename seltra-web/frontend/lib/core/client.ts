@@ -155,6 +155,20 @@ export class CoreClient {
     if (!response.ok) throw new Error('Core workspace prewarm failed.')
   }
 
+  async syncNow(): Promise<{ ok: boolean; verified?: boolean }> {
+    const session = await this.currentSession()
+    const response = await fetch(`${this.baseUrl}/api/workspace/sync-now`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${session.coreToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(20_000),
+    })
+    const result = await response.json().catch(() => ({})) as { ok?: unknown; verified?: unknown; error?: { code?: string } }
+    if (!response.ok || result.ok !== true) throw Object.assign(new Error(result.error?.code || `workspace_sync_http_${response.status}`), { code: result.error?.code || `workspace_sync_http_${response.status}` })
+    return { ok: true, ...(typeof result.verified === 'boolean' ? { verified: result.verified } : {}) }
+  }
+
   async wsTicket(): Promise<string> {
     const accessToken = localStorage.getItem('seltra:token')
     const session = await this.currentSession()

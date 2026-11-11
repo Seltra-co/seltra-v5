@@ -69,6 +69,7 @@ export class WorkspaceSyncState {
     syncBackend: (files: WorkspaceSyncFile[]) => Promise<{ verified: boolean }>
     onFailure: (reasonCode: string, error?: unknown) => void
     onSuccess?: (result: WorkspaceSyncResult) => void
+    forceVerify?: boolean
   }): Promise<WorkspaceSyncResult> {
     if (this.active) return this.active
     const operation = this.perform(input)
@@ -101,7 +102,7 @@ export class WorkspaceSyncState {
     }
 
     const hash = workspaceFileListHash(files)
-    if (hash === this.lastSuccessfulHash) {
+    if (hash === this.lastSuccessfulHash && input.forceVerify !== true) {
       const result = { filesCount: files.length, unchanged: true, verified: true, durationMs: Date.now() - startedAt, syncFromExecutionMs }
       input.onSuccess?.(result)
       return result
