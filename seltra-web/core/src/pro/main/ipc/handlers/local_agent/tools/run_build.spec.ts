@@ -115,6 +115,18 @@ describe("run_build", () => {
     );
   });
 
+  it("scopes routine-edit build guidance to non-web runtimes", () => {
+    expect(runBuildTool.description).not.toContain(
+      "Do not use after routine small UI, styling, copy, or asset edits",
+    );
+    expect(runBuildTool.description).toContain(
+      "Outside the web runtime, do not use after routine small UI, styling, copy, or asset edits",
+    );
+    expect(runBuildTool.description).toContain(
+      "run it once after the last file write of the turn",
+    );
+  });
+
   it("uses reproducible clean-install commands for the selected package manager", () => {
     expect(
       getCleanInstallArgs({ packageManager: "pnpm", hasLockfile: true }),

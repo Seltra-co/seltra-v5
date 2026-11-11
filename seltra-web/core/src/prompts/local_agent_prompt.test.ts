@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   constructBuildAgentPrompt,
   constructImplementerPrompt,
@@ -36,6 +36,8 @@ const expectGitContextGuidance = (prompt: string) => {
   );
   expect(prompt).not.toContain("<dyad-git-context>");
 };
+
+afterEach(() => vi.unstubAllEnvs());
 
 const expectBuildGitContextGuidance = (prompt: string) => {
   expect(prompt).toContain("<git_context>");
@@ -716,6 +718,27 @@ describe("local_agent_prompt", () => {
     });
 
     expect(prompt).not.toContain("`run_build`");
+  });
+
+  it("requires build and browser repair only in the web runtime", () => {
+    vi.stubEnv("DYAD_WEB_RUNTIME", "1");
+    const webPrompt = constructLocalAgentPrompt(undefined, undefined, {
+      runBuildToolAvailable: true,
+    });
+    expect(webPrompt).toContain(
+      "you must run `run_build` once after the last file write, then run `repair_app` on the resulting preview",
+    );
+    expect(webPrompt).toContain(
+      "report the refusal and remaining issue without retrying",
+    );
+
+    vi.stubEnv("DYAD_WEB_RUNTIME", "0");
+    const nonWebPrompt = constructLocalAgentPrompt(undefined, undefined, {
+      runBuildToolAvailable: true,
+    });
+    expect(nonWebPrompt).not.toContain(
+      "you must run `run_build` once after the last file write",
+    );
   });
 
   it("only orders run_build after verification tools available in the turn", () => {

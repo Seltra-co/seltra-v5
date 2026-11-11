@@ -438,10 +438,10 @@ function streamBuildOutput(ctx: AgentContext, accumulatedOutput: string): void {
 
 export const runBuildTool: ToolDefinition<z.infer<typeof runBuildSchema>> = {
   name: "run_build",
-  description: `Run the app's production build as a selective, expensive verification step.
+  description: `Run the app's production build as a verification step. For a running Vite preview, the build runs in-place. Other frameworks or isolated build modes may require a clean dependency install.
 
 - Use after build configuration, dependencies, framework routing, server/static-generation, environment loading, or substantial production-path changes, or when the user explicitly asks.
-- Do not use after routine small UI, styling, copy, or asset edits. Type checking is the normal verification step.
+- Outside the web runtime, do not use after routine small UI, styling, copy, or asset edits; type checking is the normal verification step. In the web runtime, run it once after the last file write of the turn because it produces the browser QA evidence the completion gate requires.
 - Finish related edits first and run once. A failed build may be retried only after making a relevant change.
 - The active preview stays running. Builds that could interfere with it are verified in an isolated workspace with clean dependencies.
 - After a successful build, check the running preview for browser console/page errors, failed requests, and HTTP 4xx/5xx responses. Surface findings for repair; compilation success alone is not runtime verification.`,

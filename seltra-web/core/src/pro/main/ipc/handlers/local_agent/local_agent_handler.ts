@@ -1234,6 +1234,14 @@ export async function handleLocalAgentStream(
       estimateMcpInlineTokens(mcpDefs) > getMcpInlineTokenThreshold();
 
     const agentTools = buildAgentToolSet(ctx, buildOptions);
+    if (
+      process.env.DYAD_WEB_RUNTIME === "1" &&
+      agentTools.run_build &&
+      agentTools.repair_app
+    ) {
+      systemPrompt +=
+        "\n\n<web_runtime_build_qa>For web runtime, you must run `run_build` once after the last file write, then run `repair_app` on the resulting preview and repair and reverify every real error before finishing. If a build guard refuses the build, report the refusal and remaining issue without retrying.</web_runtime_build_qa>";
+    }
     if (agentTools.run_shell) {
       systemPrompt += `\n\n<shell_execution>\n${shellExecutionGuidance(process.platform, ctx.appPath)}\n</shell_execution>`;
     }
