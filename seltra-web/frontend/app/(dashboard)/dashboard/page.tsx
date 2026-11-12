@@ -45,7 +45,7 @@ import { getGreeting } from '@/lib/greetings'
 import { safeDate, safeISOString } from '@/lib/safe-date'
 import { playCompletionTone, unlockCompletionTone } from '@/lib/completion-tone'
 import { DEV_STREAM_REPLAY, beginWorkbenchCapture, captureWorkbenchEvent, dispatchWorkbench, getWorkbenchReplayFrames, queueWorkbenchTokenText, replayWorkbench, useWorkbenchState } from '@/lib/workbench/stream-store'
-import { projectAssistantOpeningText, projectAssistantStreamText } from '@/lib/workbench/assistant-stream'
+import { projectAssistantOpeningText, projectAssistantStreamText, projectCoreConversationMessage } from '@/lib/workbench/assistant-stream'
 import { blueprintPhotoSlots, generateBlueprintPhotoAssetsThen, generatedAssetMarkup } from '@/lib/workbench/blueprint-assets'
 
 // Use the Next.js same-origin proxy in development and production. Direct
@@ -1697,8 +1697,12 @@ export default function DashboardPage() {
         localStorage.setItem(`seltra:core:last-app:${tenantId}`, JSON.stringify({ appId, chatId: latest.id }))
         const chat = await client.invoke<{ messages?: Array<{ role: 'user' | 'assistant'; content: string; createdAt?: unknown }> }>('get-chat', [latest.id], runtimeId)
         if (coreRuntimeRef.current !== runtimeId || coreChatRef.current !== latest.id || !Array.isArray(chat.messages)) return
-        setMsgs(chat.messages.map((message) => ({ role: message.role, content: message.content, createdAt: safeISOString(message.createdAt, Date.now()) })))
-        coreReplyRef.current = chat.messages.filter((message) => message.role === 'assistant').at(-1)?.content ?? ''
+        const visibleMessages = chat.messages.flatMap((message) => {
+          const content = projectCoreConversationMessage(message.role, message.content)
+          return content ? [{ role: message.role, content, createdAt: safeISOString(message.createdAt, Date.now()) }] : []
+        })
+        setMsgs(visibleMessages)
+        coreReplyRef.current = visibleMessages.filter((message) => message.role === 'assistant').at(-1)?.content ?? ''
         void client.invoke('distributed-machine:subscribe', [{ protocolVersion: 1, machineId: 'chat_stream', encodedKey: { chatId: latest.id } }], runtimeId).catch(() => undefined)
       } catch { /* A Core app can exist before its first chat is created. */ }
     }
@@ -1914,9 +1918,13 @@ export default function DashboardPage() {
           if (client && chatId) {
             void client.invoke<{ messages?: Array<{ role: 'user' | 'assistant'; content: string; createdAt?: unknown }> }>('get-chat', [chatId], id).then((chat) => {
               if (coreRuntimeRef.current !== id || coreClientRef.current !== client || coreChatRef.current !== chatId || !Array.isArray(chat.messages)) return
-              setMsgs(chat.messages.map((message) => ({ role: message.role, content: message.content, createdAt: safeISOString(message.createdAt, Date.now()) })))
+              const visibleMessages = chat.messages.flatMap((message) => {
+                const content = projectCoreConversationMessage(message.role, message.content)
+                return content ? [{ role: message.role, content, createdAt: safeISOString(message.createdAt, Date.now()) }] : []
+              })
+              setMsgs(visibleMessages)
               setConvId(undefined)
-              coreReplyRef.current = chat.messages.filter((message) => message.role === 'assistant').at(-1)?.content ?? ''
+              coreReplyRef.current = visibleMessages.filter((message) => message.role === 'assistant').at(-1)?.content ?? ''
             }).catch(() => undefined)
             void client.invoke<Array<{ status: string; descriptor?: { kind?: string; requestId?: string; chatId?: number; questions?: CoreQuestionnaire['questions'] } }>>('user-input:get-pending', [], id).then((pending) => {
               const current = pending.find((request) => request.status !== 'settled' && request.descriptor?.kind === 'questionnaire' && request.descriptor.chatId === chatId)
@@ -2651,7 +2659,10 @@ export default function DashboardPage() {
     )
     if (error) { toast.error(error); return }
     setConvId(conversation.id)
-    setMsgs((data ?? []).map((m) => ({ role: m.role, content: m.content, createdAt: m.created_at })))
+    setMsgs((data ?? []).flatMap((message) => {
+      const content = projectCoreConversationMessage(message.role, message.content)
+      return content ? [{ role: message.role, content, createdAt: message.created_at }] : []
+    }))
     setProjectSessionActive(true)
     setTab('home')
   }
@@ -3683,14 +3694,17 @@ const send = async () => {
           const savedAppId = coreAppRef.current
           void savedClient.invoke<{ messages?: Array<{ role: 'user' | 'assistant'; content: string; createdAt?: unknown }> }>('get-chat', [chatId], savedRuntime).then((chat) => {
             if (coreRuntimeRef.current !== savedRuntime || coreChatRef.current !== chatId || !Array.isArray(chat.messages)) return
-            setMsgs(chat.messages.map((message) => {
+            const visibleMessages = chat.messages.flatMap((message) => {
+              const content = projectCoreConversationMessage(message.role, message.content)
+              if (!content) return []
               const normalized = safeISOString(message.createdAt, Date.now())
               if (process.env.NODE_ENV === 'development' && message.createdAt != null && !safeDate(message.createdAt)) {
                 console.warn('[builder] Invalid conversation timestamp; using fallback.', { rawTimestamp: message.createdAt })
               }
-              return { role: message.role, content: message.content, createdAt: normalized }
-            }))
-            coreReplyRef.current = chat.messages.filter((message) => message.role === 'assistant').at(-1)?.content ?? ''
+              return [{ role: message.role, content, createdAt: normalized }]
+            })
+            setMsgs(visibleMessages)
+            coreReplyRef.current = visibleMessages.filter((message) => message.role === 'assistant').at(-1)?.content ?? ''
           }).catch(() => { console.warn('[agent-stream] saved conversation restore failed'); toast.error('Seltra could not restore this conversation. Retry from the project.') })
           // Preview startup is independent from agent-run completion. Opening a
           // saved app always attempts to start/restart its sandbox.
