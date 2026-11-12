@@ -1,30 +1,44 @@
-import { renderToStaticMarkup } from 'react-dom/server'
-import { WorkflowProgressCard } from '../../../frontend/components/dashboard/WorkflowProgressCard'
+import { describe, expect, it } from 'vitest'
+import { activityFor } from '../../../frontend/components/dashboard/WorkflowProgressCard'
 import { applyWorkflowEvent, isWorkflowEvent, type WorkflowEvent } from '../../../frontend/lib/builder/run-events'
+import { blueprintPlaceholderDataUrl, generateBlueprintPhotoAssets } from '../../../frontend/lib/workbench/blueprint-assets'
+import { projectAssistantOpeningText } from '../../../frontend/lib/workbench/assistant-stream'
 
 function event(seq: number, type: WorkflowEvent['type'], payload: Record<string, unknown>): WorkflowEvent {
   return { runId: 'run-1', seq, ts: new Date(seq * 1000).toISOString(), phase: 'building', type, payload }
 }
 
 describe('workflow progress card', () => {
-  it('keeps the latest task snapshot visible alongside subsequent file events', () => {
-    const events = [
-      event(1, 'task_updated', { tasks: [{ id: 'task-1', title: 'Create the catalog page', state: 'in_progress' }] }),
-      event(2, 'file_written', { path: 'src/App.tsx', bytes: 200 }),
-      event(3, 'file_written', { path: 'src/index.css', bytes: 100 }),
-      event(4, 'file_written', { path: 'package.json', bytes: 80 }),
-      event(5, 'status', { message: 'Build passed' }),
-    ]
+  it('shows a concise headline for build progress and grouped files', () => {
+    expect(activityFor(event(1, 'task_updated', { current: 'Creating the catalog page' }), 0)).toBe('Creating the catalog page')
+    expect(activityFor(event(2, 'file_written', {}), 6)).toBe('Writing 6 files')
+    expect(activityFor(event(3, 'status', { message: 'Build passed' }), 6)).toBe('Build passed')
+  })
 
-    const markup = renderToStaticMarkup(<WorkflowProgressCard events={events} />)
-    expect(markup).toContain('Create the catalog page')
-    expect(markup).toContain('3 files written')
-    expect(markup).toContain('src/App.tsx')
-    expect(markup).toContain('src/index.css')
-    expect(markup).toContain('package.json')
-    expect(markup).toContain('data-state="in-progress"')
-    expect(markup).toContain('package.json · writing')
-    expect(markup).toContain('Build passed')
+  it('shows a stable completion headline', () => {
+    expect(activityFor({ ...event(1, 'message', { summary: 'Your app is ready.' }), phase: 'ready' }, 0))
+      .toBe('Your app is ready to preview')
+  })
+
+  it('only projects a safe first sentence into the build conversation', () => {
+    expect(projectAssistantOpeningText('I am planning a beauty storefront.\n<dyad-write path="src/App.tsx">'))
+      .toBe('I am planning a beauty storefront.')
+    expect(projectAssistantOpeningText('For every new build request, your first visible assistant output must be exactly one sentence.'))
+      .toBe('')
+    expect(projectAssistantOpeningText('{"internal":"state"}')).toBe('')
+  })
+
+  it('uses a generated branded SVG when photo generation has no configured fallback', async () => {
+    const [asset] = await generateBlueprintPhotoAssets(
+      [{ type: 'photo', description: 'Hero portrait', prompt: 'A premium beauty portrait' }],
+      {
+        generate: async () => { throw new Error('Image generation failed (HTTP 404).') },
+        saveGenerated: async () => 'public/assets/unused.png',
+      },
+    )
+    expect(asset.status).toBe('fallback')
+    expect(asset.path).toBe(blueprintPlaceholderDataUrl(asset))
+    expect(asset.path).toMatch(/^data:image\/svg\+xml,%3Csvg/)
   })
 
   it('accepts file_written and keeps contiguous append and dedupe behavior', () => {

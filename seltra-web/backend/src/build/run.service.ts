@@ -11,10 +11,19 @@ export type PersistedRunState = 'queued' | 'running' | 'waiting_for_user' | 'sto
 
 type WorkflowPhase = 'planning' | 'awaiting_approval' | 'preparing' | 'building' | 'verifying' | 'ready' | 'failed'
 
+function visibleText(value: unknown, fallback: string, limit: number) {
+  if (typeof value !== 'string') return fallback
+  const text = value.replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, '').replace(/[\u0000-\u001f]+/g, ' ').trim()
+  const leaksPromptContract = /for every new build request|first visible assistant output|prompt[- ]contract|system prompt|reasoning_content/i.test(text)
+  const resemblesJson = /^\s*(?:\{[\s\S]*\}|\[[\s\S]*\])\s*$/.test(text)
+  return text && !leaksPromptContract && !resemblesJson ? text.slice(0, limit) : fallback
+}
+
 function workflowPhase(type: string, phase: string | null): WorkflowPhase {
   if (type === 'run.failed' || phase === 'failed') return 'failed'
+  if (type === 'run.completed' || type === 'run.summary') return 'ready'
   if (type === 'agent.narration') return phase === 'planning' || phase === 'preparing' || phase === 'verifying' ? phase : 'building'
-  if (type === 'run.summary' || type === 'preview.ready' || phase === 'ready') return 'ready'
+  if (type === 'run.summary' || phase === 'ready') return 'ready'
   if (phase === 'planning' || phase === 'awaiting_approval' || phase === 'preparing' || phase === 'building' || phase === 'verifying') return phase
   if (type === 'run.completed') return 'verifying'
   if (type === 'blueprint.ready' || type === 'questionnaire.requested' || type === 'run.waiting_for_user') return 'awaiting_approval'
@@ -33,16 +42,33 @@ export function workflowEventType(type: string): string {
   if (type === 'assets.planned' || type === 'asset.updated' || type === 'asset.generated' || type === 'asset.failed') return 'asset_updated'
   if (/^preview\./.test(type)) return 'preview_state'
   if (type === 'run.failed') return 'error'
-  if (type === 'run.summary' || type === 'agent.narration') return 'message'
+  if (type === 'run.summary' || type === 'run.completed' || type === 'agent.narration') return 'message'
   if (type.startsWith('run.')) return 'phase_changed'
   return 'status'
 }
 
 export function workflowPayload(type: string, payload: unknown): Record<string, unknown> {
   const value = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
-  if (type === 'phase.changed') return { status: typeof value.status === 'string' ? value.status.slice(0, 160) : 'Working' }
-  if (type === 'blueprint.ready') return { status: 'Plan ready for your approval', ...(typeof value.appName === 'string' ? { appName: value.appName.slice(0, 120) } : {}), ...(value.blueprint && typeof value.blueprint === 'object' ? { blueprint: value.blueprint } : {}) }
+  if (type === 'run.started') return { status: 'Starting your build' }
+  if (type === 'phase.changed') return { status: visibleText(value.status, 'Working', 160) }
+  if (type === 'blueprint.ready') {
+    const blueprint = value.blueprint && typeof value.blueprint === 'object' && !Array.isArray(value.blueprint)
+      ? value.blueprint as Record<string, unknown>
+      : null
+    return {
+      status: 'Plan ready',
+      ...(typeof value.appName === 'string' ? { appName: visibleText(value.appName, '', 120) } : {}),
+      ...(blueprint ? {
+        plan: {
+          ...(Array.isArray(blueprint.pages) ? { pages: blueprint.pages.slice(0, 12) } : {}),
+          ...(blueprint.palette && typeof blueprint.palette === 'object' ? { palette: blueprint.palette } : {}),
+        },
+      } : {}),
+    }
+  }
   if (type === 'blueprint.approved') return { status: 'Plan approved. Building your app.' }
+  if (type === 'run.stopped') return { status: 'Build stopped. Your saved work is ready to continue.' }
+  if (type === 'run.completed') return { summary: visibleText(value.summary, 'Your app is ready to preview.', 1200) }
   if (type === 'files.persisted') {
     const n = Number.isSafeInteger(value.changed) ? value.changed as number : 0
     return { message: n ? `Saved ${n} file${n === 1 ? '' : 's'}` : 'Workspace checkpoint saved' }
@@ -62,7 +88,7 @@ export function workflowPayload(type: string, payload: unknown): Record<string, 
         : `Build failed (exit ${Number.isSafeInteger(value.exitCode) ? value.exitCode : 'unknown'})`
     return { message }
   }
-  if (type === 'preview.ready') return { state: 'ready', reason: null }
+  if (type === 'preview.ready') return { state: 'ready', reason: null, ...(Number.isSafeInteger(value.status) ? { status: value.status } : {}) }
   if (type === 'preview.restoring') return { state: 'restoring', reason: 'Preview is reconnecting.' }
   if (type === 'preview.failed') return { state: 'unavailable', reason: 'The preview could not start.' }
   if (type === 'assets.planned') return { slot: 'visuals', state: value.complete === true ? 'ready' : 'planned', url: null }
@@ -71,8 +97,8 @@ export function workflowPayload(type: string, payload: unknown): Record<string, 
     return {
       slot: typeof value.slot === 'string' ? value.slot.slice(0, 80) : 'asset',
       state: type === 'asset.generated' ? 'generated' : type === 'asset.failed' ? 'failed' : typeof value.state === 'string' && validStates.has(value.state) ? value.state : 'pending',
-      url: typeof value.url === 'string' && /^(?:public)?\/assets\/[a-z0-9._/-]+$/i.test(value.url) ? value.url.slice(0, 240) : null,
-      ...(typeof value.prompt === 'string' ? { prompt: value.prompt.slice(0, 4000) } : {}),
+      url: typeof value.url === 'string' && (/^(?:public)?\/assets\/[a-z0-9._/-]+$/i.test(value.url) || /^https:\/\/res\.cloudinary\.com\/[a-z0-9_-]+\/image\/upload\/[^\s"'<>]+$/i.test(value.url)) ? value.url.slice(0, 500) : null,
+      ...(typeof value.prompt === 'string' ? { prompt: visibleText(value.prompt, '', 1200) } : {}),
       ...(typeof value.error === 'string' ? { error: value.error.replace(/[\r\n]+/g, ' ').slice(0, 240) } : {}),
     }
   }
@@ -81,27 +107,35 @@ export function workflowPayload(type: string, payload: unknown): Record<string, 
     const todos = Array.isArray(value.todos) ? value.todos : []
     const completed = todos.filter((todo) => todo && typeof todo === 'object' && (todo as Record<string, unknown>).status === 'completed').length
     const total = todos.length
-    return { summary: typeof value.summary === 'string' ? value.summary : total ? `Build complete. ${completed} of ${total} steps are complete; the preview passed its HTTP 200 check.` : 'Build complete. The preview passed its HTTP 200 check.' }
+    const fallback = total ? `Build complete. ${completed} of ${total} steps are complete; the preview passed its HTTP 200 check.` : 'Build complete. The preview passed its HTTP 200 check.'
+    return { summary: visibleText(value.summary, fallback, 1200) }
   }
   if (type === 'agent.narration') {
-    return { summary: typeof value.summary === 'string' ? value.summary.slice(-1200) : '' }
+    const summary = visibleText(value.summary, '', 1200)
+    return summary ? { summary } : {}
   }
   if (type === 'step.progress') {
-    const todos = Array.isArray(value.todos) ? value.todos.slice(0, 20).map((todo) => {
+    const todos = Array.isArray(value.todos) ? value.todos.slice(0, 20).map((todo, index) => {
       if (!todo || typeof todo !== 'object') return null
       const task = todo as Record<string, unknown>
-      return { id: task.id, title: task.content, state: task.status }
+      const state = task.status === 'completed' || task.status === 'in_progress' || task.status === 'pending' ? task.status : 'pending'
+      return {
+        id: typeof task.id === 'string' ? task.id.slice(0, 120) : `task-${index}`,
+        title: visibleText(task.content, 'Build task', 160),
+        state,
+      }
     }).filter(Boolean) : []
      return {
       tasks: todos,
-      ...(typeof value.current === 'string' ? { current: value.current.slice(0, 160) } : {}),
+      ...(typeof value.current === 'string' ? { current: visibleText(value.current, 'Working on your app', 160) } : {}),
       ...(Number.isSafeInteger(value.completed) ? { completed: value.completed } : {}),
       ...(Number.isSafeInteger(value.total) ? { total: value.total } : {}),
     }
   }
   if (type === 'status') {
     const text = typeof value.message === 'string' ? value.message : typeof value.status === 'string' ? value.status : ''
-    return text ? { message: text.replace(/[\r\n]+/g, ' ').slice(0, 160) } : {}
+    const message = visibleText(text, '', 160)
+    return message ? { message } : {}
   }
   return {}
 }
@@ -534,6 +568,8 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
             cursor = event.seq
             if (event.type === 'manifest.verified' && (event.payload as { verified?: unknown } | null)?.verified !== true) continue
             const type = workflowEventType(event.type)
+            const payload = workflowPayload(event.type, event.payload)
+            if (event.type === 'agent.narration' && typeof payload.summary !== 'string') continue
             const phase = workflowPhase(event.type, event.phase)
             observer.next({
               id: String(event.seq),
@@ -545,11 +581,11 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
                 phase,
                 type,
                 actor: event.agent === 'planner' || event.agent === 'builder' ? event.agent : 'supervisor',
-                payload: workflowPayload(event.type, event.payload),
+                payload,
               },
             })
           }
-          if (pulse % 10 === 0) observer.next({ type: 'heartbeat', data: { ts: new Date().toISOString(), cursor } })
+          if (pulse % 15 === 0) observer.next({ type: 'heartbeat', data: { ts: new Date().toISOString(), cursor } })
           if (run.state === 'completed' || run.state === 'failed' || run.state === 'stopped') {
             observer.complete()
           }

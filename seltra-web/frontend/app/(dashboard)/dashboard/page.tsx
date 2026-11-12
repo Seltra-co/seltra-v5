@@ -45,7 +45,7 @@ import { getGreeting } from '@/lib/greetings'
 import { safeDate, safeISOString } from '@/lib/safe-date'
 import { playCompletionTone, unlockCompletionTone } from '@/lib/completion-tone'
 import { DEV_STREAM_REPLAY, beginWorkbenchCapture, captureWorkbenchEvent, dispatchWorkbench, getWorkbenchReplayFrames, queueWorkbenchTokenText, replayWorkbench, useWorkbenchState } from '@/lib/workbench/stream-store'
-import { projectAssistantStreamText } from '@/lib/workbench/assistant-stream'
+import { projectAssistantOpeningText, projectAssistantStreamText } from '@/lib/workbench/assistant-stream'
 import { blueprintPhotoSlots, generateBlueprintPhotoAssetsThen, generatedAssetMarkup } from '@/lib/workbench/blueprint-assets'
 
 // Use the Next.js same-origin proxy in development and production. Direct
@@ -908,6 +908,9 @@ export default function DashboardPage() {
   const [workflowEvents, setWorkflowEvents] = useState<WorkflowEvent[]>([])
   const workflowEventsRef = useRef<WorkflowEvent[]>([])
   const [workflowRunId, setWorkflowRunId] = useState('')
+  const [coreUnderstanding, setCoreUnderstanding] = useState('')
+  const previewOpenedForRunRef = useRef('')
+  const [workflowStreamReconnecting, setWorkflowStreamReconnecting] = useState(false)
   const coreRunEventQueueRef = useRef<Promise<void>>(Promise.resolve())
   const pendingBrowserQaRef = useRef<Array<Record<string, unknown>>>([])
   const flushPendingBrowserQaRef = useRef<() => void>(() => undefined)
@@ -922,7 +925,6 @@ export default function DashboardPage() {
   const coreRetryAssetRef = useRef<(prompt: string) => Promise<void>>(async () => undefined)
   const coreMessageRef = useRef<number>()
   const coreReplyRef = useRef('')
-  const agentNarrationPersistRef = useRef({ text: '', at: 0 })
   const coreDashboardConversationRef = useRef<string>()
   const coreEventsRef = useRef<CoreEvents | null>(null)
   const [corePreviewUrl, setCorePreviewUrl] = useState('')
@@ -958,6 +960,7 @@ export default function DashboardPage() {
   const [coreFiles, setCoreFiles] = useState<File[]>([])
   const coreMessageAttachmentUrlsRef = useRef<string[]>([])
   const [coreConnected, setCoreConnected] = useState(false)
+  const [coreRestoreInFlight, setCoreRestoreInFlight] = useState(false)
   const [coreConnectionError, setCoreConnectionError] = useState('')
   const [coreQuestionnaire, setCoreQuestionnaire] = useState<CoreQuestionnaire | null>(null)
   const [coreQuestionnaireSummary, setCoreQuestionnaireSummary] = useState<Array<{ question: string; answer: string }> | null>(null)
@@ -989,6 +992,7 @@ export default function DashboardPage() {
   }
   const [coreTodos, setCoreTodos] = useState<{ chatId: number; todos: CoreTodo[] } | null>(null)
   const coreTodosRef = useRef<{ chatId: number; todos: CoreTodo[] } | null>(null)
+  const coreTodoStateRef = useRef<{ chatId: number; statuses: Map<string, string> } | null>(null)
   const [coreBlueprint, setCoreBlueprint] = useState<CoreBlueprint | null>(null)
   const [workflowBlueprint, setWorkflowBlueprint] = useState<CoreBlueprint | null>(null)
   const autoApproveAttemptedRef = useRef(new Set<number>())
@@ -1231,7 +1235,6 @@ export default function DashboardPage() {
       coreIntentRef.current = intentId
       coreCompletedIntentRef.current = undefined
       coreReplyRef.current = ''
-      agentNarrationPersistRef.current = { text: '', at: 0 }
       shouldFollowStreamRef.current = true
       setMsgs((current) => {
         coreMessageRef.current = current.length + 1
@@ -1264,8 +1267,21 @@ export default function DashboardPage() {
 
   const retryCoreConnection = async () => {
     const client = coreClientRef.current
-    if (client) await client.prewarm('restore').catch(() => undefined)
-    coreEventsRef.current?.retryNow()
+    if (!client || coreRestoreInFlight) {
+      if (!client) setCoreGatewayError('Seltra could not connect to this project. Please retry.')
+      return
+    }
+    setCoreRestoreInFlight(true)
+    setCoreGatewayError('')
+    try {
+      await client.prewarm('restore')
+      coreEventsRef.current?.retryNow()
+    } catch {
+      console.warn('[builder] Workspace restore failed; retry is available.', { projectId: coreTenantRef.current })
+      setCoreGatewayError('Seltra could not restart this project. Please retry.')
+    } finally {
+      setCoreRestoreInFlight(false)
+    }
   }
 
   const recoverCorePreview = useCallback(async () => {
@@ -1785,6 +1801,12 @@ export default function DashboardPage() {
       if (frame.channel === 'agent-tool:todos-update') {
         const payload = frame.payload as { chatId?: number; todos?: CoreTodo[] }
         if (payload.chatId !== undefined && payload.chatId === coreChatRef.current && Array.isArray(payload.todos)) {
+          const previousStatuses = coreTodoStateRef.current?.chatId === payload.chatId
+            ? coreTodoStateRef.current.statuses
+            : new Map<string, string>()
+          const nextStatuses = new Map(payload.todos.map((todo) => [todo.id, todo.status]))
+          const changedTodos = payload.todos.filter((todo) => previousStatuses.get(todo.id) !== todo.status)
+          coreTodoStateRef.current = { chatId: payload.chatId, statuses: nextStatuses }
           const nextTodos = { chatId: payload.chatId, todos: payload.todos }
           coreTodosRef.current = nextTodos
           setCoreTodos(nextTodos)
@@ -1799,7 +1821,9 @@ export default function DashboardPage() {
             dispatchWorkbench({ type: 'step-started', id: currentTodo.id, title })
             captureWorkbenchEvent({ type: 'step-started', id: currentTodo.id, title })
           }
-          persistRunEvent('step.progress', 'build', 'running', { chatId: payload.chatId, total: payload.todos.length, completed: payload.todos.filter((todo) => todo.status === 'completed').length, current: payload.todos.find((todo) => todo.status === 'in_progress')?.content ?? null, todos: payload.todos })
+          for (const changedTodo of changedTodos) {
+            persistRunEvent('step.progress', 'build', 'running', { chatId: payload.chatId, changedTodoId: changedTodo.id, total: payload.todos.length, completed: payload.todos.filter((todo) => todo.status === 'completed').length, current: payload.todos.find((todo) => todo.status === 'in_progress')?.content ?? null, todos: payload.todos })
+          }
         }
       }
       if (frame.channel === 'app-blueprint:update') {
@@ -1929,6 +1953,8 @@ export default function DashboardPage() {
         if (payload.streamingPreview) {
           const preview = payload.streamingPreview.content ?? ''
           setCoreStreamingPreview(preview)
+          const opening = projectAssistantOpeningText(preview)
+          if (opening) setCoreUnderstanding((current) => current || opening)
           const sentence = preview.match(/^\s*([^\n.!?]+[.!?])/)
           if (sentence?.[1]) {
             setAgentStreamPhase('narrating')
@@ -1939,12 +1965,8 @@ export default function DashboardPage() {
           const assistant = payload.messages.filter((message) => message.role === 'assistant').at(-1)?.content
           if (typeof assistant === 'string') {
             coreReplyRef.current = assistant
-            const narrationState = agentNarrationPersistRef.current
-            if (assistant !== narrationState.text && (Date.now() - narrationState.at >= 1500 || /[.!?]\s*$/.test(assistant))) {
-              narrationState.text = assistant
-              narrationState.at = Date.now()
-              void persistRunEvent('agent.narration', 'building', 'running', { summary: assistant.slice(-1200) })
-            }
+            const opening = projectAssistantOpeningText(assistant)
+            if (opening) setCoreUnderstanding((current) => current || opening)
             const sentence = assistant.match(/^\s*([^\n.!?]+[.!?])/)
             if (sentence?.[1] && agentStreamPhaseRef.current !== 'building') {
               if (!agentTimingRef.current.firstNarrationLogged) { agentTimingRef.current.firstNarrationLogged = true; logAgentTiming('first_narration') }
@@ -1955,13 +1977,8 @@ export default function DashboardPage() {
         if (payload.streamingPatch) {
           const { offset, content } = payload.streamingPatch
           coreReplyRef.current = coreReplyRef.current.slice(0, offset) + content
-          const narration = coreReplyRef.current
-          const narrationState = agentNarrationPersistRef.current
-          if (narration !== narrationState.text && (Date.now() - narrationState.at >= 1500 || /[.!?]\s*$/.test(narration))) {
-            narrationState.text = narration
-            narrationState.at = Date.now()
-            void persistRunEvent('agent.narration', 'building', 'running', { summary: narration.slice(-1200) })
-          }
+          const opening = projectAssistantOpeningText(coreReplyRef.current)
+          if (opening) setCoreUnderstanding((current) => current || opening)
           const sentence = coreReplyRef.current.match(/^\s*([^\n.!?]+[.!?])/)
           if (sentence?.[1] && agentStreamPhaseRef.current !== 'building') {
             if (!agentTimingRef.current.firstNarrationLogged) { agentTimingRef.current.firstNarrationLogged = true; logAgentTiming('first_narration') }
@@ -1971,13 +1988,7 @@ export default function DashboardPage() {
       }
       if (frame.channel === 'chat:response:end') {
         const payload = frame.payload as { chatId?: number }
-        const narration = coreReplyRef.current
-        const narrationState = agentNarrationPersistRef.current
-        if (payload.chatId === coreChatRef.current && narration && narration !== narrationState.text) {
-          narrationState.text = narration
-          narrationState.at = Date.now()
-          void persistRunEvent('agent.narration', 'building', 'running', { summary: narration.slice(-1200) })
-        }
+        if (payload.chatId === coreChatRef.current) coreReplyRef.current = coreReplyRef.current.trim()
       }
       if (frame.channel === 'chat:response:error') {
         const payload = frame.payload as { chatId?: number; error?: string; message?: string }
@@ -2509,7 +2520,9 @@ export default function DashboardPage() {
       }
     }
     void inspectRun()
-    const timer = window.setInterval(() => { void inspectRun() }, 4000)
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void inspectRun()
+    }, 15000)
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [sending, coreRunRef.current?.id])
 
@@ -2519,6 +2532,13 @@ export default function DashboardPage() {
     let stopped = false
     let lastSeq = workflowEventsRef.current.at(-1)?.seq ?? 0
     let retryDelay = 500
+    let heartbeatTimer: number | undefined
+    const markHeartbeat = () => {
+      if (heartbeatTimer !== undefined) window.clearTimeout(heartbeatTimer)
+      setWorkflowStreamReconnecting(false)
+      heartbeatTimer = window.setTimeout(() => setWorkflowStreamReconnecting(true), 30000)
+    }
+    markHeartbeat()
     const consume = async () => {
       while (!stopped) {
         const controller = new AbortController()
@@ -2534,12 +2554,26 @@ export default function DashboardPage() {
           const decoder = new TextDecoder()
           let buffer = ''
           while (!stopped) {
-            const { value, done } = await reader.read()
+            let readTimeout: number | undefined
+            const read = await Promise.race([
+              reader.read(),
+              new Promise<never>((_, reject) => {
+                readTimeout = window.setTimeout(() => reject(new Error('Run stream heartbeat timed out.')), 30000)
+              }),
+            ]).finally(() => {
+              if (readTimeout !== undefined) window.clearTimeout(readTimeout)
+            })
+            const { value, done } = read
             if (done) break
             buffer += decoder.decode(value, { stream: true })
             const blocks = buffer.split(/\r?\n\r?\n/)
             buffer = blocks.pop() ?? ''
             for (const block of blocks) {
+              const eventName = block.split(/\r?\n/).find((line) => line.startsWith('event:'))?.slice(6).trim()
+              if (eventName === 'heartbeat') {
+                markHeartbeat()
+                continue
+              }
               const data = block.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n')
               if (!data) continue
               try {
@@ -2553,6 +2587,10 @@ export default function DashboardPage() {
                 lastSeq = parsed.seq
                 workflowEventsRef.current = applyWorkflowEvent(workflowEventsRef.current, parsed)
                 setWorkflowEvents(workflowEventsRef.current)
+                if (parsed.type === 'preview_state' && parsed.payload.state === 'ready' && previewOpenedForRunRef.current !== runId) {
+                  previewOpenedForRunRef.current = runId
+                  setPreviewOpen(true)
+                }
               } catch { /* Ignore heartbeats and malformed frames; reconnect resumes at the last valid sequence. */ }
             }
           }
@@ -2565,7 +2603,11 @@ export default function DashboardPage() {
       }
     }
     void consume()
-    return () => { stopped = true }
+    return () => {
+      stopped = true
+      if (heartbeatTimer !== undefined) window.clearTimeout(heartbeatTimer)
+      setWorkflowStreamReconnecting(false)
+    }
   }, [sending, workflowRunId])
 
   const loadStores = useCallback(async () => {
@@ -2934,6 +2976,7 @@ export default function DashboardPage() {
     setSending(true)
     setAgentStreamPhase('submitted')
     setCoreStartupStatus('')
+    setCoreUnderstanding('')
     setCoreBuildCompleted(false)
     setBuildProgress(null)
     previewProbeGenerationRef.current += 1
@@ -3158,10 +3201,6 @@ export default function DashboardPage() {
       setCoreStartupStatus('')
       setCoreStartupStatus('')
       logCorePhase('dispatch requested')
-      const receipt = await client.invoke<{ kind: string; reason?: string }>('distributed-machine:dispatch', [{ ...machine, expectedActorInstanceId: actor.actorInstanceId, expectedRevision: actor.revision, messageId: crypto.randomUUID(), encodedEvent: { type: 'SUBMIT', intent: { ...intent, payloadHash }, observedStopPolicyVersion: actor.encodedState.stopPolicyVersion ?? 0 } }], runtime)
-      if (receipt.kind !== 'applied' && receipt.kind !== 'replayed') throw new Error(receipt.reason || `Core accepted no work (${receipt.kind}).`)
-      coreDispatchAccepted = true
-      logCorePhase('prompt received')
       const runStart = await runStartPromise
       if (!runStart.data?.id) throw new Error(runStart.error || 'Could not save this build run.')
       logCorePhase('run record ready')
@@ -3169,9 +3208,18 @@ export default function DashboardPage() {
       setWorkflowEvents([])
       coreRunCompletedRef.current = false
       coreRunRef.current = { id: runStart.data.id, idempotencyKey: runKey }
-      flushPendingBrowserQaRef.current()
       setWorkflowRunId(runStart.data.id)
       const dispatchRunId = runStart.data.id
+      const startEvent = await apiFetch(`/api/v5/runs/${encodeURIComponent(dispatchRunId)}/events`, {
+        method: 'POST',
+        body: JSON.stringify({ type: 'run.started', phase: 'planning', agent: 'builder', eventKey: crypto.randomUUID(), state: 'running', payload: {} }),
+      })
+      if (startEvent.error) console.warn('[builder] Could not persist run start event', { runId: dispatchRunId, error: startEvent.error })
+      flushPendingBrowserQaRef.current()
+      const receipt = await client.invoke<{ kind: string; reason?: string }>('distributed-machine:dispatch', [{ ...machine, expectedActorInstanceId: actor.actorInstanceId, expectedRevision: actor.revision, messageId: crypto.randomUUID(), encodedEvent: { type: 'SUBMIT', intent: { ...intent, payloadHash }, observedStopPolicyVersion: actor.encodedState.stopPolicyVersion ?? 0 } }], runtime)
+      if (receipt.kind !== 'applied' && receipt.kind !== 'replayed') throw new Error(receipt.reason || `Core accepted no work (${receipt.kind}).`)
+      coreDispatchAccepted = true
+      logCorePhase('prompt received')
       const plannerHandoff = plannerHandoffRef.current
       if (plannerHandoff) {
         const appendPlannerEvent = (type: 'questionnaire.requested' | 'questionnaire.answered' | 'questionnaire.skipped', payload: Record<string, unknown>) => apiFetch(`/api/v5/runs/${encodeURIComponent(dispatchRunId)}/events`, {
@@ -4147,7 +4195,6 @@ const handleAgentAttach = async (f: File) => {
               <section className={cn('flex h-full min-h-0 min-w-0 flex-col overflow-x-clip', mobileView === 'store' && 'hidden lg:flex')}>
                 <div className="relative mx-auto flex min-h-0 w-full min-w-0 max-w-[760px] flex-1 flex-col">
                 {coreGatewayError && <div role="status" className="mx-3 mt-3 flex items-center justify-between gap-3 rounded-xl border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-xs text-amber-100"><span>{coreGatewayError}</span><button type="button" className="shrink-0 rounded-lg bg-amber-200/10 px-2.5 py-1.5 font-medium hover:bg-amber-200/20" onClick={() => void retryCoreConnection()}>Retry connection</button></div>}
-                {sending && coreWorkspaceOpened && !coreConnected && <p role="status" className="mx-4 mt-2 text-xs text-white/45">Reconnecting…</p>}
                 <div ref={scrollRef} onScroll={(event) => { const viewport = event.currentTarget; shouldFollowStreamRef.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 96; if (shouldFollowStreamRef.current) setHasNewActivity(false) }} className="workbench-scroll flex min-h-0 w-full min-w-0 flex-1 flex-col gap-6 overflow-x-clip overflow-y-auto overscroll-y-contain px-3 py-6 sm:px-4">
                   {resumeProjectAvailable && activeStore && (
                     <section className="w-full max-w-[680px] rounded-2xl border border-emerald-400/20 bg-[#171b19] p-4" aria-label="Continue your saved build">
@@ -4155,14 +4202,18 @@ const handleAgentAttach = async (f: File) => {
                       <p className="mt-1 text-sm leading-5 text-white/55">Continue in the same app and conversation. Seltra will review what’s already there and carry on from the unfinished work.</p>
                       <button
                         type="button"
-                        disabled={sending || !coreConnected}
+                        disabled={sending || coreRestoreInFlight}
                         onClick={() => {
+                          if (!coreConnected) {
+                            void retryCoreConnection()
+                            return
+                          }
                           setResumeProjectAvailable(false)
                           void runCorePrompt('Continue building this project from where the previous run stopped.', 'build', activeStore, [], true)
                         }}
                         className="mt-3 inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-[#082012] hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {coreConnected ? 'Resume building' : 'Reconnecting to your project…'}
+                        {coreRestoreInFlight ? 'Starting project…' : coreConnected ? 'Resume building' : 'Reconnect to project'}
                       </button>
                     </section>
                   )}
@@ -4207,7 +4258,7 @@ const handleAgentAttach = async (f: File) => {
                       <div key={`${message.createdAt ?? 'assistant'}-${index}-assistant`} className="w-full min-w-0 max-w-[680px]">
                         <AgentReply
                           content={structuredWorkflow ? '' : message.content}
-                          streamingPreview={isLatestAssistant && coreStreamingPreview ? coreStreamingPreview : undefined}
+                          streamingPreview={!structuredWorkflow && isLatestAssistant && coreStreamingPreview ? coreStreamingPreview : undefined}
                           isStreaming={!structuredWorkflow && isLatestAssistant && sending && !workbench.currentStep}
                           statusText={!structuredWorkflow && isLatestAssistant && !workbench.currentStep ? coreStartupStatus : undefined}
                           phase={isLatestAssistant ? agentStreamPhase : undefined}
@@ -4228,7 +4279,7 @@ const handleAgentAttach = async (f: File) => {
                     )
                   })}
                   {!structuredWorkflow && coreQuestionnaireSummary?.length ? <section className="w-full max-w-[680px] rounded-xl border border-white/[0.08] bg-[#171b19] p-3" aria-label="Answered questions"><p className="mb-2 text-xs font-medium text-white/55">Your answers</p>{coreQuestionnaireSummary.map((item) => <p key={item.question} className="py-1 text-sm text-white/75"><span className="text-white/45">{item.question} </span>{item.answer}</p>)}</section> : null}
-                  {structuredWorkflow ? (workflowEvents.length > 0 ? <WorkflowProgressCard events={workflowEvents} onRetry={() => { const last = coreLastPromptRef.current; if (last?.store) void runCorePrompt(last.text, last.mode, last.store, [], false, true) }} onRetryAsset={(prompt) => coreRetryAssetRef.current(prompt)} /> : <section className="w-full max-w-[680px] animate-pulse rounded-xl border border-white/[0.08] bg-[#171b19] p-4 text-sm text-white/55" aria-live="polite">Preparing your build status…</section>) : workbench.steps.map((step) => <WorkbenchStepCard key={step.id} step={step} onPreview={() => setPreviewOpen(true)} />)}
+                  {structuredWorkflow ? <>{workflowStreamReconnecting && <p role="status" className="w-full max-w-[680px] rounded-full border border-amber-200/10 bg-amber-200/[0.04] px-3 py-1.5 text-xs text-white/55">Build updates paused. Reconnecting…</p>}{workflowEvents.length > 0 ? <WorkflowProgressCard events={workflowEvents} openingMessage={coreUnderstanding} active={sending} onOpenPreview={() => setPreviewOpen(true)} onFollowUp={setInput} onRetry={() => { const last = coreLastPromptRef.current; if (last?.store) void runCorePrompt(last.text, last.mode, last.store, [], false, true) }} onRetryAsset={(prompt) => coreRetryAssetRef.current(prompt)} /> : <section className="w-full max-w-[680px] animate-pulse rounded-xl border border-white/[0.08] bg-[#171b19] p-4 text-sm text-white/55" aria-live="polite">Preparing your build status…</section>}</> : workbench.steps.map((step) => <WorkbenchStepCard key={step.id} step={step} onPreview={() => setPreviewOpen(true)} />)}
         {!structuredWorkflow && workbench.phase === 'error' && <section className="w-full max-w-[680px] rounded-xl border border-rose-300/15 bg-[#171b19] p-3" role="alert"><p className="text-sm text-white/75">{workbench.error || 'Seltra couldn’t finish this request. Retry to continue.'}</p><button type="button" className="mt-2 rounded-lg bg-emerald-400 px-3 py-1.5 text-sm font-semibold text-[#082012]" onClick={() => { const last = coreLastPromptRef.current; if (last?.store) { dispatchWorkbench({ type: 'send', keepSplit: Boolean(corePreviewUrl) }); void runCorePrompt(last.text, last.mode, last.store, [], false, true) } }}>Retry</button></section>}
                   {!structuredWorkflow && workbench.phase === 'planReady' && !coreBlueprint && <section className="w-full max-w-[680px] rounded-2xl border border-emerald-400/20 bg-[#171b19] p-4" aria-label="App plan"><p className="font-semibold text-white">Your app plan is ready</p><p className="mt-1 text-sm text-white/55">A focused services catalog with clear tiers and contact details.</p><button type="button" onClick={() => { setAgentStreamPhase('building'); setPreviewOpen(true); setSidebarOpen(false); replayApprovalResolveRef.current?.(); replayApprovalResolveRef.current = null }} className="mt-3 rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-[#082012]">Approve and build</button></section>}
                   {!structuredWorkflow && !workflowEvents.length && !sending && !activeAssistantVisible && activeTodos.length > 0 && <CoreTodoProgress todos={activeTodos} />}

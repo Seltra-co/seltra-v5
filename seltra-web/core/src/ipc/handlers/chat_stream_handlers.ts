@@ -888,7 +888,6 @@ export async function processStreamChunks({
   abortController,
   chatId,
   processResponseChunkUpdate,
-  includeReasoning = true,
 }: {
   fullStream: AsyncIterableStream<TextStreamPart<ToolSet>>;
   fullResponse: string;
@@ -897,7 +896,6 @@ export async function processStreamChunks({
   processResponseChunkUpdate: (params: {
     fullResponse: string;
   }) => Promise<string>;
-  includeReasoning?: boolean;
 }): Promise<{
   fullResponse: string;
   incrementalResponse: string;
@@ -905,20 +903,10 @@ export async function processStreamChunks({
 }> {
   const responseBeforeStream = fullResponse;
   let incrementalResponse = "";
-  let inThinkingBlock = false;
   let modelRefused = false;
 
   for await (const part of fullStream) {
     let chunk = "";
-    if (
-      inThinkingBlock &&
-      !["reasoning-delta", "reasoning-end", "reasoning-start"].includes(
-        part.type,
-      )
-    ) {
-      chunk = "</think>";
-      inThinkingBlock = false;
-    }
     if (isModelRefusal(part)) {
       // Anthropic returns Fable classifier refusals as successful responses.
       // A refusal can arrive after partial output, which Anthropic documents as
@@ -929,13 +917,6 @@ export async function processStreamChunks({
       modelRefused = true;
     } else if (part.type === "text-delta") {
       chunk += part.text;
-    } else if (part.type === "reasoning-delta" && includeReasoning) {
-      if (!inThinkingBlock) {
-        chunk = "<think>";
-        inThinkingBlock = true;
-      }
-
-      chunk += escapeDyadTags(part.text);
     } else if (part.type === "tool-call") {
       const { serverName, toolName } = parseMcpToolKey(part.toolName);
       const content = escapeDyadTags(JSON.stringify(part.input));
@@ -3159,7 +3140,6 @@ This conversation includes one or more image attachments. When the user uploads 
                 abortController,
                 chatId: req.chatId,
                 processResponseChunkUpdate,
-                includeReasoning: false,
               });
               fullResponse = result.fullResponse;
               if (result.modelRefused) {

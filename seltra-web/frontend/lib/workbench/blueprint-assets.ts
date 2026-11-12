@@ -2,6 +2,17 @@ export type BlueprintVisualInput = { type: string; description: string; prompt: 
 export type BlueprintPhotoSlot = { slot: string; prompt: string }
 export type GeneratedBlueprintAsset = BlueprintPhotoSlot & { path?: string; status: 'generated' | 'fallback' | 'skipped' }
 
+export function blueprintPlaceholderDataUrl(slot: BlueprintPhotoSlot): string {
+  const label = slot.slot.replace(/^photo-\d+-/, '').replace(/-/g, ' ').slice(0, 40)
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800"><defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#f8f4ee"/><stop offset=".55" stop-color="#e8d8c2"/><stop offset="1" stop-color="#c5a77e"/></linearGradient></defs><rect width="1200" height="800" fill="url(#bg)"/><circle cx="600" cy="345" r="118" fill="#fff" fill-opacity=".26"/><path d="M0 620 310 380l220 170 205-220 465 340v130H0Z" fill="#fff" fill-opacity=".24"/><text x="600" y="730" text-anchor="middle" fill="#5f5143" font-family="Arial,sans-serif" font-size="30" letter-spacing="3">${label}</text></svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+}
+
+function isValidAssetReference(path: string) {
+  return /^public\/assets\/[a-z0-9-]+\.(?:png|jpe?g|webp)$/i.test(path) ||
+    /^data:image\/svg\+xml,%3Csvg(?:%20|%3E)/i.test(path)
+}
+
 export function blueprintPhotoSlots(visuals: BlueprintVisualInput[]): BlueprintPhotoSlot[] {
   const photos = visuals.filter((visual) => /photo|photograph|photography|editorial image|product image|hero image/i.test(`${visual.type} ${visual.description}`))
   return photos.map((visual, index) => {
@@ -43,17 +54,17 @@ export async function generateBlueprintPhotoAssets<TGenerated, TFallback>(
     try {
       const generated = await withTimeout(options.generate(slot), timeoutMs)
       path = await withTimeout(options.saveGenerated(slot, generated), timeoutMs)
-      if (!/^public\/assets\/[a-z0-9-]+\.(?:png|jpe?g|webp)$/i.test(path)) throw new Error('Generated image did not resolve to a public raster asset.')
+      if (!isValidAssetReference(path)) throw new Error('Generated image did not resolve to a public raster asset.')
     } catch (generationFailure) {
       status = 'fallback'
       try {
         if (!options.fallback || !options.saveFallback) {
-          const reason = generationFailure instanceof Error ? generationFailure.message : String(generationFailure)
-          throw new Error(`Image generation failed: ${reason}. No fallback image source is configured.`)
+          path = blueprintPlaceholderDataUrl(slot)
+        } else {
+          const fallback = await withTimeout(options.fallback(slot), timeoutMs)
+          path = await withTimeout(options.saveFallback(slot, fallback), timeoutMs)
         }
-        const fallback = await withTimeout(options.fallback(slot), timeoutMs)
-        path = await withTimeout(options.saveFallback(slot, fallback), timeoutMs)
-        if (!/^public\/assets\/[a-z0-9-]+\.(?:png|jpe?g|webp)$/i.test(path)) throw new Error('Fallback did not resolve to a public raster asset.')
+        if (!isValidAssetReference(path)) throw new Error('Fallback did not resolve to a supported image asset.')
       } catch (error) {
         const generationReason = generationFailure instanceof Error ? generationFailure.message : String(generationFailure)
         const fallbackReason = error instanceof Error ? error.message : String(error)

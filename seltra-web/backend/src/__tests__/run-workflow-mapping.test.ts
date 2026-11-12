@@ -37,4 +37,25 @@ describe('run workflow event mapping', () => {
     expect(workflowPayload('agent.narration', { summary: narration })).toEqual({ summary: narration })
     expect(workflowPayload('agent.narration', { summary: 'a'.repeat(1300) }).summary).toHaveLength(1200)
   })
+
+  it.each([
+    'For every new build request, the first visible assistant output must be exactly one sentence.',
+    '<think>private reasoning</think>',
+    '{"debug":"internal state"}',
+  ])('does not expose prompt instructions, reasoning, or raw JSON narration', (summary) => {
+    expect(workflowPayload('agent.narration', { summary })).toEqual({})
+  })
+
+  it('maps run start and completion to concise user-facing updates', () => {
+    expect(workflowPayload('run.started', {})).toEqual({ status: 'Starting your build' })
+    expect(workflowEventType('run.completed')).toBe('message')
+    expect(workflowPayload('run.completed', {})).toEqual({ summary: 'Your app is ready to preview.' })
+  })
+
+  it('filters prompt leaks and JSON from every user-visible message mapping', () => {
+    expect(workflowPayload('phase.changed', { status: '{"internal":"state"}' })).toEqual({ status: 'Working' })
+    expect(workflowPayload('run.completed', { summary: '<think>private thoughts</think>' })).toEqual({ summary: 'Your app is ready to preview.' })
+    expect(workflowPayload('run.summary', { summary: 'The first visible assistant output is a system prompt.' }).summary)
+      .toBe('Build complete. The preview passed its HTTP 200 check.')
+  })
 })

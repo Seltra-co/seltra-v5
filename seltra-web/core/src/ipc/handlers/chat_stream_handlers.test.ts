@@ -326,6 +326,39 @@ vi.mock("@/db", () => ({
 }));
 
 describe("processStreamChunks", () => {
+  it("drops reasoning deltas before streaming or persisting assistant output", async () => {
+    async function* reasoningParts(): AsyncGenerator<TextStreamPart<ToolSet>> {
+      yield {
+        type: "reasoning-delta",
+        id: "reasoning-1",
+        text: "Private chain of thought",
+      };
+      yield {
+        type: "text-delta",
+        id: "text-1",
+        text: "I'm building your storefront.",
+      };
+    }
+
+    const updates: string[] = [];
+    const result = await processStreamChunks({
+      fullStream: reasoningParts() as unknown as AsyncIterableStream<
+        TextStreamPart<ToolSet>
+      >,
+      fullResponse: "",
+      abortController: new AbortController(),
+      chatId: 1,
+      processResponseChunkUpdate: async ({ fullResponse }) => {
+        updates.push(fullResponse);
+        return fullResponse;
+      },
+    });
+
+    expect(result.fullResponse).toBe("I'm building your storefront.");
+    expect(result.incrementalResponse).toBe("I'm building your storefront.");
+    expect(updates.join("")).not.toContain("Private chain of thought");
+  });
+
   it("replaces partial output with an inline warning for Fable refusals", async () => {
     async function* refusalParts(): AsyncGenerator<TextStreamPart<ToolSet>> {
       yield {

@@ -1,6 +1,7 @@
 import type { CoreClient } from './client'
 
 export class CoreEvents {
+  private static readonly MAX_RECONNECT_ATTEMPTS = 5
   private socket?: WebSocket
   private stopped = false
   private retry = 500
@@ -54,6 +55,7 @@ export class CoreEvents {
       previous.close(1000, 'Retry requested')
     }
     this.retry = 500
+    this.attempts = 0
     this.stopped = false
     void this.open()
   }
@@ -124,6 +126,10 @@ export class CoreEvents {
   }
 
   private scheduleRetry() {
+    if (this.attempts >= CoreEvents.MAX_RECONNECT_ATTEMPTS) {
+      this.onError(`Connection paused after ${CoreEvents.MAX_RECONNECT_ATTEMPTS} attempts. Retry to reconnect.`)
+      return
+    }
     const delay = Math.round(this.retry * (0.75 + Math.random() * 0.5))
     this.retry = Math.min(this.retry * 2, 15_000)
     this.timer = window.setTimeout(() => {

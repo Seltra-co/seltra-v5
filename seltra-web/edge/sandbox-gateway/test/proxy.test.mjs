@@ -33,13 +33,16 @@ async function createHarness() {
   let upgradeResponse;
   const container = {
     running: false,
+    failPorts: new Set(),
     images: { base: "test-image" },
     async start() { this.running = true; },
     async destroy() { this.running = false; },
+    async setInactivityTimeout() {},
     getTcpPort(port) {
       assert.ok(port === 8787 || port === 43127);
       return {
         async fetch(request) {
+          if (container.failPorts.has(port)) throw new Error("test port unavailable");
           const requestUrl = new URL(typeof request === "string" ? request : request.url);
           const body = request instanceof Request ? new Uint8Array(await request.arrayBuffer()) : new Uint8Array();
           upstreamRequests.push({
@@ -159,6 +162,25 @@ test("preview route forwards the registered preview hostname to its mapped proxy
   assert.equal(upstreamRequests[1].port, 43127);
   assert.equal(upstreamRequests[1].headers.has("host"), false);
   assert.equal(upstreamRequests[1].headers.get("x-seltra-preview-host"), "app-7.localhost:43127");
+});
+
+test("preview proxy failures return a retryable waking page instead of throwing", async () => {
+  const { worker, env, container } = await createHarness();
+  container.failPorts.add(43127);
+  const response = await worker.default.fetch(await signedRequest(`/v1/workspaces/${workspaceKey}/preview/7/`, { method: "GET" }), env);
+
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get("retry-after"), "2");
+  assert.match(await response.text(), /Waking your preview/);
+});
+
+test("preview requests for a sleeping container return a retryable waking page", async () => {
+  const { worker, env, container } = await createHarness();
+  container.running = false;
+  const response = await worker.default.fetch(await signedRequest(`/v1/workspaces/${workspaceKey}/preview/7/`, { method: "GET" }), env);
+
+  assert.equal(response.status, 503);
+  assert.match(await response.text(), /Waking your preview/);
 });
 
 test("preview WebSocket upgrade forwards protocol headers and preserves the 101 webSocket", async () => {

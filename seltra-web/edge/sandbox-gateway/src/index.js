@@ -24,6 +24,27 @@ function json(value, status = 200) {
   return Response.json(value, { status, headers: JSON_HEADERS });
 }
 
+function wakingPreviewResponse() {
+  return new Response(
+    '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Waking your preview</title><p style="font:16px system-ui;margin:3rem auto;max-width:32rem">Waking your preview… This page will retry automatically.</p><script>setTimeout(()=>location.reload(),2000)</script>',
+    {
+      status: 503,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+        "retry-after": "2",
+      },
+    },
+  );
+}
+
+function runtimeUnavailableResponse() {
+  return Response.json(
+    { code: "RUNTIME_WAKING", message: "The workspace runtime is waking. Retry shortly." },
+    { status: 503, headers: { ...JSON_HEADERS, "retry-after": "2" } },
+  );
+}
+
 function runtimeTrace(request) {
   const traceId = request.headers.get("x-seltra-run-id");
   const caller = request.headers.get("x-seltra-caller");
@@ -177,9 +198,31 @@ export class WorkspaceSandbox extends DurableObject {
   }
 
   async fetch(request) {
+    try {
+      return await this.handleRequest(request);
+    } catch (error) {
+      const url = new URL(request.url);
+      console.error(JSON.stringify({
+        event: "sandbox_request_failed",
+        path: url.pathname.slice(0, 160),
+        method: request.method,
+        ...runtimeTrace(request),
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      }));
+      return url.pathname.startsWith("/__preview/")
+        ? wakingPreviewResponse()
+        : runtimeUnavailableResponse();
+    }
+  }
+
+  async handleRequest(request) {
     const url = new URL(request.url);
     const container = this.ctx.container;
-    if (!container) return json({ code: "CONTAINER_UNAVAILABLE" }, 503);
+    if (!container) return url.pathname.startsWith("/__preview/")
+      ? wakingPreviewResponse()
+      : runtimeUnavailableResponse();
+    if (container.running) await container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS);
+    if (url.pathname.startsWith("/__runtime/") && !container.running) return runtimeUnavailableResponse();
     const bytes = await readBodyLimited(request);
     if (!bytes) return json({ code: "BODY_TOO_LARGE" }, 413);
 
@@ -364,7 +407,24 @@ export class WorkspaceSandbox extends DurableObject {
 
     if (url.pathname.startsWith("/__runtime/") && container.running) {
       const runtimePath = url.pathname.slice("/__runtime".length) + url.search;
-      return container.getTcpPort(8787).fetch(proxyRequest(`http://container${runtimePath}`, request, bytes, { runtime: true }));
+      const runtimeRequest = proxyRequest(`http://container${runtimePath}`, request, bytes, { runtime: true });
+      if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+        let lastError;
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          try {
+            return await container.getTcpPort(8787).fetch(runtimeRequest.clone());
+          } catch (error) {
+            lastError = error;
+            if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 150 * (2 ** attempt)));
+          }
+        }
+        console.warn(JSON.stringify({ event: "runtime_websocket_unavailable", ...runtimeTrace(request), errorName: lastError instanceof Error ? lastError.name : "UnknownError" }));
+        return runtimeUnavailableResponse();
+      }
+      return await container.getTcpPort(8787).fetch(runtimeRequest);
+    }
+    if (url.pathname.startsWith("/__preview/") && !container.running) {
+      return wakingPreviewResponse();
     }
     if (url.pathname.startsWith("/__preview/") && container.running) {
       const rest = url.pathname.slice("/__preview/".length);
@@ -382,7 +442,12 @@ export class WorkspaceSandbox extends DurableObject {
         previewHost: `${target.previewHost}:${target.port}`,
         websocketUpgrade: request.headers.get("upgrade")?.toLowerCase() === "websocket",
       });
-      return container.getTcpPort(target.port).fetch(previewRequest);
+      try {
+        return await container.getTcpPort(target.port).fetch(previewRequest);
+      } catch (error) {
+        console.warn(JSON.stringify({ event: "preview_upstream_unavailable", appId, ...runtimeTrace(request), errorName: error instanceof Error ? error.name : "UnknownError" }));
+        return wakingPreviewResponse();
+      }
     }
     if (url.pathname.startsWith("/__preview-diagnostic/") && container.running) {
       const rest = url.pathname.slice("/__preview-diagnostic/".length);

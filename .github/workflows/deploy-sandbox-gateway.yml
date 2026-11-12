@@ -8,6 +8,7 @@ on:
       - "seltra-web/edge/sandbox-gateway/**"
       - "seltra-web/core/src/db/**"
       - "seltra-web/core/src/web/**"
+      - "seltra-web/core/src/ipc/handlers/chat_stream_handlers.ts"
       - "seltra-web/core/src/ipc/handlers/createFromTemplate.ts"
       - "seltra-web/core/src/ipc/handlers/template_handlers.ts"
       - "seltra-web/core/src/ipc/services/app_runtime_service.ts"
