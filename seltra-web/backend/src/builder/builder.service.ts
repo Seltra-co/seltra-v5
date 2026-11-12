@@ -225,9 +225,23 @@ export class BuilderService {
     const canonicalPreviewUrl = input.previewUrl ? (() => { const url = new URL(input.previewUrl); url.searchParams.delete('preview_token'); return url.toString() })() : undefined
     const failure = input.status === 'failed'
     if (input.blueprint && Buffer.byteLength(JSON.stringify(input.blueprint)) > 64 * 1024) throw new ForbiddenException('Blueprint payload exceeds the storage limit.')
-    const visuals = Array.isArray(input.blueprint?.visuals)
-      ? input.blueprint.visuals.filter((visual): visual is Record<string, unknown> => typeof visual === 'object' && visual !== null)
-      : []
+    const visuals = new Map<string, { projectId: string; kind: string; prompt: string | null; storageRef: string }>()
+    if (Array.isArray(input.blueprint?.visuals)) {
+      for (const visual of input.blueprint.visuals) {
+        if (typeof visual !== 'object' || visual === null) continue
+        const visualId = typeof visual.id === 'string' ? visual.id.slice(0, 160) : ''
+        if (!visualId) continue
+        const storageRef = `core:${input.coreAppId}:${visualId}`
+        if (!visuals.has(storageRef)) {
+          visuals.set(storageRef, {
+            projectId: input.tenantId,
+            kind: typeof visual.type === 'string' ? visual.type.slice(0, 40) : 'other',
+            prompt: typeof visual.prompt === 'string' ? visual.prompt.slice(0, 4000) : null,
+            storageRef,
+          })
+        }
+      }
+    }
     const app = await prisma.$transaction(async (tx) => {
       const savedApp = await tx.tenantApp.upsert({
       where: { tenantId_coreAppId: { tenantId: input.tenantId, coreAppId: input.coreAppId } },
@@ -276,18 +290,17 @@ export class BuilderService {
         },
         },
       })
-      for (const visual of visuals) {
-        const visualId = typeof visual.id === 'string' ? visual.id.slice(0, 160) : ''
-        if (!visualId) continue
-        const storageRef = `core:${input.coreAppId}:${visualId}`
-        const exists = await tx.projectAsset.findFirst({ where: { projectId: input.tenantId, storageRef }, select: { id: true } })
-        if (exists) continue
-        await tx.projectAsset.create({ data: {
-          projectId: input.tenantId,
-          kind: typeof visual.type === 'string' ? visual.type.slice(0, 40) : 'other',
-          prompt: typeof visual.prompt === 'string' ? visual.prompt.slice(0, 4000) : null,
-          storageRef,
-        } })
+      if (visuals.size > 0) {
+        const storageRefs = [...visuals.keys()]
+        const existingAssets = await tx.projectAsset.findMany({
+          where: { projectId: input.tenantId, storageRef: { in: storageRefs } },
+          select: { storageRef: true },
+        })
+        const existingRefs = new Set(existingAssets.map((asset) => asset.storageRef))
+        const assetsToCreate = [...visuals]
+          .filter(([storageRef]) => !existingRefs.has(storageRef))
+          .map(([, asset]) => asset)
+        if (assetsToCreate.length > 0) await tx.projectAsset.createMany({ data: assetsToCreate })
       }
       return savedApp
     })

@@ -762,6 +762,7 @@ async function main(): Promise<void> {
   type EntitlementEntry = { expiresAt: number; active: boolean; reason?: string; engineApiKey: string };
   const entitlementInflight = new Map<string, Promise<EntitlementEntry>>();
   const ENTITLEMENT_STALE_GRACE_MS = 10 * 60_000;
+  const BUILDER_SESSION_MAX_AGE_MS = 20 * 60_000;
   const destroyingWorkspaceKeys = new Map<string, number>();
   const sessionOwners = new Map<string, SessionClaims>();
   const modelTokens = new Map<string, SessionClaims>();
@@ -1048,15 +1049,28 @@ async function main(): Promise<void> {
 
   async function fetchEntitlement(claims: SessionClaims): Promise<EntitlementEntry> {
     let response: Response;
+    const startedAt = Date.now();
     try {
       response = await fetch(`${config.NEST_INTERNAL_URL.replace(/\/+$/, "")}/api/v5/internal/core/entitlement/${encodeURIComponent(claims.workspaceId)}`, {
         headers: { "x-core-service-secret": config.CORE_SERVICE_SECRET },
         signal: AbortSignal.timeout(12_000),
       });
-    } catch {
+    } catch (error) {
+      console.warn(JSON.stringify({
+        event: "entitlement_fetch_failed",
+        workspaceId: claims.workspaceId,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        durationMs: Date.now() - startedAt,
+      }));
       throw new HttpError(503, "ENTITLEMENT_UNAVAILABLE", "Seltra could not verify builder access.");
     }
     if (!response.ok) {
+      console.warn(JSON.stringify({
+        event: "entitlement_fetch_rejected",
+        workspaceId: claims.workspaceId,
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+      }));
       if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429)
         throw new HttpError(response.status === 401 ? 401 : 403, "WORKSPACE_FORBIDDEN", "Builder access could not be verified for this workspace.");
       throw new HttpError(503, "ENTITLEMENT_UNAVAILABLE", "Seltra could not verify builder access.");
@@ -2876,14 +2890,19 @@ async function main(): Promise<void> {
           let queuedRuntimeBytes = 0;
           let runtimeMessageQueue = Promise.resolve();
           let workspaceSyncInFlight = false;
-          const authLifetimeTimer = setTimeout(() => closeBoth("gateway", 1008, "Builder session expired"), 10 * 60_000);
+          let workspaceSyncRequested = false;
+          let workspaceSyncDebounceTimer: NodeJS.Timeout | undefined;
+          const authLifetimeTimer = setTimeout(() => closeBoth("gateway", 1008, "Builder session expired"), BUILDER_SESSION_MAX_AGE_MS);
           authLifetimeTimer.unref();
           const sessionReadyTimer = setTimeout(() => {
             if (!runtimeSessionId) closeBoth("gateway", 1011, "Runtime session handshake timed out");
           }, 20_000);
           sessionReadyTimer.unref();
           const syncWorkspaceFiles = async () => {
-            if (workspaceSyncInFlight) return;
+            if (workspaceSyncInFlight) {
+              workspaceSyncRequested = true;
+              return;
+            }
             workspaceSyncInFlight = true;
             try {
               await syncWorkspaceAppsNow(config, claims, workspaceRuntime);
@@ -2891,12 +2910,24 @@ async function main(): Promise<void> {
               // syncWorkspaceAppsNow emits the structured workspace_sync_failed event.
             } finally {
               workspaceSyncInFlight = false;
+              if (workspaceSyncRequested && !closed) {
+                workspaceSyncRequested = false;
+                void syncWorkspaceFiles();
+              }
             }
+          };
+          const scheduleWorkspaceSync = () => {
+            if (workspaceSyncDebounceTimer) clearTimeout(workspaceSyncDebounceTimer);
+            workspaceSyncDebounceTimer = setTimeout(() => {
+              workspaceSyncDebounceTimer = undefined;
+              if (!closed) void syncWorkspaceFiles();
+            }, 750);
+            workspaceSyncDebounceTimer.unref();
           };
           void syncWorkspaceFiles();
           const workspaceSyncTimer = setInterval(() => {
             if (!closed) void syncWorkspaceFiles();
-          }, 8_000);
+          }, 30_000);
           workspaceSyncTimer.unref();
           const workspaceLeaseTimer = setInterval(() => {
             if (!closed) supervisor.getByKey(claims.coreWorkspaceKey);
@@ -2940,6 +2971,7 @@ async function main(): Promise<void> {
             closed = true;
             clearTimeout(authLifetimeTimer);
             clearTimeout(sessionReadyTimer);
+            if (workspaceSyncDebounceTimer) clearTimeout(workspaceSyncDebounceTimer);
             clearInterval(workspaceLeaseTimer);
             clearInterval(heartbeatTimer);
             clearInterval(workspaceSyncTimer);
@@ -2988,6 +3020,7 @@ async function main(): Promise<void> {
                         seenChannels.add(frame.channel);
                         console.info(JSON.stringify({ event: "ws_frame_channel_seen", tenantId: claims.workspaceId, channel: frame.channel }));
                       }
+                      if (frame.channel === "agent-tool:file-written") scheduleWorkspaceSync();
                       if (
                         frame.channel === "web:session" &&
                         typeof frame.payload?.id === "string"

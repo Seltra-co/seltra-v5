@@ -905,6 +905,8 @@ export default function DashboardPage() {
   const coreCompletedIntentRef = useRef<string>()
   const coreRunRef = useRef<{ id: string; idempotencyKey: string }>()
   const coreRunCompletedRef = useRef(false)
+  const coreRunFinalizationRef = useRef<{ runId: string; promise: Promise<void> }>()
+  const orchestratorProgressRef = useRef<CoreTodo[]>([])
   const [workflowEvents, setWorkflowEvents] = useState<WorkflowEvent[]>([])
   const workflowEventsRef = useRef<WorkflowEvent[]>([])
   const [workflowRunId, setWorkflowRunId] = useState('')
@@ -1709,7 +1711,7 @@ export default function DashboardPage() {
     coreEventsRef.current?.close()
     const events = new CoreEvents(client, (frame) => {
       const channel: string = frame.channel
-      const persistRunEvent = (type: string, phase?: string, state?: 'running' | 'waiting_for_user' | 'completed' | 'failed' | 'stopped', payload: Record<string, unknown> = {}) => {
+      const persistRunEvent = (type: string, phase?: string, state?: 'running' | 'waiting_for_user' | 'completed' | 'failed' | 'stopped', payload: Record<string, unknown> = {}, requirePersistence = false) => {
         const run = coreRunRef.current
         if (!run) return Promise.resolve()
         // Preserve event order: a delayed todo snapshot must not land after
@@ -1718,9 +1720,26 @@ export default function DashboardPage() {
           apiFetch(`/api/v5/runs/${encodeURIComponent(run.id)}/events`, {
             method: 'POST',
             body: JSON.stringify({ type, phase, agent: 'builder', eventKey: crypto.randomUUID(), ...(state ? { state } : {}), payload }),
-          }).then(({ error }) => { if (error) console.warn('[builder] Could not persist Core run event', { runId: run.id, type, error }) }),
+          }).then(({ error }) => {
+            if (!error) return
+            console.warn('[builder] Could not persist Core run event', { runId: run.id, type, error })
+            if (requirePersistence) throw new Error('RUN_EVENT_PERSIST_FAILED')
+          }),
         )
         return coreRunEventQueueRef.current.then(() => undefined)
+      }
+      const updateOrchestratorProgress = (updates: Record<string, CoreTodo['status']>, phase: string) => {
+        const todos = orchestratorProgressRef.current.map((todo) =>
+          updates[todo.id] ? { ...todo, status: updates[todo.id] } : todo,
+        )
+        orchestratorProgressRef.current = todos
+        const current = todos.find((todo) => todo.status === 'in_progress')
+        persistRunEvent('step.progress', phase, 'running', {
+          todos,
+          total: todos.length,
+          completed: todos.filter((todo) => todo.status === 'completed').length,
+          current: current?.content ?? null,
+        })
       }
       flushPendingBrowserQaRef.current = () => {
         if (!coreRunRef.current?.id || pendingBrowserQaRef.current.length === 0) return
@@ -1730,17 +1749,10 @@ export default function DashboardPage() {
       persistRunEventRef.current = persistRunEvent
       const syncBeforeRunCompleted = async () => {
         const client = coreClientRef.current
-        if (!client) {
-          console.warn('[builder] Workspace sync before completion failed: CORE_CLIENT_UNAVAILABLE')
-          return
-        }
-        try {
-          const result = await client.syncNow()
-          if (result.verified !== true) console.warn('[builder] Workspace sync before completion failed: MANIFEST_NOT_VERIFIED')
-        } catch (error) {
-          const code = typeof error === 'object' && error && 'code' in error && typeof error.code === 'string' ? error.code : 'WORKSPACE_SYNC_FAILED'
-          console.warn(`[builder] Workspace sync before completion failed: ${code}`)
-        }
+        if (!client) throw Object.assign(new Error('CORE_CLIENT_UNAVAILABLE'), { code: 'CORE_CLIENT_UNAVAILABLE' })
+        const result = await client.syncNow()
+        if (result.verified !== true) throw Object.assign(new Error('MANIFEST_NOT_VERIFIED'), { code: 'MANIFEST_NOT_VERIFIED' })
+        updateOrchestratorProgress({ 'workspace-sync': 'completed' }, 'verify')
       }
       const persistAppState = async (eventType: string, values: { name?: string; status?: 'draft' | 'planning' | 'awaiting_answers' | 'building' | 'preview_ready' | 'published' | 'live' | 'failed' | 'stopped'; previewUrl?: string; blueprint?: Record<string, unknown>; approved?: boolean; errorCode?: string; errorDetail?: string } = {}) => {
         const appId = coreAppRef.current
@@ -1749,6 +1761,36 @@ export default function DashboardPage() {
           method: 'POST',
           body: JSON.stringify({ tenantId, coreAppId: appId, eventType, runId: coreRunRef.current?.id, ...values }),
         }).catch((error) => console.warn('[builder] Could not persist Core app state', { tenantId, appId, eventType, error }))
+      }
+      const finalizeRun = () => {
+        const run = coreRunRef.current
+        if (!run) return Promise.resolve()
+        if (coreRunFinalizationRef.current?.runId === run.id) return coreRunFinalizationRef.current.promise
+        let finalization: Promise<void>
+        finalization = (async () => {
+          try {
+            await syncBeforeRunCompleted()
+            await persistRunEvent('run.completed', 'verify', 'completed', { chatId: coreChatRef.current, outcome: 'completed' }, true)
+          } catch (error) {
+            const code = typeof error === 'object' && error && 'code' in error && typeof error.code === 'string'
+              ? error.code
+              : 'WORKSPACE_SYNC_FAILED'
+            console.warn('[builder] Could not finalize Core run', { runId: run.id, code })
+            await persistRunEvent('run.failed', 'verify', 'failed', { chatId: coreChatRef.current, code })
+            await persistAppState('app.build.incomplete', {
+              status: 'building',
+              errorCode: code,
+              errorDetail: 'Workspace synchronization could not be verified.',
+            })
+          } finally {
+            coreRunCompletedRef.current = false
+            if (coreRunRef.current?.id === run.id) coreRunRef.current = undefined
+          }
+        })().finally(() => {
+          if (coreRunFinalizationRef.current?.promise === finalization) coreRunFinalizationRef.current = undefined
+        })
+        coreRunFinalizationRef.current = { runId: run.id, promise: finalization }
+        return finalization
       }
       if (frame.channel === 'app:output') {
         const output = frame.payload as { appId?: number; type?: string; message?: string }
@@ -1766,6 +1808,7 @@ export default function DashboardPage() {
         if (payload.chatId === coreChatRef.current) {
           setCoreStartupStatus('Writing your app files')
           dispatchWorkbench({ type: 'step-started', id: `files-${Date.now()}`, title: payload.path ? `Writing ${payload.path}` : 'Writing your app files' })
+          if (orchestratorProgressRef.current.length) updateOrchestratorProgress({ 'app-files': 'in_progress' }, 'build')
           if (payload.path && Number.isSafeInteger(payload.bytes) && typeof payload.sha256 === 'string') {
             persistRunEvent('file.written', 'build', 'running', { appId: coreAppRef.current, path: payload.path, bytes: payload.bytes, sha256: payload.sha256 })
           }
@@ -2054,11 +2097,9 @@ export default function DashboardPage() {
                       const readyPreviewUrl = probe.previewUrl ?? previewUrl
                       await persistAppState('app.preview.ready', { status: 'preview_ready', previewUrl: readyPreviewUrl })
                       await persistRunEvent('preview.ready', 'verifying', undefined, { status: probe.status, previewUrl: readyPreviewUrl })
+                      updateOrchestratorProgress({ 'preview-check': 'completed' }, 'verify')
                       if (coreRunCompletedRef.current) {
-                        await syncBeforeRunCompleted()
-                        await persistRunEvent('run.completed', 'verify', 'completed', { chatId: coreChatRef.current, outcome: 'completed' })
-                        coreRunCompletedRef.current = false
-                        coreRunRef.current = undefined
+                        await finalizeRun()
                       }
                       return
                     }
@@ -2110,19 +2151,35 @@ export default function DashboardPage() {
               }
               const terminalType = completion.outcome === 'cancelled' ? 'run.stopped' : completion.outcome === 'completed' ? 'run.worker.completed' : 'run.failed'
               const state = completion.outcome === 'completed' ? 'running' : completion.outcome === 'cancelled' ? 'stopped' : 'failed'
-              persistRunEvent(terminalType, 'verify', state, {
+              const workerEvent = persistRunEvent(terminalType, 'verify', state, {
                 chatId: coreChatRef.current,
                 outcome: completion.outcome,
                 error: completion.error ? 'Build could not be completed.' : null,
                 todos: coreTodosRef.current?.chatId === coreChatRef.current ? coreTodosRef.current?.todos ?? [] : [],
-              })
+              }, completion.outcome === 'completed')
               if (completion.outcome === 'completed') {
-                coreRunCompletedRef.current = true
-                if (corePreviewUrlRef.current) {
-                  void syncBeforeRunCompleted().then(() => persistRunEvent('run.completed', 'verify', 'completed', { chatId: coreChatRef.current, outcome: 'completed' })).then(() => {
-                    coreRunCompletedRef.current = false
-                  })
-                }
+                void workerEvent.then(() => {
+                  coreRunCompletedRef.current = true
+                  const previewReady = Boolean(corePreviewUrlRef.current)
+                  updateOrchestratorProgress({
+                    'app-files': 'completed',
+                    'preview-check': previewReady ? 'completed' : 'in_progress',
+                    'workspace-sync': previewReady ? 'in_progress' : 'pending',
+                  }, 'verify')
+                  if (corePreviewUrlRef.current) return finalizeRun()
+                }).catch((error) => {
+                  console.warn('[builder] Could not persist Core worker completion', { code: error instanceof Error ? error.message : 'RUN_EVENT_PERSIST_FAILED' })
+                  void persistRunEvent('run.failed', 'verify', 'failed', { chatId: coreChatRef.current, code: 'RUN_EVENT_PERSIST_FAILED' })
+                  coreRunCompletedRef.current = false
+                  if (coreRunRef.current?.id === completedRun?.id) {
+                    coreRunRef.current = undefined
+                    void persistAppState('app.build.incomplete', {
+                      status: 'building',
+                      errorCode: 'RUN_EVENT_PERSIST_FAILED',
+                      errorDetail: 'Build completion could not be recorded.',
+                    })
+                  }
+                })
               }
               if (completion.outcome === 'completed') {
                 setCoreBuildCompleted(true)
@@ -2145,7 +2202,10 @@ export default function DashboardPage() {
               }
               if (completion.outcome === 'errored') persistAppState('app.build.failed', { status: 'failed', errorCode: 'BUILD_FAILED', errorDetail: 'The build failed. See the run event log for diagnostics.' })
               if (completion.outcome === 'stopped') persistAppState('app.build.stopped', { status: 'stopped' })
-              if (completion.outcome !== 'completed' || corePreviewUrlRef.current) coreRunRef.current = undefined
+              if (completion.outcome !== 'completed') {
+                coreRunFinalizationRef.current = undefined
+                coreRunRef.current = undefined
+              }
             }
           } else {
             setSending(false)
@@ -3218,7 +3278,13 @@ export default function DashboardPage() {
       workflowEventsRef.current = []
       setWorkflowEvents([])
       coreRunCompletedRef.current = false
+      coreRunFinalizationRef.current = undefined
       coreRunRef.current = { id: runStart.data.id, idempotencyKey: runKey }
+      orchestratorProgressRef.current = [
+        { id: 'app-files', content: 'Generate application files', status: 'pending' },
+        { id: 'preview-check', content: 'Start and verify the app preview', status: 'pending' },
+        { id: 'workspace-sync', content: 'Verify and persist workspace files', status: 'pending' },
+      ]
       setWorkflowRunId(runStart.data.id)
       const dispatchRunId = runStart.data.id
       const startEvent = await apiFetch(`/api/v5/runs/${encodeURIComponent(dispatchRunId)}/events`, {
@@ -3226,6 +3292,12 @@ export default function DashboardPage() {
         body: JSON.stringify({ type: 'run.started', phase: 'planning', agent: 'builder', eventKey: crypto.randomUUID(), state: 'running', payload: {} }),
       })
       if (startEvent.error) console.warn('[builder] Could not persist run start event', { runId: dispatchRunId, error: startEvent.error })
+      await persistRunEventRef.current('step.progress', 'planning', 'running', {
+        todos: orchestratorProgressRef.current,
+        total: orchestratorProgressRef.current.length,
+        completed: 0,
+        current: orchestratorProgressRef.current[0]?.content ?? null,
+      })
       flushPendingBrowserQaRef.current()
       const receipt = await client.invoke<{ kind: string; reason?: string }>('distributed-machine:dispatch', [{ ...machine, expectedActorInstanceId: actor.actorInstanceId, expectedRevision: actor.revision, messageId: crypto.randomUUID(), encodedEvent: { type: 'SUBMIT', intent: { ...intent, payloadHash }, observedStopPolicyVersion: actor.encodedState.stopPolicyVersion ?? 0 } }], runtime)
       if (receipt.kind !== 'applied' && receipt.kind !== 'replayed') throw new Error(receipt.reason || `Core accepted no work (${receipt.kind}).`)
