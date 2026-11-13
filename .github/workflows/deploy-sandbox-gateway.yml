@@ -138,18 +138,18 @@ jobs:
         run: docker rm -f seltra-sandbox-runtime-ci >/dev/null 2>&1 || true
       - name: Validate Worker bundle and Wrangler configuration
         working-directory: seltra-web/edge/sandbox-gateway
-        run: npx --yes wrangler@4 deploy --dry-run --config wrangler.jsonc --name "$WORKER_NAME"
+        run: npx --yes wrangler@4.161.0 deploy --dry-run --config wrangler.jsonc --name "$WORKER_NAME"
       - name: Set container build SHA
         working-directory: seltra-web/edge/sandbox-gateway
         run: |
           node -e 'const fs=require("node:fs");const p="wrangler.jsonc";const c=JSON.parse(fs.readFileSync(p,"utf8"));const image=c.containers?.find(x=>x.class_name==="WorkspaceSandbox")?.images?.base;if(!image)throw new Error("WorkspaceSandbox base image config missing");image.build_vars={...image.build_vars,BUILD_SHA:process.env.BUILD_SHA};fs.writeFileSync(p,JSON.stringify(c,null,2)+"\n")'
       - name: Deploy Worker and container image
         working-directory: seltra-web/edge/sandbox-gateway
-        run: npx --yes wrangler@4 deploy --config wrangler.jsonc --name "$WORKER_NAME"
+        run: npx --yes wrangler@4.161.0 deploy --config wrangler.jsonc --name "$WORKER_NAME"
       - name: Set dev gateway signing secret
         working-directory: seltra-web/edge/sandbox-gateway
         shell: bash
-        run: printf '%s' "$SIGNING_SECRET" | npx --yes wrangler@4 secret put SANDBOX_GATEWAY_SIGNING_SECRET --config wrangler.jsonc --name "$WORKER_NAME"
+        run: printf '%s' "$SIGNING_SECRET" | npx --yes wrangler@4.161.0 secret put SANDBOX_GATEWAY_SIGNING_SECRET --config wrangler.jsonc --name "$WORKER_NAME"
       - name: Signed dev workspace, scaffold, runtime RPC body, real create-app, preview, and destroy smoke (prod workflow only)
         if: github.event_name == 'workflow_dispatch' && inputs.environment == 'prod'
         working-directory: seltra-web/edge/sandbox-gateway
