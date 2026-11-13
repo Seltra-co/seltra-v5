@@ -1776,8 +1776,7 @@ export default function DashboardPage() {
         const run = coreRunRef.current
         if (!run) return Promise.resolve()
         if (coreRunFinalizationRef.current?.runId === run.id) return coreRunFinalizationRef.current.promise
-        let finalization: Promise<void>
-        finalization = (async () => {
+        const finalization = (async () => {
           try {
             await syncBeforeRunCompleted()
             await persistRunEvent('run.completed', 'verify', 'completed', { chatId: coreChatRef.current, outcome: 'completed' }, true)
