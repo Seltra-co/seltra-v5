@@ -5,6 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getDb, getDatabasePath } from "../db";
 import { apps } from "../db/schema";
+import { getDyadAppPath } from "../paths/paths";
 import { installPlatformFiles, validateAppForPush } from "../../server/src/publish/validator";
 
 const run = promisify(execFile);
@@ -22,7 +23,7 @@ export async function snapshotUserData(): Promise<{ backupPath: string; apps: Wo
   const rows = await getDb().select({ id: apps.id, name: apps.name, path: apps.path, githubOrg: apps.githubOrg, githubRepo: apps.githubRepo }).from(apps);
   const savedApps: WorkspaceApp[] = [];
   for (const row of rows) {
-    const absolute = path.resolve(row.path);
+    const absolute = getDyadAppPath(row.path);
     const relPath = path.relative(appsRoot, absolute).replaceAll("\\", "/");
     if (!relPath || relPath === ".." || relPath.startsWith("../") || path.isAbsolute(relPath)) continue;
     savedApps.push({ coreAppId: row.id, name: row.name, relPath, githubOrg: row.githubOrg, githubRepo: row.githubRepo });
@@ -37,7 +38,7 @@ export async function commitWorkingTree(input: { appId: number; author: { name: 
   const app = await getDb().query.apps.findFirst({ where: (table, { eq }) => eq(table.id, input.appId) });
   if (!app) throw Object.assign(new Error("App not found."), { code: "APP_NOT_FOUND" });
   const appsRoot = path.resolve(process.env.DYAD_APPS_DIR || "./apps");
-  const appPath = path.resolve(app.path);
+  const appPath = getDyadAppPath(app.path);
   const relPath = path.relative(appsRoot, appPath).replaceAll("\\", "/");
   if (!relPath || relPath === ".." || relPath.startsWith("../") || path.isAbsolute(relPath)) throw Object.assign(new Error("App path is outside the workspace apps directory."), { code: "APP_PATH_FORBIDDEN" });
 
@@ -76,4 +77,3 @@ export async function removeSnapshotTempFile(filename: string): Promise<void> {
 }
 
 export function getWorkspaceDataRoot(): string { return path.resolve(process.env.DYAD_USER_DATA || "./userData"); }
-
