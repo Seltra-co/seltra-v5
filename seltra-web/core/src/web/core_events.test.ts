@@ -1,20 +1,131 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CoreEvents } from '../../../frontend/lib/core/events'
 
-describe('CoreEvents reconnect circuit breaker', () => {
+describe('CoreEvents reconnect recovery', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
-  it('caps failed ticket attempts and allows an explicit retry', async () => {
+  it('keeps retrying transient failures with bounded backoff without exposing transport errors', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    vi.stubGlobal('window', globalThis)
+    const sockets: Array<{ close: ReturnType<typeof vi.fn> }> = []
+    class FakeWebSocket {
+      static CONNECTING = 0
+      static OPEN = 1
+      readyState = 0
+      onopen: (() => void) | null = null
+      onmessage: ((event: { data: string }) => void) | null = null
+      onclose: (() => void) | null = null
+      onerror: (() => void) | null = null
+      close = vi.fn()
+      constructor() { sockets.push(this) }
+    }
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const wsTicket = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockResolvedValue('fresh-ticket')
+    const errors: string[] = []
+    const events = new CoreEvents(
+      {
+        wsTicket,
+        eventsUrl: new URL('ws://localhost/events'),
+        traceId: '00000000-0000-4000-8000-000000000001',
+      } as never,
+      () => undefined,
+      () => undefined,
+      (message) => errors.push(message),
+    )
+
+    events.connect()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(wsTicket).toHaveBeenCalledTimes(6)
+    expect(sockets).toHaveLength(1)
+    expect(errors).toEqual([])
+    events.close()
+  })
+
+  it('restores the workspace before each fresh WebSocket ticket', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    vi.stubGlobal('window', globalThis)
+    const order: string[] = []
+    const sockets: Array<{ close: ReturnType<typeof vi.fn>; onclose: (() => void) | null }> = []
+    class FakeWebSocket {
+      static CONNECTING = 0
+      static OPEN = 1
+      readyState = 0
+      onopen: (() => void) | null = null
+      onmessage: ((event: { data: string }) => void) | null = null
+      onclose: (() => void) | null = null
+      onerror: (() => void) | null = null
+      close = vi.fn()
+      constructor() { sockets.push(this) }
+    }
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const wsTicket = vi.fn(async () => {
+      order.push('ticket')
+      return 'fresh-ticket'
+    })
+    const events = new CoreEvents(
+      {
+        wsTicket,
+        eventsUrl: new URL('ws://localhost/events'),
+        traceId: '00000000-0000-4000-8000-000000000001',
+      } as never,
+      () => undefined,
+      () => undefined,
+      undefined,
+      async () => { order.push('restore') },
+    )
+
+    events.connect()
+    await vi.waitFor(() => expect(sockets).toHaveLength(1))
+    expect(order).toEqual(['restore', 'ticket'])
+    sockets[0].onclose?.()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(order).toEqual(['restore', 'ticket', 'restore', 'ticket'])
+    events.close()
+  })
+
+  it('surfaces permanent restore authorization failures without retrying', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('window', globalThis)
+    vi.stubGlobal('WebSocket', { CONNECTING: 0, OPEN: 1 })
+    const errors: string[] = []
+    const beforeConnect = vi.fn().mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403 }))
+    const wsTicket = vi.fn()
+    const events = new CoreEvents(
+      { wsTicket } as never,
+      () => undefined,
+      () => undefined,
+      (message) => errors.push(message),
+      beforeConnect,
+    )
+
+    events.connect()
+    await vi.waitFor(() => expect(errors).toHaveLength(1))
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(errors).toEqual(['You no longer have access to this project. Sign in again or contact support.'])
+    expect(beforeConnect).toHaveBeenCalledTimes(1)
+    expect(wsTicket).not.toHaveBeenCalled()
+    events.close()
+  })
+
+  it('surfaces a product-level recovery error after prolonged outages while continuing retries', async () => {
     vi.useFakeTimers()
     vi.spyOn(Math, 'random').mockReturnValue(0)
     vi.stubGlobal('window', globalThis)
     vi.stubGlobal('WebSocket', { CONNECTING: 0, OPEN: 1 })
-    const wsTicket = vi.fn().mockRejectedValue(new Error('ticket unavailable'))
     const errors: string[] = []
+    const wsTicket = vi.fn().mockRejectedValue(new Error('temporary failure'))
     const events = new CoreEvents(
       { wsTicket } as never,
       () => undefined,
@@ -23,13 +134,9 @@ describe('CoreEvents reconnect circuit breaker', () => {
     )
 
     events.connect()
-    await vi.runAllTimersAsync()
-    expect(wsTicket).toHaveBeenCalledTimes(5)
-    expect(errors.at(-1)).toBe('Connection paused after 5 attempts. Retry to reconnect.')
-
-    events.retryNow()
-    await Promise.resolve()
-    expect(wsTicket).toHaveBeenCalledTimes(6)
+    await vi.advanceTimersByTimeAsync(130_000)
+    expect(wsTicket.mock.calls.length).toBeGreaterThan(5)
+    expect(errors).toEqual(['Seltra could not reconnect to your project yet. Your saved work is safe; retry or contact support.'])
     events.close()
   })
 
@@ -43,6 +150,7 @@ describe('CoreEvents reconnect circuit breaker', () => {
 
     events.connect()
     events.connect()
+    await vi.waitFor(() => expect(wsTicket).toHaveBeenCalledTimes(1))
     expect(wsTicket).toHaveBeenCalledTimes(1)
     events.close()
     finishTicket('unused')
@@ -75,11 +183,11 @@ describe('CoreEvents reconnect circuit breaker', () => {
     } as never, () => undefined, () => undefined)
 
     events.connect()
+    await vi.waitFor(() => expect(wsTicket).toHaveBeenCalledTimes(1))
     events.retryNow()
-    await Promise.resolve()
-    await Promise.resolve()
+    await vi.waitFor(() => expect(wsTicket).toHaveBeenCalledTimes(2))
     resolveFirst('stale-ticket')
-    await Promise.resolve()
+    await vi.waitFor(() => expect(sockets).toHaveLength(1))
     expect(wsTicket).toHaveBeenCalledTimes(2)
     expect(sockets).toHaveLength(1)
     events.close()

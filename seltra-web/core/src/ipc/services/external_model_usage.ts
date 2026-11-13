@@ -14,6 +14,7 @@ import {
 } from "./external_model_admission";
 
 const logger = log.scope("external_model_usage");
+const USAGE_WARNING_INTERVAL_MS = 60_000;
 const Count = z.number().int().nonnegative().max(1_000_000_000_000);
 const Tokens = z.object({
   input: Count,
@@ -33,6 +34,15 @@ const active = new Map<
   string,
   { key: string; createdAt: string; billing: ExternalModelBilling }
 >();
+let lastUsageWarningAt: number | undefined;
+
+function warnUsageReport(message: string, context: Record<string, unknown>) {
+  const now = Date.now();
+  if (lastUsageWarningAt !== undefined && now - lastUsageWarningAt < USAGE_WARNING_INTERVAL_MS) return;
+  lastUsageWarningAt = now;
+  logger.warn(message, context);
+}
+
 export async function startExternalModelUsage(
   _model: string,
   signal?: AbortSignal,
@@ -112,11 +122,10 @@ export async function finishExternalModelUsageBatch(
   const request = active.get(id);
   if (!request) return;
   active.delete(id);
-  const engineApiKey = process.env.DYAD_WEB_RUNTIME === "1"
-    ? process.env.SELTRA_ENGINE_API_KEY?.trim()
-    : request.key;
+  if (process.env.DYAD_WEB_RUNTIME === "1") return;
+  const engineApiKey = request.key;
   if (!engineApiKey) {
-    logger.warn("Workspace Seltra Engine key is unavailable; usage report was not sent", { id });
+    warnUsageReport("Workspace Seltra Engine key is unavailable; usage report was not sent", { id });
     return;
   }
   await Promise.all(
@@ -158,7 +167,7 @@ export async function finishExternalModelUsageBatch(
           },
         );
         if (!response.ok)
-          logger.warn("External model usage report failed; not retrying", {
+          warnUsageReport("External model usage report failed; not retrying", {
             id,
             status: response.status,
           });
@@ -166,7 +175,7 @@ export async function finishExternalModelUsageBatch(
         await response.body?.cancel();
       } catch {
         // Do not log fetch errors or request objects: they may contain credentials.
-        logger.warn(
+        warnUsageReport(
           "External model usage unavailable or report failed; not retrying",
           { id },
         );

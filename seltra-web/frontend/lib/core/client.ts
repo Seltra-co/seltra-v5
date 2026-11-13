@@ -30,6 +30,38 @@ const RETRYABLE_RPC_CHANNELS = new Set([
   'set-app-theme',
   'user-input:get-pending',
 ])
+const WORKSPACE_SYNC_MAX_ATTEMPTS = 3
+const WORKSPACE_SYNC_TIMEOUT_MS = 60_000
+const NON_RETRYABLE_WORKSPACE_SYNC_CODES = new Set([
+  'app_deleted',
+  'files_verify_rejected',
+  'forbidden',
+  'invalid_restore_manifest',
+  'invalid_verify_response',
+  'manifest_not_verified',
+  'tenant_mismatch',
+  'unauthorized',
+])
+
+function isRetryableWorkspaceSyncError(error: unknown): boolean {
+  const failure = error as { status?: unknown; code?: unknown }
+  if (typeof failure.code === 'string' && NON_RETRYABLE_WORKSPACE_SYNC_CODES.has(failure.code.toLowerCase())) return false
+  if (typeof failure.status === 'number') {
+    return [408, 425, 429, 500, 502, 503, 504].includes(failure.status)
+  }
+  return error instanceof TypeError
+    || (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name))
+}
+
+async function responseFailure(response: Response, message: string) {
+  const result = await response.json().catch(() => ({})) as { code?: unknown; error?: { code?: unknown } }
+  const code = typeof result.code === 'string'
+    ? result.code
+    : typeof result.error?.code === 'string'
+      ? result.error.code
+      : undefined
+  return Object.assign(new Error(message), { status: response.status, ...(code ? { code } : {}) })
+}
 
 function unwrapCoreIpcEnvelope<T>(value: unknown): T {
   if (!value || typeof value !== 'object' || (value as { __dyadIpcEnvelope?: unknown }).__dyadIpcEnvelope !== 'dyad-ipc-envelope-v1') {
@@ -152,21 +184,36 @@ export class CoreClient {
       body: JSON.stringify({ intent }),
       cache: 'no-store',
     })
-    if (!response.ok) throw new Error('Core workspace prewarm failed.')
+    if (!response.ok) throw await responseFailure(response, 'Core workspace prewarm failed.')
   }
 
-  async syncNow(): Promise<{ ok: boolean; verified?: boolean }> {
-    const session = await this.currentSession()
-    const response = await fetch(`${this.baseUrl}/api/workspace/sync-now`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${session.coreToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({}),
-      cache: 'no-store',
-      signal: AbortSignal.timeout(20_000),
-    })
-    const result = await response.json().catch(() => ({})) as { ok?: unknown; verified?: unknown; error?: { code?: string } }
-    if (!response.ok || result.ok !== true) throw Object.assign(new Error(result.error?.code || `workspace_sync_http_${response.status}`), { code: result.error?.code || `workspace_sync_http_${response.status}` })
-    return { ok: true, ...(typeof result.verified === 'boolean' ? { verified: result.verified } : {}) }
+  async syncNow(runId?: string): Promise<{ ok: true; verified: true }> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const session = await this.currentSession()
+        const response = await fetch(`${this.baseUrl}/api/workspace/sync-now`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${session.coreToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify(runId ? { runId } : {}),
+          cache: 'no-store',
+          signal: AbortSignal.timeout(WORKSPACE_SYNC_TIMEOUT_MS),
+        })
+        const result = await response.json().catch(() => ({})) as { ok?: unknown; verified?: unknown; code?: string; error?: { code?: string } }
+        if (!response.ok || result.ok !== true) {
+          const code = result.code || result.error?.code || `workspace_sync_http_${response.status}`
+          throw Object.assign(new Error(code), { code, status: response.status })
+        }
+        if (result.verified !== true) {
+          throw Object.assign(new Error('Workspace manifest was not verified.'), { code: 'manifest_not_verified' })
+        }
+        return { ok: true, verified: true }
+      } catch (error) {
+        if (attempt + 1 >= WORKSPACE_SYNC_MAX_ATTEMPTS || !isRetryableWorkspaceSyncError(error)) throw error
+        const baseDelay = 250 * (2 ** attempt)
+        const delay = Math.round(baseDelay * (0.8 + Math.random() * 0.4))
+        await new Promise((resolve) => setTimeout(resolve, delay))
+      }
+    }
   }
 
   async wsTicket(): Promise<string> {
@@ -177,8 +224,13 @@ export class CoreClient {
       method: 'POST', headers: { authorization: `Bearer ${accessToken || ''}`, 'content-type': 'application/json', 'x-seltra-run-id': this.traceId },
       body: JSON.stringify({ tenantId: session.workspaceId, coreToken: session.coreToken }), cache: 'no-store',
     })
-    const payload = await response.json().catch(() => ({})) as { ticket?: string; message?: string }
-    if (!response.ok || !payload.ticket) throw new Error(payload.message || 'Could not reconnect to the builder.')
+    const payload = await response.json().catch(() => ({})) as { ticket?: string; message?: string; code?: string }
+    if (!response.ok || !payload.ticket) {
+      throw Object.assign(new Error('Could not reconnect to the builder.'), {
+        status: response.status,
+        ...(payload.code ? { code: payload.code } : {}),
+      })
+    }
     return payload.ticket
   }
 

@@ -3,7 +3,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import { generateText, streamText } from "ai";
 import { wrapExternalModelBilling } from "./external_model_billing";
-const mocks = vi.hoisted(() => ({ credits: vi.fn(async () => {}) }));
+const mocks = vi.hoisted(() => ({
+  credits: vi.fn(async () => {}),
+  warning: vi.fn(),
+}));
 vi.mock("../services/codex_subscription_credit_check", () => ({
   checkSubscriptionCredits: mocks.credits,
 }));
@@ -13,17 +16,18 @@ vi.mock("@/main/settings", () => ({
   },
 }));
 vi.mock("electron-log", () => ({
-  default: { scope: () => ({ warn: vi.fn() }) },
+  default: { scope: () => ({ warn: mocks.warning }) },
 }));
 const usage = {
   inputTokens: { total: 100, noCache: 70, cacheRead: 20, cacheWrite: 10 },
   outputTokens: { total: 50, text: 30, reasoning: 20 },
 };
 const finishReason = { unified: "stop" as const, raw: "stop" };
-const workspaceEngineKey = "sk_seltra_workspace-scoped-test-key";
+const workspaceEngineKey = "dyad-key";
 beforeEach(() => {
   mocks.credits.mockReset();
-  vi.stubEnv("DYAD_WEB_RUNTIME", "1");
+  mocks.warning.mockReset();
+  vi.stubEnv("DYAD_WEB_RUNTIME", "0");
   vi.stubEnv("SELTRA_ENGINE_URL", "http://localhost:3001/v1");
   vi.stubEnv("SELTRA_ENGINE_API_KEY", workspaceEngineKey);
   vi.stubEnv("SELTRA_ENGINE_CREDIT_IDENTITY", "signed-workspace-credit-identity");
@@ -105,6 +109,58 @@ it("reports streamed usage once and uses resolved model attribution", async () =
   expect(
     JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)),
   ).toMatchObject({ modelId: "resolved-local", connection: "local" });
+});
+it("keeps usage-report failures non-blocking and rate-limits warnings", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(null, { status: 404 })),
+  );
+  const model = new MockLanguageModelV3({
+    doGenerate: async () => ({
+      content: [{ type: "text", text: "completed despite telemetry" }],
+      finishReason,
+      usage,
+      warnings: [],
+    }),
+  });
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await generateText({
+      model: wrapExternalModelBilling(
+        model,
+        { connection: "local", modelProvider: "custom-provider" },
+        "dyad-key",
+      ),
+      prompt: "test",
+    });
+    expect(result.text).toBe("completed despite telemetry");
+  }
+
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(mocks.warning).toHaveBeenCalledTimes(1);
+});
+it("does not send legacy usage receipts from the web runtime", async () => {
+  vi.stubEnv("DYAD_WEB_RUNTIME", "1");
+  const model = new MockLanguageModelV3({
+    doGenerate: async () => ({
+      content: [{ type: "text", text: "completed" }],
+      finishReason,
+      usage,
+      warnings: [],
+    }),
+  });
+
+  const result = await generateText({
+    model: wrapExternalModelBilling(
+      model,
+      { connection: "subscription", modelProvider: "openai" },
+      "dyad-key",
+    ),
+    prompt: "test",
+  });
+
+  expect(result.text).toBe("completed");
+  expect(fetch).not.toHaveBeenCalled();
 });
 it("blocks confirmed credit denial before inference", async () => {
   mocks.credits.mockRejectedValueOnce(new Error("Out of credits"));

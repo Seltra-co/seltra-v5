@@ -13,11 +13,12 @@ const mockTx = {
     createMany: (...args: unknown[]) => mockProjectAssetCreateMany(...args),
   },
 }
+const mockTransaction = jest.fn((callback: (tx: typeof mockTx) => unknown, _options?: unknown) => callback(mockTx))
 
 jest.mock('../db', () => ({
   prisma: {
     tenant: { findFirst: (...args: unknown[]) => mockTenantFindFirst(...args) },
-    $transaction: (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
+    $transaction: (callback: (tx: typeof mockTx) => unknown, options?: unknown) => mockTransaction(callback, options),
   },
 }))
 
@@ -33,6 +34,7 @@ describe('builder app-state sync', () => {
     mockAgentEventCreate.mockReset().mockResolvedValue({})
     mockProjectAssetFindMany.mockReset().mockResolvedValue([])
     mockProjectAssetCreateMany.mockReset().mockResolvedValue({ count: 0 })
+    mockTransaction.mockClear()
   })
 
   it('persists blueprint visuals in one batched write', async () => {
@@ -60,5 +62,6 @@ describe('builder app-state sync', () => {
         { projectId: 'tenant-1', kind: 'image', prompt: 'Collection image', storageRef: 'core:7:collection' },
       ],
     })
+    expect(mockTransaction).toHaveBeenCalledWith(expect.any(Function), { maxWait: 10_000, timeout: 20_000 })
   })
 })

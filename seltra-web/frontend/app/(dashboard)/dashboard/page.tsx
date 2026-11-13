@@ -118,14 +118,14 @@ function clearAuth() {
   ['seltra:token','seltra:user','seltra:active_store'].forEach((k) => localStorage.removeItem(k))
   window.dispatchEvent(new Event('seltra:auth-expired'))
 }
-async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<{ data: T | null; error: string | null; aborted?: boolean }> {
+async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<{ data: T | null; error: string | null; aborted?: boolean; status?: number }> {
   const token = getToken()
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as Record<string, string> ?? {}) }
   if (token) headers['Authorization'] = `Bearer ${token}`
   try {
     const res  = await fetchWithSeltraAuth(`${API_BASE}${path}`, { ...opts, headers })
     const json = await res.json().catch(() => ({}))
-    if (!res.ok) { if (res.status === 401) clearAuth(); return { data: null, error: json?.message ?? `HTTP ${res.status}` } }
+    if (!res.ok) { if (res.status === 401) clearAuth(); return { data: null, error: json?.message ?? `HTTP ${res.status}`, status: res.status } }
     return { data: json as T, error: null }
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') return { data: null, error: null, aborted: true }
@@ -912,7 +912,6 @@ export default function DashboardPage() {
   const [workflowRunId, setWorkflowRunId] = useState('')
   const [coreUnderstanding, setCoreUnderstanding] = useState('')
   const previewOpenedForRunRef = useRef('')
-  const [workflowStreamReconnecting, setWorkflowStreamReconnecting] = useState(false)
   const coreRunEventQueueRef = useRef<Promise<void>>(Promise.resolve())
   const pendingBrowserQaRef = useRef<Array<Record<string, unknown>>>([])
   const flushPendingBrowserQaRef = useRef<() => void>(() => undefined)
@@ -962,7 +961,6 @@ export default function DashboardPage() {
   const [coreFiles, setCoreFiles] = useState<File[]>([])
   const coreMessageAttachmentUrlsRef = useRef<string[]>([])
   const [coreConnected, setCoreConnected] = useState(false)
-  const [coreRestoreInFlight, setCoreRestoreInFlight] = useState(false)
   const [coreConnectionError, setCoreConnectionError] = useState('')
   const [coreQuestionnaire, setCoreQuestionnaire] = useState<CoreQuestionnaire | null>(null)
   const [coreQuestionnaireSummary, setCoreQuestionnaireSummary] = useState<Array<{ question: string; answer: string }> | null>(null)
@@ -1267,23 +1265,15 @@ export default function DashboardPage() {
     }
   }
 
-  const retryCoreConnection = async () => {
+  const retryCoreConnection = () => {
     const client = coreClientRef.current
-    if (!client || coreRestoreInFlight) {
-      if (!client) setCoreGatewayError('Seltra could not connect to this project. Please retry.')
+    const events = coreEventsRef.current
+    if (!client || !events) {
+      setCoreGatewayError('Seltra could not connect to this project. Please retry.')
       return
     }
-    setCoreRestoreInFlight(true)
     setCoreGatewayError('')
-    try {
-      await client.prewarm('restore')
-      coreEventsRef.current?.retryNow()
-    } catch {
-      console.warn('[builder] Workspace restore failed; retry is available.', { projectId: coreTenantRef.current })
-      setCoreGatewayError('Seltra could not restart this project. Please retry.')
-    } finally {
-      setCoreRestoreInFlight(false)
-    }
+    events.retryNow()
   }
 
   const recoverCorePreview = useCallback(async () => {
@@ -1658,6 +1648,26 @@ export default function DashboardPage() {
     const refreshSession = () => getCoreSession(tenantId, true)
     const client = existingClient ?? new CoreClient(getSession, refreshSession)
     coreClientRef.current = client
+    let cancelled = false
+    let workspaceRestore: Promise<void> | undefined
+    const restoreWorkspaceBeforeConnect = () => {
+      if (workspaceRestore) return workspaceRestore
+      workspaceRestore = (async () => {
+        let appId = coreAppRef.current
+        if (!Number.isSafeInteger(appId) || !appId || appId <= 0) {
+          const lookup = await apiFetch<Array<{ coreAppId: number }>>(`/api/v5/builder/apps?tenantId=${encodeURIComponent(tenantId)}`)
+          if (cancelled) return
+          if (lookup.error) throw Object.assign(new Error('Could not look up the saved project.'), { status: lookup.status })
+          const existingApp = lookup.data?.find((app) => Number.isSafeInteger(app.coreAppId) && app.coreAppId > 0)
+          if (!existingApp) return
+          appId = existingApp.coreAppId
+          coreAppRef.current = appId
+          localStorage.setItem(`seltra:core:last-app:${tenantId}`, JSON.stringify({ appId }))
+        }
+        if (!cancelled && appId) await client.prewarm('restore')
+      })().finally(() => { workspaceRestore = undefined })
+      return workspaceRestore
+    }
     const attachCoreApp = async (runtimeId: string, appId: number) => {
       const machine = { protocolVersion: 1, machineId: 'app_run', encodedKey: { appId } }
       try {
@@ -1750,7 +1760,7 @@ export default function DashboardPage() {
       const syncBeforeRunCompleted = async () => {
         const client = coreClientRef.current
         if (!client) throw Object.assign(new Error('CORE_CLIENT_UNAVAILABLE'), { code: 'CORE_CLIENT_UNAVAILABLE' })
-        const result = await client.syncNow()
+        const result = await client.syncNow(coreRunRef.current?.id)
         if (result.verified !== true) throw Object.assign(new Error('MANIFEST_NOT_VERIFIED'), { code: 'MANIFEST_NOT_VERIFIED' })
         updateOrchestratorProgress({ 'workspace-sync': 'completed' }, 'verify')
       }
@@ -2257,10 +2267,11 @@ export default function DashboardPage() {
         return
       }
       setCoreGatewayError(message)
-    })
+    }, restoreWorkspaceBeforeConnect)
     coreEventsRef.current = events
     events.connect()
     return () => {
+      cancelled = true
       events.close()
       if (coreEventsRef.current === events) coreEventsRef.current = null
       coreRuntimeRef.current = undefined
@@ -2523,7 +2534,7 @@ export default function DashboardPage() {
         // Reattaching the dashboard is not proof that a Core worker is alive.
         // Do not renew its lease here; otherwise a dead stream looks active
         // forever and the interrupted run can never be resumed.
-        setCoreStartupStatus('Reconnecting to the saved build…')
+        setCoreStartupStatus('')
       }
     })
     return () => {
@@ -2600,16 +2611,10 @@ export default function DashboardPage() {
     let stopped = false
     let lastSeq = workflowEventsRef.current.at(-1)?.seq ?? 0
     let retryDelay = 500
-    let heartbeatTimer: number | undefined
-    const markHeartbeat = () => {
-      if (heartbeatTimer !== undefined) window.clearTimeout(heartbeatTimer)
-      setWorkflowStreamReconnecting(false)
-      heartbeatTimer = window.setTimeout(() => setWorkflowStreamReconnecting(true), 30000)
-    }
-    markHeartbeat()
     const consume = async () => {
       while (!stopped) {
         const controller = new AbortController()
+        let connectedAt: number | undefined
         try {
           const token = getToken()
           const headers = new Headers({ Accept: 'text/event-stream', 'Cache-Control': 'no-cache' })
@@ -2617,7 +2622,6 @@ export default function DashboardPage() {
           if (lastSeq) headers.set('Last-Event-ID', String(lastSeq))
           const response = await fetchWithSeltraAuth(`/api/v5/runs/${encodeURIComponent(runId)}/events`, { headers, signal: controller.signal, cache: 'no-store' })
           if (!response.ok || !response.body) throw new Error('Run updates are reconnecting.')
-          retryDelay = 500
           const reader = response.body.getReader()
           const decoder = new TextDecoder()
           let buffer = ''
@@ -2639,7 +2643,8 @@ export default function DashboardPage() {
             for (const block of blocks) {
               const eventName = block.split(/\r?\n/).find((line) => line.startsWith('event:'))?.slice(6).trim()
               if (eventName === 'heartbeat') {
-                markHeartbeat()
+                connectedAt ??= Date.now()
+                if (Date.now() - connectedAt >= 30_000) retryDelay = 500
                 continue
               }
               const data = block.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n')
@@ -2647,6 +2652,8 @@ export default function DashboardPage() {
               try {
                 const parsed: unknown = JSON.parse(data)
                 if (!isWorkflowEvent(parsed) || parsed.runId !== runId || parsed.seq <= lastSeq) continue
+                connectedAt ??= Date.now()
+                if (Date.now() - connectedAt >= 30_000) retryDelay = 500
                 if (lastSeq && parsed.seq !== lastSeq + 1) {
                   await reader.cancel()
                   controller.abort()
@@ -2666,15 +2673,13 @@ export default function DashboardPage() {
         } catch {
           controller.abort()
         }
-        if (!stopped) await new Promise((resolve) => window.setTimeout(resolve, retryDelay))
+        if (!stopped) await new Promise((resolve) => window.setTimeout(resolve, Math.round(retryDelay * (0.75 + Math.random() * 0.5))))
         retryDelay = Math.min(retryDelay * 2, 8000)
       }
     }
     void consume()
     return () => {
       stopped = true
-      if (heartbeatTimer !== undefined) window.clearTimeout(heartbeatTimer)
-      setWorkflowStreamReconnecting(false)
     }
   }, [sending, workflowRunId])
 
@@ -3398,7 +3403,7 @@ export default function DashboardPage() {
     setCoreWorkspaceOpened(true)
     setProjectSessionActive(true)
     const prompt = options.prompt?.trim() ?? ''
-    let store = options.storeOverride ?? activeStore ?? stores[0] ?? null
+    let store = options.storeOverride ?? activeStore ?? null
     if (store && !activeStore) storeContext.setActiveStore(store)
     if (!store) {
       setSending(true)
@@ -4288,7 +4293,7 @@ const handleAgentAttach = async (f: File) => {
                       <p className="mt-1 text-sm leading-5 text-white/55">Continue in the same app and conversation. Seltra will review what’s already there and carry on from the unfinished work.</p>
                       <button
                         type="button"
-                        disabled={sending || coreRestoreInFlight}
+                        disabled={sending}
                         onClick={() => {
                           if (!coreConnected) {
                             void retryCoreConnection()
@@ -4299,7 +4304,7 @@ const handleAgentAttach = async (f: File) => {
                         }}
                         className="mt-3 inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-[#082012] hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {coreRestoreInFlight ? 'Starting project…' : coreConnected ? 'Resume building' : 'Reconnect to project'}
+                        {coreConnected ? 'Resume building' : 'Reconnect to project'}
                       </button>
                     </section>
                   )}
@@ -4365,7 +4370,7 @@ const handleAgentAttach = async (f: File) => {
                     )
                   })}
                   {!structuredWorkflow && coreQuestionnaireSummary?.length ? <section className="w-full max-w-[680px] rounded-xl border border-white/[0.08] bg-[#171b19] p-3" aria-label="Answered questions"><p className="mb-2 text-xs font-medium text-white/55">Your answers</p>{coreQuestionnaireSummary.map((item) => <p key={item.question} className="py-1 text-sm text-white/75"><span className="text-white/45">{item.question} </span>{item.answer}</p>)}</section> : null}
-                  {structuredWorkflow ? <>{workflowStreamReconnecting && <p role="status" className="w-full max-w-[680px] rounded-full border border-amber-200/10 bg-amber-200/[0.04] px-3 py-1.5 text-xs text-white/55">Build updates paused. Reconnecting…</p>}{workflowEvents.length > 0 ? <WorkflowProgressCard events={workflowEvents} openingMessage={coreUnderstanding} active={sending} onOpenPreview={() => setPreviewOpen(true)} onFollowUp={setInput} onRetry={() => { const last = coreLastPromptRef.current; if (last?.store) void runCorePrompt(last.text, last.mode, last.store, [], false, true) }} onRetryAsset={(prompt) => coreRetryAssetRef.current(prompt)} /> : <section className="w-full max-w-[680px] animate-pulse rounded-xl border border-white/[0.08] bg-[#171b19] p-4 text-sm text-white/55" aria-live="polite">Preparing your build status…</section>}</> : workbench.steps.map((step) => <WorkbenchStepCard key={step.id} step={step} onPreview={() => setPreviewOpen(true)} />)}
+                  {structuredWorkflow ? <>{workflowEvents.length > 0 ? <WorkflowProgressCard events={workflowEvents} openingMessage={coreUnderstanding} active={sending} onOpenPreview={() => setPreviewOpen(true)} onFollowUp={setInput} onRetry={() => { const last = coreLastPromptRef.current; if (last?.store) void runCorePrompt(last.text, last.mode, last.store, [], false, true) }} onRetryAsset={(prompt) => coreRetryAssetRef.current(prompt)} /> : <section className="w-full max-w-[680px] animate-pulse rounded-xl border border-white/[0.08] bg-[#171b19] p-4 text-sm text-white/55" aria-live="polite">Preparing your build status…</section>}</> : workbench.steps.map((step) => <WorkbenchStepCard key={step.id} step={step} onPreview={() => setPreviewOpen(true)} />)}
         {!structuredWorkflow && workbench.phase === 'error' && <section className="w-full max-w-[680px] rounded-xl border border-rose-300/15 bg-[#171b19] p-3" role="alert"><p className="text-sm text-white/75">{workbench.error || 'Seltra couldn’t finish this request. Retry to continue.'}</p><button type="button" className="mt-2 rounded-lg bg-emerald-400 px-3 py-1.5 text-sm font-semibold text-[#082012]" onClick={() => { const last = coreLastPromptRef.current; if (last?.store) { dispatchWorkbench({ type: 'send', keepSplit: Boolean(corePreviewUrl) }); void runCorePrompt(last.text, last.mode, last.store, [], false, true) } }}>Retry</button></section>}
                   {!structuredWorkflow && workbench.phase === 'planReady' && !coreBlueprint && <section className="w-full max-w-[680px] rounded-2xl border border-emerald-400/20 bg-[#171b19] p-4" aria-label="App plan"><p className="font-semibold text-white">Your app plan is ready</p><p className="mt-1 text-sm text-white/55">A focused services catalog with clear tiers and contact details.</p><button type="button" onClick={() => { setAgentStreamPhase('building'); setPreviewOpen(true); setSidebarOpen(false); replayApprovalResolveRef.current?.(); replayApprovalResolveRef.current = null }} className="mt-3 rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-[#082012]">Approve and build</button></section>}
                   {!structuredWorkflow && !workflowEvents.length && !sending && !activeAssistantVisible && activeTodos.length > 0 && <CoreTodoProgress todos={activeTodos} />}
@@ -4466,7 +4471,7 @@ const handleAgentAttach = async (f: File) => {
                             {!previewRecovering && previewRecoveryError && <details className="max-w-full text-left text-xs text-white/45"><summary className="cursor-pointer hover:text-white/70">Show details</summary><pre className="mt-2 max-h-32 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{previewRecoveryError}</pre></details>}
                             {!previewRecovering && <button type="button" onClick={() => void recoverCorePreview()} className="mt-1 rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-[#082012] hover:bg-emerald-300">Try again</button>}
                           </div>}
-                          {(corePreviewError || coreConnectionError) && <div role="alert" className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#141615]/95 px-6 text-center"><img src="/assets/brand/mark.png" alt="" className="h-12 w-12 object-contain"/><p className="max-w-sm text-sm text-white/80">Seltra couldn’t start the app preview.</p><button type="button" className="rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-[#082012] hover:bg-emerald-300" onClick={() => { setCorePreviewError(''); setCoreConnectionError(''); setCorePreviewLoaded(false); if (corePreviewUrl) { setPreviewReloadKey((key) => key + 1); void recoverCorePreview() } else if (!coreRuntimeRef.current) void retryCoreConnection().then(() => { const last = coreLastPromptRef.current; if (last?.store) void runCorePrompt(last.text, last.mode, last.store) }); else { const last = coreLastPromptRef.current; if (last?.store) void runCorePrompt(last.text, last.mode, last.store) } }}>Retry preview</button></div>}
+                          {(corePreviewError || coreConnectionError) && <div role="alert" className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#141615]/95 px-6 text-center"><img src="/assets/brand/mark.png" alt="" className="h-12 w-12 object-contain"/><p className="max-w-sm text-sm text-white/80">Seltra couldn’t start the app preview.</p><button type="button" className="rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-[#082012] hover:bg-emerald-300" onClick={() => { setCorePreviewError(''); setCoreConnectionError(''); setCorePreviewLoaded(false); if (corePreviewUrl) { setPreviewReloadKey((key) => key + 1); void recoverCorePreview() } else void retryCoreConnection() }}>Retry preview</button></div>}
                           {corePreviewConsoleOpen && <section aria-label="Core preview console" className="absolute inset-x-0 bottom-0 z-10 flex h-[38%] min-h-28 flex-col border-t border-white/15 bg-[#111312]/95 text-[11px] text-white backdrop-blur"><div className="flex items-center justify-between border-b border-white/10 px-3 py-2"><span>Core preview console</span><button type="button" onClick={() => setCorePreviewConsole([])} className="text-white/55 hover:text-white">Clear</button></div><div className="min-h-0 flex-1 overflow-y-auto p-2 font-mono">{corePreviewConsole.length ? corePreviewConsole.map((entry, index) => <p key={`${entry.timestamp}-${index}`} className={cn('whitespace-pre-wrap break-words py-0.5', entry.level === 'error' ? 'text-red-300' : entry.level === 'warn' ? 'text-amber-200' : 'text-white/70')}><span className="mr-2 text-white/35">{new Date(entry.timestamp).toLocaleTimeString()}</span>{entry.message || `[${entry.level}]`}</p>) : <p className="p-2 text-white/40">No console messages yet.</p>}</div></section>}
                           {corePreviewScreenshot && <CorePreviewAnnotator screenshot={corePreviewScreenshot} onCancel={() => setCorePreviewScreenshot('')} onAttach={(file) => { setCoreFiles((current) => [...current, file]); setCorePreviewScreenshot(''); toast.success('Annotated Core preview attached to your next message.') }} />}
                           {publishPanelOpen && FF_PUBLISH && activeStore && <div className="absolute inset-0 z-30 flex items-start justify-end bg-slate-950/10 p-3 backdrop-blur-[1px] sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setPublishPanelOpen(false) }}>

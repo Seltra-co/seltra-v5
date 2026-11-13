@@ -7,6 +7,8 @@ import { resolveUserIdFromAuthorization } from '../auth/resolve-user'
 import { Prisma } from '@prisma/client'
 import { Observable } from 'rxjs'
 
+const RUN_EVENT_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 20_000 }
+
 export type PersistedRunState = 'queued' | 'running' | 'waiting_for_user' | 'stopping' | 'stopped' | 'interrupted' | 'failed' | 'paused_no_credits' | 'completed'
 
 type WorkflowPhase = 'planning' | 'awaiting_approval' | 'preparing' | 'building' | 'verifying' | 'ready' | 'failed'
@@ -319,7 +321,7 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
         await tx.run.update({ where: { id: runId }, data: { lastEventSeq: summarySeq } })
       }
       return created
-    })
+    }, RUN_EVENT_TRANSACTION_OPTIONS)
     } catch (error) {
       if (event.eventKey && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         const existing = await prisma.runEvent.findUnique({ where: { runId_eventKey: { runId, eventKey: event.eventKey } } })
@@ -377,7 +379,7 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
         })
       }
       return tx.runEvent.findUniqueOrThrow({ where: { runId_seq: { runId, seq: updated.lastEventSeq } } })
-    })
+    }, RUN_EVENT_TRANSACTION_OPTIONS)
     } catch (error) {
       if (event.eventKey && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         const existing = await prisma.runEvent.findUnique({ where: { runId_eventKey: { runId, eventKey: event.eventKey } } })

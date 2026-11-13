@@ -208,8 +208,21 @@ async function syncWorkspaceAppsNow(
   claims: SessionClaims,
   runtime: WorkspaceRuntime,
   forceVerify = false,
+  runId?: string,
+  traceId?: string,
 ): Promise<import("./workspace_sync.js").WorkspaceSyncResult> {
   const startedAt = Date.now();
+  const operationId = randomUUID();
+  console.info(JSON.stringify({
+    event: "workspace_sync_started",
+    timestamp: new Date(startedAt).toISOString(),
+    operationId,
+    stage: "workspace_sync",
+    tenantId: claims.workspaceId,
+    workspaceKey: claims.coreWorkspaceKey,
+    ...(runId ? { runId } : {}),
+    ...(traceId ? { traceId } : {}),
+  }));
   return workspaceSyncState(claims.workspaceId).synchronize({
     appsRoot: path.resolve(config.WORKSPACE_ROOT, "ws", claims.coreWorkspaceKey, "apps"),
     syncFromExecution: runtime.syncFromExecution,
@@ -218,18 +231,33 @@ async function syncWorkspaceAppsNow(
     forceVerify,
     onFailure: (reasonCode, error) => console.error(JSON.stringify({
       event: "workspace_sync_failed",
+      timestamp: new Date().toISOString(),
+      operationId,
+      stage: "workspace_sync",
       tenantId: claims.workspaceId,
+      workspaceKey: claims.coreWorkspaceKey,
+      ...(runId ? { runId } : {}),
+      ...(traceId ? { traceId } : {}),
+      durationMs: Date.now() - startedAt,
+      status: "failed",
       reasonCode,
       errorName: error instanceof Error ? error.name : undefined,
     })),
     onSuccess: (result) => console.info(JSON.stringify({
       event: "workspace_sync_completed",
+      timestamp: new Date().toISOString(),
+      operationId,
+      stage: "workspace_sync",
       tenantId: claims.workspaceId,
+      workspaceKey: claims.coreWorkspaceKey,
+      ...(runId ? { runId } : {}),
+      ...(traceId ? { traceId } : {}),
       filesCount: result.filesCount,
       unchanged: result.unchanged,
       verified: result.verified,
       syncFromExecutionMs: result.syncFromExecutionMs,
       durationMs: Date.now() - startedAt,
+      status: "completed",
     })),
   });
 }
@@ -2367,8 +2395,13 @@ async function main(): Promise<void> {
       }
       if (request.method === "POST" && url.pathname === "/api/workspace/sync-now") {
         checkOrigin(request);
+        let body: { runId?: unknown } = {};
+        try { body = JSON.parse((await readBody(request, 4 * 1024)).toString("utf8")) as typeof body; }
+        catch { throw new HttpError(400, "INVALID_REQUEST", "A valid workspace sync request is required."); }
+        if (body.runId !== undefined && (typeof body.runId !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(body.runId)))
+          throw new HttpError(400, "INVALID_REQUEST", "The workspace sync run identifier is invalid.");
         const runtime = await runtimeFor(claims, "workspace_sync_now", undefined, "user_send");
-        const result = await syncWorkspaceAppsNow(config, claims, runtime, true);
+        const result = await syncWorkspaceAppsNow(config, claims, runtime, true, typeof body.runId === "string" ? body.runId : undefined);
         sendJson(response, 200, { ok: true, ...result });
         return;
       }
@@ -2695,7 +2728,8 @@ async function main(): Promise<void> {
               if (!sync.ok) console.error(JSON.stringify({ event: "tenant_app_sync_failed", tenantId: claims.workspaceId, appId: coreAppId, status: sync.status }));
             }).catch(() => console.error(JSON.stringify({ event: "tenant_app_sync_failed", tenantId: claims.workspaceId, appId: coreAppId })));
             const appPath = (candidate as { path?: unknown }).path
-            if (typeof appPath === "string" && (channel === "create-app" || channel === "list-apps")) {
+            if (!workspaceRuntime.syncFromExecution && typeof appPath === "string" && (channel === "create-app" || channel === "list-apps")) {
+              const operationId = randomUUID();
               void (async () => {
                 const files: Array<{ path: string; content: string }> = []
                 const walk = async (root: string, relative = ""): Promise<void> => {
@@ -2728,7 +2762,17 @@ async function main(): Promise<void> {
                 await walk(appPath)
                 if (!files.length) return
                 await syncWorkspaceFileBatches(config, claims, files, coreAppId)
-              })().catch((error) => console.error(JSON.stringify({ event: "workspace_sync_failed", tenantId: claims.workspaceId, reasonCode: typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "workspace_sync_failed", errorName: error instanceof Error ? error.name : undefined })))
+              })().catch((error) => console.error(JSON.stringify({
+                event: "workspace_sync_failed",
+                timestamp: new Date().toISOString(),
+                operationId,
+                stage: "local_app_path_scan",
+                tenantId: claims.workspaceId,
+                workspaceKey: claims.coreWorkspaceKey,
+                appId: coreAppId,
+                reasonCode: typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "workspace_sync_failed",
+                errorName: error instanceof Error ? error.name : undefined,
+              })))
             }
           }
         }
@@ -2905,7 +2949,7 @@ async function main(): Promise<void> {
             }
             workspaceSyncInFlight = true;
             try {
-              await syncWorkspaceAppsNow(config, claims, workspaceRuntime);
+              await syncWorkspaceAppsNow(config, claims, workspaceRuntime, false, undefined, traceId);
             } catch {
               // syncWorkspaceAppsNow emits the structured workspace_sync_failed event.
             } finally {

@@ -1,13 +1,14 @@
 import type { CoreClient } from './client'
 
 export class CoreEvents {
-  private static readonly MAX_RECONNECT_ATTEMPTS = 5
   private socket?: WebSocket
   private stopped = false
   private retry = 500
-  private attempts = 0
   private opening = false
   private timer?: number
+  private stableTimer?: number
+  private reconnectStartedAt = 0
+  private reconnectFailureShown = false
   private lastEventId?: string
   private generation = 0
   private listenersAttached = false
@@ -20,10 +21,12 @@ export class CoreEvents {
     private readonly onFrame: (frame: { channel: string; payload: unknown }) => void,
     private readonly onStatus: (connected: boolean) => void,
     private readonly onError: (message: string) => void = () => undefined,
+    private readonly beforeConnect?: () => Promise<void>,
   ) {}
 
   connect() {
     this.stopped = false
+    this.reconnectStartedAt ||= Date.now()
     if (!this.listenersAttached) {
       window.addEventListener('online', this.resumeOnFocus)
       window.addEventListener('focus', this.resumeOnFocus)
@@ -35,10 +38,12 @@ export class CoreEvents {
   }
 
   retryNow() {
-    if (this.socket?.readyState === WebSocket.OPEN || this.socket?.readyState === WebSocket.CONNECTING || this.opening) return
+    if (this.socket?.readyState === WebSocket.OPEN || this.socket?.readyState === WebSocket.CONNECTING) return
     this.generation += 1
     if (this.timer) window.clearTimeout(this.timer)
     this.timer = undefined
+    if (this.stableTimer) window.clearTimeout(this.stableTimer)
+    this.stableTimer = undefined
     this.stopped = true
     this.opening = false
     const previous = this.socket
@@ -55,8 +60,10 @@ export class CoreEvents {
       previous.close(1000, 'Retry requested')
     }
     this.retry = 500
-    this.attempts = 0
+    this.reconnectStartedAt = Date.now()
+    this.reconnectFailureShown = false
     this.stopped = false
+    this.onError('')
     void this.open()
   }
 
@@ -64,8 +71,9 @@ export class CoreEvents {
     if (this.stopped || this.opening) return
     this.opening = true
     const generation = this.generation
-    this.attempts += 1
     try {
+      await this.beforeConnect?.()
+      if (this.stopped || generation !== this.generation) return
       const ticket = await this.client.wsTicket()
       if (this.stopped || generation !== this.generation) return
       const url = this.client.eventsUrl
@@ -94,41 +102,48 @@ export class CoreEvents {
             this.lastEventId = (frame.payload as { cursor?: string } | null)?.cursor ?? this.lastEventId
             this.onFrame({ channel: frame.channel, payload: frame.payload })
             if (frame.channel === 'web:session') {
-              this.attempts = 0
-              this.retry = 250
               this.onStatus(true)
               this.onError('')
+              this.reconnectStartedAt = Date.now()
+              this.reconnectFailureShown = false
+              if (this.stableTimer) window.clearTimeout(this.stableTimer)
+              this.stableTimer = window.setTimeout(() => {
+                this.stableTimer = undefined
+                if (generation === this.generation && socket.readyState === WebSocket.OPEN) this.retry = 500
+              }, 30_000)
             }
           }
-        } catch (error) {
-          this.onError(error instanceof Error ? `Could not decode a Seltra Core event: ${error.message}` : 'Could not decode a Seltra Core event.')
+        } catch {
+          socket.close(1011, 'Invalid event frame')
         }
       }
       socket.onclose = () => {
         if (generation !== this.generation) return
+        if (this.stableTimer) window.clearTimeout(this.stableTimer)
+        this.stableTimer = undefined
         this.onStatus(false)
-        if (!this.stopped) this.onError('Seltra connection closed. Reconnecting...')
         if (!this.stopped) this.scheduleRetry()
       }
       socket.onerror = () => {
         if (generation !== this.generation) return
-        this.onError('Could not connect to the Seltra Core gateway. Reconnecting...')
         socket.close()
       }
     } catch (error) {
       if (generation !== this.generation) return
       this.onStatus(false)
-      this.onError(error instanceof Error ? `${error.message} Reconnecting...` : 'Could not start the Seltra Core connection. Reconnecting...')
-      if (!this.stopped) this.scheduleRetry()
+      if (isPermanentConnectionError(error)) {
+        this.stopped = true
+        this.onError(connectionFailureMessage(error))
+      } else if (!this.stopped) this.scheduleRetry()
     } finally {
       if (generation === this.generation) this.opening = false
     }
   }
 
   private scheduleRetry() {
-    if (this.attempts >= CoreEvents.MAX_RECONNECT_ATTEMPTS) {
-      this.onError(`Connection paused after ${CoreEvents.MAX_RECONNECT_ATTEMPTS} attempts. Retry to reconnect.`)
-      return
+    if (!this.reconnectFailureShown && Date.now() - this.reconnectStartedAt >= 120_000) {
+      this.reconnectFailureShown = true
+      this.onError('Seltra could not reconnect to your project yet. Your saved work is safe; retry or contact support.')
     }
     const delay = Math.round(this.retry * (0.75 + Math.random() * 0.5))
     this.retry = Math.min(this.retry * 2, 15_000)
@@ -145,8 +160,11 @@ export class CoreEvents {
   close() {
     this.generation += 1
     this.stopped = true
+    this.opening = false
     if (this.timer) window.clearTimeout(this.timer)
     this.timer = undefined
+    if (this.stableTimer) window.clearTimeout(this.stableTimer)
+    this.stableTimer = undefined
     this.socket?.close(1000, 'Builder closed')
     if (this.listenersAttached) {
       window.removeEventListener('online', this.resumeOnFocus)
@@ -155,4 +173,33 @@ export class CoreEvents {
       this.listenersAttached = false
     }
   }
+
+}
+
+function isPermanentConnectionError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const failure = error as { status?: unknown; code?: unknown }
+  const status = typeof failure.status === 'number' ? failure.status : undefined
+  const code = typeof failure.code === 'string' ? failure.code.toUpperCase() : ''
+  return Boolean(
+    (status !== undefined && [400, 401, 403, 404, 410].includes(status)) ||
+    [
+      'APP_NOT_FOUND',
+      'INVALID_REQUEST',
+      'MANIFEST_NOT_VERIFIED',
+      'WORKSPACE_DESTROYED',
+      'WORKSPACE_KEY_MISMATCH',
+      'WORKSPACE_OWNER_MISMATCH',
+      'WORKSPACE_RESTORE_FAILED',
+      'STORE_SLUG_MISMATCH',
+    ].includes(code),
+  )
+}
+
+function connectionFailureMessage(error: unknown): string {
+  const failure = error && typeof error === 'object' ? error as { status?: unknown } : {}
+  if (failure.status === 401 || failure.status === 403) {
+    return 'You no longer have access to this project. Sign in again or contact support.'
+  }
+  return 'Seltra could not safely restore this project. Your saved work has been kept. Retry or contact support.'
 }

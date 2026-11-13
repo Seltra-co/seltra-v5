@@ -17,6 +17,7 @@ const mockTx = {
   projectFile: { upsert: mockProjectFileUpsert },
   $queryRaw: jest.fn().mockResolvedValue([{ lastEventSeq: 1 }]),
 }
+const mockTransaction = jest.fn((callback: (tx: typeof mockTx) => unknown, _options?: unknown) => callback(mockTx))
 
 jest.mock('../db', () => ({
   prisma: {
@@ -33,7 +34,7 @@ jest.mock('../db', () => ({
     projectAsset: { findMany: jest.fn().mockResolvedValue([]), create: mockProjectAssetCreate, findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
     fileBlob: { createMany: jest.fn().mockResolvedValue({ count: 1 }) },
     projectSnapshot: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn() },
-    $transaction: jest.fn((callback: (tx: typeof mockTx) => unknown) => callback(mockTx)),
+    $transaction: (callback: (tx: typeof mockTx) => unknown, options?: unknown) => mockTransaction(callback, options),
   },
 }))
 jest.mock('../auth/resolve-user', () => ({ resolveUserIdFromAuthorization: jest.fn().mockResolvedValue('user-1') }))
@@ -49,6 +50,7 @@ describe('workspace file keys and verification evidence', () => {
     mockProjectFileUpsert.mockClear()
     mockProjectFileFindMany.mockClear()
     mockProjectAssetCreate.mockClear()
+    mockTransaction.mockClear()
     mockTx.runEvent.findUnique.mockReset().mockResolvedValue(null)
     mockTx.runEvent.create.mockReset()
     mockTx.$queryRaw.mockReset().mockResolvedValue([{ lastEventSeq: 1 }])
@@ -66,6 +68,7 @@ describe('workspace file keys and verification evidence', () => {
 
     expect([...mockProjectFiles.keys()]).toEqual([path])
     expect(mockProjectFileUpsert).toHaveBeenCalledTimes(1)
+    expect(mockTransaction.mock.calls[0]?.[1]).toEqual({ maxWait: 10_000, timeout: 20_000 })
   })
 
   it('counts an uppercase pages/Index.tsx route as routed', async () => {

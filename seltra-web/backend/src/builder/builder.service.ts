@@ -303,7 +303,7 @@ export class BuilderService {
         if (assetsToCreate.length > 0) await tx.projectAsset.createMany({ data: assetsToCreate })
       }
       return savedApp
-    })
+    }, { maxWait: 10_000, timeout: 20_000 })
     return app
   }
 
