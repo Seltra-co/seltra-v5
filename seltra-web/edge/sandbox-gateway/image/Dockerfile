@@ -10,6 +10,7 @@ ENV HOME=/workspace
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /opt/dyad
 RUN apt-get update && apt-get install -y --no-install-recommends git procps ripgrep curl iproute2 ca-certificates && rm -rf /var/lib/apt/lists/* && groupadd --gid 10001 dyad && useradd --uid 10001 --gid dyad --home-dir /workspace --no-create-home --shell /usr/sbin/nologin dyad && mkdir -p /workspace/userData /workspace/apps /workspace/tmp /opt/dyad/tmp && chown -R dyad:dyad /workspace /opt/dyad
+RUN printf '%s\n' "$BUILD_SHA" > /opt/dyad/BUILD_SHA
 COPY package.json package-lock.json ./
 COPY node_modules ./node_modules
 RUN node ./node_modules/playwright-core/cli.js install --with-deps chromium && chown -R dyad:dyad /ms-playwright

@@ -19,12 +19,12 @@ async function freePort() {
   return port;
 }
 
-async function launch(fixture, drizzleDir = path.resolve(here, "../../../core/drizzle")) {
+async function launch(fixture, drizzleDir = path.resolve(here, "../../../core/drizzle"), extraEnv = {}) {
   const port = await freePort();
   const rpcPort = await freePort();
   const child = spawn(process.execPath, [path.join(root, "image/bootstrap.mjs")], {
     cwd: root,
-    env: { ...process.env, PORT: String(port), RUNTIME_RPC_PORT: String(rpcPort), SANDBOX_RUNTIME_ENTRY: path.join(here, "fixtures", fixture), SANDBOX_DRIZZLE_DIR: drizzleDir, RUNTIME_RPC_SECRET: "test-only-secret", RUNTIME_SECRETS_KEY: "test-only-key" },
+    env: { ...process.env, PORT: String(port), RUNTIME_RPC_PORT: String(rpcPort), SANDBOX_RUNTIME_ENTRY: path.join(here, "fixtures", fixture), SANDBOX_DRIZZLE_DIR: drizzleDir, RUNTIME_RPC_SECRET: "test-only-secret", RUNTIME_SECRETS_KEY: "test-only-key", ...extraEnv },
     stdio: "ignore",
   });
   children.add(child);
@@ -36,7 +36,7 @@ async function launch(fixture, drizzleDir = path.resolve(here, "../../../core/dr
 }
 
 test("bootstrap waits for the real runtime RPC listener and reports names only", async () => {
-  const { base } = await launch("runtime-ok.mjs");
+  const { base } = await launch("runtime-ok.mjs", undefined, { BUILD_SHA: "a".repeat(40) });
   let ready = false;
   for (let attempt = 0; attempt < 100; attempt++) {
     if ((await fetch(`${base}/__ready`)).ok) { ready = true; break; }
@@ -45,6 +45,7 @@ test("bootstrap waits for the real runtime RPC listener and reports names only",
   assert.equal(ready, true);
   const status = await (await fetch(`${base}/__boot-status`)).json();
   assert.equal(status.phase, "ready");
+  assert.equal(status.buildSha, "a".repeat(40));
   assert.equal(status.runtimeHealthy, true);
   assert.deepEqual(status.files, { runtimeBundle: "present", migrationJournal: "present" });
   assert.ok(status.logTail.some((line) => line.includes("fixture runtime started")));

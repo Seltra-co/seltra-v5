@@ -7,6 +7,18 @@ import path from "node:path";
 const runtimePort = Number(process.env.RUNTIME_RPC_PORT || 8787);
 const runtimeEntry = path.resolve(process.env.SANDBOX_RUNTIME_ENTRY || "/opt/dyad/dist/runtime/runtime_main.js");
 const drizzleDir = path.resolve(process.env.SANDBOX_DRIZZLE_DIR || path.join(path.dirname(runtimeEntry), "..", "..", "drizzle"));
+function readBuildSha() {
+  let value = process.env.BUILD_SHA?.trim();
+  if (!value) {
+    try {
+      value = fs.readFileSync("/opt/dyad/BUILD_SHA", "utf8").trim();
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+  return value && /^[a-f0-9]{40}$/i.test(value) ? value : null;
+}
+const buildSha = readBuildSha();
 const files = { runtimeBundle: "missing", migrationJournal: "missing" };
 const bootStartedAt = new Date().toISOString();
 const logs = [];
@@ -36,7 +48,7 @@ function record(chunk) {
 function status() {
   const report = process.report?.getReport?.();
   return {
-    phase, bootStartedAt, uptimeSeconds: Math.floor(process.uptime()), files,
+    phase, buildSha, bootStartedAt, uptimeSeconds: Math.floor(process.uptime()), files,
     childPid: child?.pid ?? null, exitCode, exitSignal, lastError,
     runtimePort, runtimeHealthy: phase === "ready",
     node: process.version, platform: process.platform, arch: process.arch,
