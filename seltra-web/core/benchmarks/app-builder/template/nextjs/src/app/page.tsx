@@ -1,4 +1,4 @@
-import { MadeWithDyad } from "@/components/made-with-dyad";
+import { MadeWithSeltra } from "@/components/made-with-seltra";
 
 export default function Home() {
   return (
@@ -6,7 +6,7 @@ export default function Home() {
       <main className="flex flex-col gap-8 row-start-1 items-center sm:items-start">
         <h1>Blank page</h1>
       </main>
-      <MadeWithDyad />
+      <MadeWithSeltra />
     </div>
   );
 }

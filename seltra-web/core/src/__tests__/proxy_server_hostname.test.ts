@@ -34,6 +34,7 @@ describe("app preview authority and forwarding", () => {
             "expired=; dOmAiN = .localhost; Max-Age=0; Path=/auth; HttpOnly",
           ],
         });
+
         res.end("cookies");
       } else {
         res.setHeader("content-type", "application/json");
@@ -123,6 +124,15 @@ describe("app preview authority and forwarding", () => {
     });
   }
 
+  it("serves the Seltra service worker from the preview origin", async () => {
+    const response = await request("/seltra-sw.js", {
+      Host: `app-42.localhost:${port}`,
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toBe("application/javascript");
+    expect(response.body).toContain("[Seltra SW]");
+  });
+
   it("advertises its hostname and bound port and forwards HTTP with upstream headers", async () => {
     expect(origin).toBe(`http://app-42.localhost:${port}`);
     const result = await request(
@@ -210,17 +220,27 @@ describe("app preview authority and forwarding", () => {
     const binding = await new Promise<string>((resolve, reject) => {
       worker.on("error", reject);
       worker.on("message", (message) => {
-        if (typeof message === "string" && message.startsWith("proxy-server-bind ")) resolve(message);
+        if (
+          typeof message === "string" &&
+          message.startsWith("proxy-server-bind ")
+        )
+          resolve(message);
       });
     });
     expect(binding).toMatch(/^proxy-server-bind address=0\.0\.0\.0 port=\d+$/);
     const started = await new Promise<string>((resolve, reject) => {
       worker.on("error", reject);
       worker.on("message", (message) => {
-        if (typeof message === "string" && message.startsWith("proxy-server-start url=")) resolve(message);
+        if (
+          typeof message === "string" &&
+          message.startsWith("proxy-server-start url=")
+        )
+          resolve(message);
       });
     });
-    port = Number(new URL(started.slice("proxy-server-start url=".length)).port);
+    port = Number(
+      new URL(started.slice("proxy-server-start url=".length)).port,
+    );
     const response = await request("/api", {
       Host: `container:${port}`,
       "X-Seltra-Preview-Host": `app-42.localhost:${port}`,
@@ -237,7 +257,7 @@ describe("app preview authority and forwarding", () => {
   ])(
     "rejects sibling/deceptive hostname %s before HTTP or injected resources",
     async (hostname) => {
-      for (const pathname of ["/api", "/dyad-sw.js"]) {
+      for (const pathname of ["/api", "/seltra-sw.js"]) {
         expect(
           (await request(pathname, { Host: `${hostname}:${port}` })).status,
         ).toBe(421);

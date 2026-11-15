@@ -56,7 +56,7 @@
   returned `200 {"ok":true}`. This exposed and fixed a hard-coded health check
   URL to port 8080. The test process was stopped afterward.
 - **Upstream blank-app branding remains.** New blank apps still include the
-  starter scaffold's “Welcome to Your Blank App / Made with Dyad” content.
+  starter scaffold's “Welcome to Your Blank App / Made with Seltra” content.
   This is template content rather than a Seltra renderer string; replace it in
   the web-only scaffold or explicitly accept the upstream wording.
 - **The final E2E gates are open.** M3 requires two consecutive full E2E passes;

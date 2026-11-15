@@ -127,7 +127,7 @@ test("editor commit menu commits multiple staged files at once", async ({
     encoding: "utf-8",
   }).trim();
 
-  const madeWithDyadPath = path.join("src", "components", "made-with-dyad.tsx");
+  const madeWithDyadPath = path.join("src", "components", "made-with-seltra.tsx");
   const robotsPath = path.join("public", "robots.txt");
 
   await po.previewPanel.clickTogglePreviewPanel();
@@ -137,13 +137,13 @@ test("editor commit menu commits multiple staged files at once", async ({
   ).toBeHidden({ timeout: Timeout.LONG });
 
   // Edit and save two files. Saving stages (does not commit) each file.
-  const madeWithDyadContent = 'export const MadeWithDyad = "commit-menu";\n';
+  const madeWithDyadContent = 'export const MadeWithSeltra = "commit-menu";\n';
   const robotsContent = "User-agent: *\nDisallow: /commit-menu\n";
   const madeWithDyadTreePath = madeWithDyadPath.replace(/\\/g, "/");
   const robotsTreePath = robotsPath.replace(/\\/g, "/");
   await editAndSaveFile(
     po.page,
-    "made-with-dyad.tsx",
+    "made-with-seltra.tsx",
     madeWithDyadTreePath,
     madeWithDyadContent,
   );
@@ -168,7 +168,7 @@ test("editor commit menu commits multiple staged files at once", async ({
   const stagedItems = po.page.getByTestId("staged-file-item");
   await expect(stagedItems).toHaveCount(2);
   await expect(
-    stagedItems.filter({ hasText: "made-with-dyad.tsx" }),
+    stagedItems.filter({ hasText: "made-with-seltra.tsx" }),
   ).toHaveCount(1);
   await expect(stagedItems.filter({ hasText: "robots.txt" })).toHaveCount(1);
 
@@ -186,7 +186,7 @@ test("editor commit menu commits multiple staged files at once", async ({
   await expect(dialog).toBeVisible();
 
   const filesList = po.page.getByTestId("editor-commit-files-list");
-  await expect(filesList).toContainText("made-with-dyad.tsx");
+  await expect(filesList).toContainText("made-with-seltra.tsx");
   await expect(filesList).toContainText("robots.txt");
 
   // The commit message is prefilled; replace it with a unique message.

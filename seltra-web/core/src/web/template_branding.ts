@@ -16,7 +16,7 @@ export async function brandWebBlankScaffold(
     appPath,
     "src",
     "components",
-    "made-with-dyad.tsx",
+    "made-with-seltra.tsx",
   );
   const publicPath = path.join(appPath, "public");
   const iconPath = path.join(publicPath, "seltra-mark.png");
@@ -35,7 +35,7 @@ export async function brandWebBlankScaffold(
     await fs.access(badgePath);
     await fs.writeFile(
       badgePath,
-      `export const MadeWithDyad = () => null;\n`,
+      `export const MadeWithSeltra = () => null;\n`,
       "utf8",
     );
   } catch {

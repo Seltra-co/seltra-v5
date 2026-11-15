@@ -1,5 +1,5 @@
 import { defineConfig } from "vite";
-import dyadComponentTagger from "@dyad-sh/react-vite-component-tagger";
+import seltraComponentTagger from "@dyad-sh/react-vite-component-tagger";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 
@@ -14,7 +14,7 @@ export default defineConfig(() => ({
       path: process.env.VITE_HMR_PATH,
     } : undefined,
   },
-  plugins: [dyadComponentTagger(), react()],
+  plugins: [seltraComponentTagger(), react()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

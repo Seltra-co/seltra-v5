@@ -15,7 +15,7 @@ describe("optimistic media display", () => {
     expect(display).not.toContain("@media:");
     expect(display).toContain('name="my image.png"');
     expect(display).toContain(
-      'url="dyad-media://media/my%20app/.dyad/media/generated.png"',
+      'url="dyad-media://media/my%20app/.seltra/media/generated.png"',
     );
     expect(display).toContain('type="image/png"');
   });

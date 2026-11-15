@@ -113,7 +113,7 @@ try {
   const create = await request(route("create"), "POST", { workspaceKey, projectId: `dev-smoke-${workspaceKey}`, intent: "e2e", env });
   if (!create.ok) throw new Error(`create failed (${create.status})`);
   const scaffold = await request(route("exec"), "POST", {
-    argv: ["node", "-e", "const fs=require('node:fs');const p='/opt/dyad/scaffold';if(!fs.statSync(p).isDirectory())process.exit(2);const entries=fs.readdirSync(p);if(!entries.length)process.exit(3);process.stdout.write(JSON.stringify({entryCount:entries.length}))"],
+    argv: ["node", "-e", "const fs=require('node:fs');const p='/opt/seltra/scaffold';if(!fs.statSync(p).isDirectory())process.exit(2);const entries=fs.readdirSync(p);if(!entries.length)process.exit(3);process.stdout.write(JSON.stringify({entryCount:entries.length}))"],
     cwd: "/workspace",
   });
   const scaffoldBody = await scaffold.json().catch(() => ({}));

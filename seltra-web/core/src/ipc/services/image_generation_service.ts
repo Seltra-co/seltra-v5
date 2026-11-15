@@ -5,7 +5,7 @@ import {
 import { db } from "../../db";
 import { apps } from "../../db/schema";
 import { getDyadAppPath } from "../../paths/paths";
-import { DYAD_MEDIA_DIR_NAME } from "../utils/media_path_utils";
+import { DYAD_MEDIA_DIR_NAME, getDyadMediaDir } from "../utils/media_path_utils";
 import { safeJoin } from "../utils/path_utils";
 import {
   appOperationCoordinator,
@@ -210,11 +210,12 @@ export class ImageGenerationService {
         const timestamp = Date.now()
         const sanitizedPrompt = input.prompt.slice(0, 30).replace(/[^a-zA-Z0-9]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "").toLowerCase() || "stock_image"
         const fileName = `generated_${sanitizedPrompt}_${timestamp}.${extension}`
-        const filePath = safeJoin(appPath, DYAD_MEDIA_DIR_NAME, fileName)
+        const mediaDir = getDyadMediaDir(appPath)
+        const filePath = safeJoin(mediaDir, fileName)
         const assetsDirectory = safeJoin(appPath, "public", "assets")
         const assetName = `${input.assetSlot}.${extension}`
         const assetPath = safeJoin(assetsDirectory, assetName)
-        const tempMediaPath = safeJoin(appPath, DYAD_MEDIA_DIR_NAME, `.${fileName}.tmp`)
+        const tempMediaPath = safeJoin(mediaDir, `.${fileName}.tmp`)
         const tempAssetPath = safeJoin(assetsDirectory, `.${assetName}.${timestamp}.tmp`)
         await fs.promises.mkdir(path.dirname(filePath), { recursive: true })
         await fs.promises.mkdir(assetsDirectory, { recursive: true })
@@ -448,7 +449,7 @@ export class ImageGenerationService {
         }
         const resolvedAppPath = getDyadAppPath(currentApp.path);
         await ensureDyadGitignored(resolvedAppPath);
-        const mediaDir = path.join(resolvedAppPath, DYAD_MEDIA_DIR_NAME);
+        const mediaDir = getDyadMediaDir(resolvedAppPath);
         await fs.promises.mkdir(mediaDir, { recursive: true });
 
         const timestamp = Date.now();

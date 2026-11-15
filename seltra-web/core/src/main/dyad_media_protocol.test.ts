@@ -57,7 +57,7 @@ describe("dyad-media thumbnail protocol", () => {
   beforeEach(async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), "dyad-media-protocol-"));
     appPath = path.join(root, "app");
-    mediaPath = path.join(appPath, ".dyad", "media");
+    mediaPath = path.join(appPath, ".seltra", "media");
     cacheRoot = path.join(root, "cache");
     await fs.mkdir(mediaPath, { recursive: true });
     pngData = await fs.readFile(IMAGE_FIXTURE_PATH);
@@ -114,7 +114,7 @@ describe("dyad-media thumbnail protocol", () => {
   });
 
   it("preserves legacy media URLs for an app folder named app-id", async () => {
-    const legacyMediaPath = path.join(root, "app-id", ".dyad", "media");
+    const legacyMediaPath = path.join(root, "app-id", ".seltra", "media");
     await fs.mkdir(legacyMediaPath, { recursive: true });
     const sourcePath = path.join(legacyMediaPath, "legacy.png");
     await fs.writeFile(sourcePath, pngData);

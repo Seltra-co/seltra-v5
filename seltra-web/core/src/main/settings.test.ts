@@ -831,7 +831,7 @@ describe("writeSettings", () => {
       expect.objectContaining({
         action: {
           label: "Read restore docs",
-          url: "https://www.dyad.sh/docs/guides/migrate-restore#restoring-settings-from-backup",
+          url: "https://seltra.co/docs/guides/migrate-restore#restoring-settings-from-backup",
         },
         message: expect.not.stringContaining("https://"),
       }),

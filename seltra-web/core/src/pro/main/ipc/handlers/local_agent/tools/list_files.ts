@@ -11,7 +11,7 @@ import { listCodebaseFileMetadata } from "../../../../../../utils/codebase";
 import { resolveDirectoryWithinAppPath } from "./path_safety";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
 import {
-  DYAD_INTERNAL_GLOB,
+  DYAD_INTERNAL_GLOBS,
   filterDyadInternalFiles,
   resolveTargetAppPath,
 } from "./resolve_app_context";
@@ -140,7 +140,7 @@ export const listFilesTool: ToolDefinition<ListFilesArgs> = {
       const normalizedAppPath = targetAppPath.replace(/\\/g, "/");
       const globPattern = `${normalizedAppPath}/${globPath}`;
       const ignoredGlobs = args.app_name
-        ? ["**/.git", "**/.git/**", DYAD_INTERNAL_GLOB]
+        ? ["**/.git", "**/.git/**", ...DYAD_INTERNAL_GLOBS]
         : ["**/.git", "**/.git/**"];
       const ignoredPaths = await glob(globPattern, {
         withFileTypes: true,
@@ -167,16 +167,16 @@ export const listFilesTool: ToolDefinition<ListFilesArgs> = {
         },
       });
 
-      const filteredFiles = filterDyadInternalFiles(files, args.app_name);
-
       // Build the list of file paths
       allPaths = sortListedPaths(
-        filteredFiles.map((file) => ({
+        files.map((file) => ({
           path: file.path,
           isDirectory: false,
         })),
       );
     }
+
+    allPaths = filterDyadInternalFiles(allPaths, args.app_name);
 
     const totalCount = allPaths.length;
     const cappedPaths = allPaths.slice(0, MAX_PATHS_TO_RETURN);

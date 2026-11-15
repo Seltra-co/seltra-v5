@@ -23,6 +23,7 @@ const repairAppSchema = z.object({
 
 export type BrowserEvidence = {
   screenshot: Buffer;
+  heroSnapshotWebp?: Buffer;
   url: string;
   errors: string[];
   consoleErrors: string[];
@@ -30,6 +31,65 @@ export type BrowserEvidence = {
   ignoredNoise: string[];
   imageIssues: string[];
 };
+
+export function isAcceptableHeroCapture(
+  width: number,
+  height: number,
+  webpBytes: number,
+  luminanceVariance: number,
+): boolean {
+  return width === 1440 && height === 900 && webpBytes > 20 * 1024 && webpBytes <= 14 * 1024 * 1024 &&
+    Number.isFinite(luminanceVariance) && luminanceVariance > 20;
+}
+
+async function captureProjectHero(page: import("playwright").Page): Promise<{ screenshot: Buffer; webp: Buffer }> {
+  await page.evaluate(async () => {
+    if (document.fonts) await document.fonts.ready;
+    await Promise.all(Array.from(document.images, (image) => image.decode().catch(() => undefined)));
+  });
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await page.waitForTimeout(1_000);
+    const screenshot = await page.screenshot({ type: "png", fullPage: false, timeout: 10_000 });
+    const result = await page.evaluate(async (pngBase64) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${pngBase64}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) throw new Error("Could not inspect the project preview screenshot.");
+      context.drawImage(image, 0, 0);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let count = 0;
+      let sum = 0;
+      let sumSquares = 0;
+      for (let index = 0; index < pixels.length; index += 64) {
+        const luminance = 0.2126 * pixels[index] + 0.7152 * pixels[index + 1] + 0.0722 * pixels[index + 2];
+        sum += luminance;
+        sumSquares += luminance * luminance;
+        count += 1;
+      }
+      const luminanceVariance = count ? sumSquares / count - (sum / count) ** 2 : 0;
+      const webpDataUrl = canvas.toDataURL("image/webp", 0.88);
+      return {
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        luminanceVariance,
+        webpDataUrl,
+      };
+    }, screenshot.toString("base64"));
+    const encodedWebp = result.webpDataUrl.startsWith("data:image/webp;base64,")
+      ? result.webpDataUrl.slice("data:image/webp;base64,".length)
+      : "";
+    const webp = Buffer.from(encodedWebp, "base64");
+    if (isAcceptableHeroCapture(result.width, result.height, webp.length, result.luminanceVariance)) {
+      return { screenshot, webp };
+    }
+  }
+  throw new Error("The project preview screenshot was blank, undersized, or not 1440×900 after one retry.");
+}
 
 /** Keep in sync with the dashboard preview console filter. */
 export function isIgnoredBrowserNoise(message: string, baseUrl?: string): boolean {
@@ -121,7 +181,7 @@ export async function captureBrowserEvidence(
     });
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 20_000 });
+        await page.goto(target.toString(), { waitUntil: "networkidle", timeout: 30_000 });
         break;
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -186,13 +246,21 @@ export async function captureBrowserEvidence(
       return [...failures].slice(0, 40);
     });
     for (const issue of imageIssues) errors.push(`image QA: ${issue}`);
-    const screenshot = await page.screenshot({
-      type: "png",
-      fullPage: false,
-      timeout: 10_000,
-    });
+    let screenshot: Buffer;
+    let heroSnapshotWebp: Buffer | undefined;
+    try {
+      const heroCapture = await captureProjectHero(page);
+      screenshot = heroCapture.screenshot;
+      heroSnapshotWebp = heroCapture.webp;
+    } catch (error) {
+      screenshot = await page.screenshot({ type: "png", fullPage: false, timeout: 10_000 });
+      const issue = `Project hero capture failed: ${error instanceof Error ? error.message : "unknown error"}`;
+      imageIssues.push(issue);
+      errors.push(`image QA: ${issue}`);
+    }
     return {
       screenshot,
+      ...(heroSnapshotWebp ? { heroSnapshotWebp } : {}),
       url: target.toString(),
       errors: [...new Set(errors)].slice(0, 40),
       consoleErrors: [...new Set(consoleErrors)].slice(0, 40),

@@ -446,10 +446,10 @@ export class BuilderService {
         })
         const mime = workspaceFileMime(normalizedPath)
         // QA evidence is a workspace file, not a generated merchant asset.
-        if (encodedImage && mime?.startsWith('image/') && !/\/\.dyad\/media\/qa-screenshot\.png$/i.test(normalizedPath)) {
+        if (encodedImage && mime?.startsWith('image/') && !/\/\.seltra\/media\/qa-screenshot\.png$/i.test(normalizedPath)) {
           const storageRef = `core:${input.coreAppId ?? 'unknown'}:${normalizedPath}`
           const asset = await prisma.projectAsset.findFirst({ where: { projectId: input.tenantId, storageRef }, select: { id: true } })
-          const data = { kind: normalizedPath.includes('/.dyad/media/') ? 'generated_image' : 'image', storageRef }
+          const data = { kind: normalizedPath.includes('/.seltra/media/') ? 'generated_image' : 'image', storageRef }
           if (asset) await prisma.projectAsset.update({ where: { id: asset.id }, data })
           else await prisma.projectAsset.create({ data: { projectId: input.tenantId, ...data } })
         }

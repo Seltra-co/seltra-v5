@@ -82,8 +82,8 @@
           "force": false
         },
         {
-          "path": "src/components/made-with-dyad.tsx",
-          "content": "export const MadeWithDyad = () => {\n  return (\n    <div className=\"p-4 text-center\">\n      <a\n        href=\"https://www.dyad.sh/\"\n        target=\"_blank\"\n        rel=\"noopener noreferrer\"\n        className=\"text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200\"\n      >\n        Made with Dyad\n      </a>\n    </div>\n  );\n};\n",
+          "path": "src/components/made-with-seltra.tsx",
+          "content": "export const MadeWithSeltra = () => {\n  return (\n    <div className=\"p-4 text-center\">\n      <a\n        href=\"https://seltra.co/\"\n        target=\"_blank\"\n        rel=\"noopener noreferrer\"\n        className=\"text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200\"\n      >\n        Made with Seltra\n      </a>\n    </div>\n  );\n};\n",
           "force": false
         },
         {
@@ -358,7 +358,7 @@
         },
         {
           "path": "src/pages/Index.tsx",
-          "content": "// Update this page (the content is just a fallback if you fail to update the page)\n\nimport { MadeWithDyad } from \"@/components/made-with-dyad\";\n\nconst Index = () => {\n  return (\n    <div className=\"min-h-screen flex items-center justify-center bg-gray-100\">\n      <div className=\"text-center\">\n        <h1 className=\"text-4xl font-bold mb-4\">Welcome to Your Blank App</h1>\n        <p className=\"text-xl text-gray-600\">\n          Start building your amazing project here!\n        </p>\n      </div>\n      <MadeWithDyad />\n    </div>\n  );\n};\n\nexport default Index;\n",
+          "content": "// Update this page (the content is just a fallback if you fail to update the page)\n\nimport { MadeWithSeltra } from \"@/components/made-with-seltra\";\n\nconst Index = () => {\n  return (\n    <div className=\"min-h-screen flex items-center justify-center bg-gray-100\">\n      <div className=\"text-center\">\n        <h1 className=\"text-4xl font-bold mb-4\">Welcome to Your Blank App</h1>\n        <p className=\"text-xl text-gray-600\">\n          Start building your amazing project here!\n        </p>\n      </div>\n      <MadeWithSeltra />\n    </div>\n  );\n};\n\nexport default Index;\n",
           "force": false
         },
         {

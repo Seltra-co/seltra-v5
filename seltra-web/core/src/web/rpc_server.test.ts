@@ -74,11 +74,11 @@ describe("web RPC server", () => {
 
   it("runs the registered create-app handler only after finding a nonempty scaffold", async () => {
     const previousFlag = process.env.SELTRA_GATEWAY_SELF_TEST;
-    const previousScaffold = process.env.DYAD_SCAFFOLD_DIR;
+    const previousScaffold = process.env.SELTRA_SCAFFOLD_DIR;
     const scaffoldDir = await mkdtemp(path.join(os.tmpdir(), "gateway-scaffold-self-test-"));
     await mkdir(path.join(scaffoldDir, "src"));
     process.env.SELTRA_GATEWAY_SELF_TEST = "1";
-    process.env.DYAD_SCAFFOLD_DIR = scaffoldDir;
+    process.env.SELTRA_SCAFFOLD_DIR = scaffoldDir;
     const invoke = vi.fn(async () => ({
       __dyadIpcEnvelope: "dyad-ipc-envelope-v1",
       ok: true,
@@ -114,8 +114,8 @@ describe("web RPC server", () => {
       await rm(scaffoldDir, { recursive: true, force: true });
       if (previousFlag === undefined) delete process.env.SELTRA_GATEWAY_SELF_TEST;
       else process.env.SELTRA_GATEWAY_SELF_TEST = previousFlag;
-      if (previousScaffold === undefined) delete process.env.DYAD_SCAFFOLD_DIR;
-      else process.env.DYAD_SCAFFOLD_DIR = previousScaffold;
+      if (previousScaffold === undefined) delete process.env.SELTRA_SCAFFOLD_DIR;
+      else process.env.SELTRA_SCAFFOLD_DIR = previousScaffold;
     }
   });
 

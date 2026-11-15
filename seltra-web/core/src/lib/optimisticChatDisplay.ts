@@ -25,7 +25,7 @@ export function buildOptimisticChatDisplay(
         type: file?.mimeType ?? "application/octet-stream",
         url:
           appPath && file
-            ? `dyad-media://media/${encodeURIComponent(appPath)}/.dyad/media/${encodeURIComponent(name)}`
+            ? `dyad-media://media/${encodeURIComponent(appPath)}/.seltra/media/${encodeURIComponent(name)}`
             : "",
         path: "",
         attachmentType: "chat-context",

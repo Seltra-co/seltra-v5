@@ -86,11 +86,13 @@ describe("run_build", () => {
   });
 
   it("builds a passed QA payload pointing at the persisted .dyad screenshot", () => {
-    const evidence = { screenshot: Buffer.from("png-bytes"), consoleErrors: [], failedRequests: [], ignoredNoise: ["vite websocket"] };
-    const payload = capturedBrowserQaPayload({ appId: 7, chatId: 9, evidence, screenshotPath: ".dyad/media/qa-screenshot.png" });
+    const heroSnapshotWebp = Buffer.from("webp-bytes");
+    const evidence = { screenshot: Buffer.from("png-bytes"), heroSnapshotWebp, consoleErrors: [], failedRequests: [], ignoredNoise: ["vite websocket"] };
+    const payload = capturedBrowserQaPayload({ appId: 7, chatId: 9, evidence, screenshotPath: ".seltra/media/qa-screenshot.png" });
     expect(payload).toMatchObject({
-      status: "passed", screenshotPath: ".dyad/media/qa-screenshot.png", screenshotBytes: 9,
+      status: "passed", screenshotPath: ".seltra/media/qa-screenshot.png", screenshotBytes: 9,
       screenshotSha256: expect.stringMatching(/^[a-f0-9]{64}$/), ignoredNoise: ["vite websocket"],
+      heroSnapshotDataUrl: `data:image/webp;base64,${heroSnapshotWebp.toString("base64")}`,
     });
   });
 
@@ -100,10 +102,11 @@ describe("run_build", () => {
       consoleErrors: [],
       failedRequests: [],
       ignoredNoise: [],
+      heroSnapshotWebp: Buffer.from("webp-bytes"),
       imageIssues: ["Generated image is not larger than 20 KB: /assets/hero.webp"],
     };
-    expect(capturedBrowserQaPayload({ appId: 7, chatId: 9, evidence, screenshotPath: ".dyad/media/qa-screenshot.png" }))
-      .toMatchObject({ status: "failed", imageIssues: evidence.imageIssues });
+    expect(capturedBrowserQaPayload({ appId: 7, chatId: 9, evidence, screenshotPath: ".seltra/media/qa-screenshot.png" }))
+      .toMatchObject({ status: "failed", imageIssues: evidence.imageIssues, heroSnapshotDataUrl: null });
   });
 
   it("normalizes Git paths before comparing them with filesystem paths", () => {

@@ -12,7 +12,7 @@ import {
   RIPGREP_EXCLUDED_GLOBS,
 } from "@/ipc/utils/ripgrep_utils";
 import {
-  DYAD_INTERNAL_RIPGREP_EXCLUDE,
+  DYAD_INTERNAL_RIPGREP_EXCLUDES,
   resolveTargetAppPath,
 } from "./resolve_app_context";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
@@ -200,7 +200,9 @@ async function runRipgrep({
     args.push(...exclusionGlobs.flatMap((glob) => ["--glob", glob]));
 
     if (excludeDyadFolder) {
-      args.push("--glob", DYAD_INTERNAL_RIPGREP_EXCLUDE);
+      for (const exclude of DYAD_INTERNAL_RIPGREP_EXCLUDES) {
+        args.push("--glob", exclude);
+      }
     }
 
     args.push("--", query, ".");

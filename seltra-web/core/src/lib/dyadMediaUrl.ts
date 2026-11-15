@@ -1,8 +1,8 @@
 /**
- * Builds a dyad-media:// protocol URL for serving media files in Electron.
+ * Builds a dyad-media:// protocol URL for serving Seltra media files in Electron.
  */
 export function buildDyadMediaUrl(appPath: string, fileName: string): string {
-  return `dyad-media://media/${encodeURIComponent(appPath)}/.dyad/media/${encodeURIComponent(fileName)}`;
+  return `dyad-media://media/${encodeURIComponent(appPath)}/.seltra/media/${encodeURIComponent(fileName)}`;
 }
 
 /**
@@ -12,7 +12,7 @@ export function buildDyadMediaUrlForApp(
   appId: number,
   fileName: string,
 ): string {
-  return `dyad-media://media/app-id/${appId}/.dyad/media/${encodeURIComponent(fileName)}`;
+  return `dyad-media://media/app-id/${appId}/.seltra/media/${encodeURIComponent(fileName)}`;
 }
 
 /**

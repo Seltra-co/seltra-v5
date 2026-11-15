@@ -1,12 +1,13 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Circle, ClipboardList, Loader2, Sparkles, TriangleAlert, X } from 'lucide-react'
+import { Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Circle, ClipboardList, Loader2, RotateCcw, Sparkles, TriangleAlert, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import type { CoreTodo, CoreTodoRunOutcome } from '@/lib/builder/core-todos'
 
-export type CoreTodo = { id: string; content: string; status: 'pending' | 'in_progress' | 'completed' }
-export type CoreQuestion = { id: string; type: 'text' | 'radio' | 'checkbox'; question: string; why?: string; options?: string[]; required?: boolean; placeholder?: string }
-export type CoreQuestionnaire = { requestId: string; chatId: number; questions: CoreQuestion[]; isResponding?: boolean }
+export type { CoreTodo } from '@/lib/builder/core-todos'
+export type CoreQuestion = { id: string; type: 'text' | 'radio' | 'checkbox'; question: string; why?: string; shapes?: 'brand' | 'palette' | 'pages' | 'content' | 'imagery' | 'features' | 'integrations'; options?: string[]; required?: boolean; placeholder?: string }
+export type CoreQuestionnaire = { requestId: string; chatId: number; questions: CoreQuestion[]; isResponding?: boolean; generationError?: boolean }
 export type CoreBlueprint = { chatId: number; appName: string; userPrompt: string; templateId: string; themeId: string; designDirection: string; primaryColor: string; visuals?: Array<{ type: string; description: string; prompt: string }> }
 
 type MessageBlock =
@@ -111,7 +112,7 @@ function parseMessage(source: string): MessageBlock[] {
   })
 }
 
-export function CoreQuestionnaireCard({ questionnaire, onSubmit }: { questionnaire: CoreQuestionnaire; onSubmit: (answers: Record<string, string> | null) => void }) {
+export function CoreQuestionnaireCard({ questionnaire, onSubmit, onRetry }: { questionnaire: CoreQuestionnaire; onSubmit: (answers: Record<string, string> | null) => void; onRetry?: () => void }) {
   const { questions } = questionnaire
   const storageKey = `seltra:core:questionnaire:${questionnaire.requestId}`
   const [index, setIndex] = useState(0)
@@ -132,6 +133,15 @@ export function CoreQuestionnaireCard({ questionnaire, onSubmit }: { questionnai
     localStorage.setItem(storageKey, JSON.stringify({ index, answers }))
   }, [storageKey, index, answers, questionnaire.isResponding, draftLoaded])
   const question = questions[index]
+  if (!questions.length && questionnaire.generationError) {
+    return <section className="rounded-2xl border border-amber-400/20 bg-amber-400/5 p-4" role="alert">
+      <p className="text-sm text-white/80">Seltra could not generate project-specific questions. Retry, or skip questions and continue with the original prompt.</p>
+      <div className="mt-3 flex gap-2">
+        <button type="button" disabled={questionnaire.isResponding || !onRetry} onClick={onRetry} className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white disabled:opacity-50">{questionnaire.isResponding ? 'Retrying…' : 'Retry'}</button>
+        <button type="button" disabled={questionnaire.isResponding} onClick={() => onSubmit(null)} className="rounded-lg px-3 py-2 text-sm text-white/65 hover:bg-white/10 disabled:opacity-50">Skip questions</button>
+      </div>
+    </section>
+  }
   if (!question) return null
   const answer = answers[question.id] ?? ''
   const isLast = index === questions.length - 1
@@ -176,20 +186,32 @@ export function CoreQuestionnaireCard({ questionnaire, onSubmit }: { questionnai
   )
 }
 
-export function CoreTodoProgress({ todos }: { todos: CoreTodo[] }) {
+export function CoreTodoProgress({ todos, outcome = 'running', onRetry }: { todos: CoreTodo[]; outcome?: CoreTodoRunOutcome; onRetry?: () => void }) {
   const [open, setOpen] = useState(true)
   if (!todos.length) return null
   const done = todos.filter((todo) => todo.status === 'completed').length
   const active = todos.find((todo) => todo.status === 'in_progress')
+  const terminal = outcome !== 'running'
+  const title = outcome === 'ready'
+    ? 'Ready to preview'
+    : outcome === 'degraded'
+      ? 'Ready with items to fix'
+      : outcome === 'failed'
+        ? 'Build failed'
+        : active?.content || (done === todos.length ? 'All steps complete' : 'Build progress')
   return <section className="my-3 w-full min-w-0 max-w-[680px] overflow-hidden rounded-xl border border-white/[0.08] bg-[#171b19]">
     <button type="button" onClick={() => setOpen((value) => !value)} className="flex w-full items-center justify-between gap-3 px-3.5 py-2.5 text-left hover:bg-white/[0.025]">
-      <span className="flex min-w-0 items-center gap-2.5"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-emerald-400/10 text-emerald-300"><ClipboardList className="h-4 w-4" /></span><span className="truncate text-sm font-medium text-white">{active?.content || (done === todos.length ? 'All steps complete' : 'Build progress')}</span></span>
+      <span className="flex min-w-0 items-center gap-2.5"><span className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-lg', outcome === 'failed' ? 'bg-rose-400/10 text-rose-300' : 'bg-emerald-400/10 text-emerald-300')}>{terminal ? outcome === 'failed' ? <TriangleAlert className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" /> : <ClipboardList className="h-4 w-4" />}</span><span className="truncate text-sm font-medium text-white">{title}</span></span>
       <span className="flex shrink-0 items-center gap-2 text-xs text-white/50">{done}/{todos.length}<ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} /></span>
     </button>
     {open && <ol className="space-y-2 border-t border-white/[0.06] px-4 py-3">{todos.map((todo) => <li key={todo.id} className={cn('flex min-w-0 items-start gap-2.5 text-[13px]', todo.status === 'completed' ? 'text-white/40' : 'text-white/75')}>
-      {todo.status === 'completed' ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" /> : todo.status === 'in_progress' ? <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-emerald-300" /> : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-white/25" />}
+      {todo.status === 'completed' ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" /> : todo.status === 'in_progress' && !terminal ? <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-emerald-300" /> : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-white/25" />}
       <span className={cn('min-w-0 break-words [overflow-wrap:anywhere]', todo.status === 'completed' && 'line-through')}>{todo.content}</span>
     </li>)}</ol>}
+    {terminal && <div className={cn('flex items-center justify-between gap-3 border-t border-white/[0.06] px-4 py-3 text-xs', outcome === 'failed' ? 'text-rose-200/80' : 'text-white/55')}>
+      <span>{outcome === 'ready' ? 'Build completed successfully.' : outcome === 'degraded' ? 'Build completed with items that may need attention.' : 'The build stopped before completion.'}</span>
+      {outcome === 'failed' && onRetry && <button type="button" onClick={onRetry} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-400 px-2.5 py-1.5 font-semibold text-[#082012]"><RotateCcw className="h-3.5 w-3.5" />Retry</button>}
+    </div>}
   </section>
 }
 
@@ -273,7 +295,7 @@ function GeneratedAssets({ assets, loadAsset, onRetry }: { assets: Array<Extract
   </section>
 }
 
-export function CoreAgentMessage({ content, streamingPreview = '', isStreaming, todos, questionnaire, blueprint, onQuestionnaireSubmit, onBlueprintApprove, onBlueprintNameChange, loadAsset, onRetryAsset, approvalError, compactStream = false, structuredOnly = false, blueprintApproved = false }: { content: string; streamingPreview?: string; isStreaming?: boolean; todos?: CoreTodo[]; questionnaire?: CoreQuestionnaire; blueprint?: CoreBlueprint; onQuestionnaireSubmit?: (answers: Record<string, string> | null) => void; onBlueprintApprove?: () => Promise<void>; onBlueprintNameChange?: (name: string) => void; loadAsset?: (path: string) => Promise<string>; onRetryAsset?: (prompt: string) => Promise<void>; approvalError?: string; compactStream?: boolean; structuredOnly?: boolean; blueprintApproved?: boolean }) {
+export function CoreAgentMessage({ content, streamingPreview = '', isStreaming, todos, todoOutcome, onRetryTodos, questionnaire, blueprint, onQuestionnaireSubmit, onBlueprintApprove, onBlueprintNameChange, loadAsset, onRetryAsset, approvalError, compactStream = false, structuredOnly = false, blueprintApproved = false }: { content: string; streamingPreview?: string; isStreaming?: boolean; todos?: CoreTodo[]; todoOutcome?: CoreTodoRunOutcome; onRetryTodos?: () => void; questionnaire?: CoreQuestionnaire; blueprint?: CoreBlueprint; onQuestionnaireSubmit?: (answers: Record<string, string> | null) => void; onBlueprintApprove?: () => Promise<void>; onBlueprintNameChange?: (name: string) => void; loadAsset?: (path: string) => Promise<string>; onRetryAsset?: (prompt: string) => Promise<void>; approvalError?: string; compactStream?: boolean; structuredOnly?: boolean; blueprintApproved?: boolean }) {
   const blocks = useMemo(() => parseMessage(content), [content])
   const previewBlocks = useMemo(() => streamingPreview ? parseMessage(streamingPreview) : [], [streamingPreview])
   const hasQuestionnaireStatus = blocks.some((block) => block.kind === 'status' && /questionnaire/i.test(block.title))
@@ -300,6 +322,6 @@ export function CoreAgentMessage({ content, streamingPreview = '', isStreaming, 
     {!structuredOnly && previewBlocks.filter((block): block is Extract<MessageBlock, { kind: 'asset' }> => block.kind === 'asset').map((asset, index) => <GeneratedAssets key={`streaming-asset-${asset.prompt}-${index}`} assets={[asset]} loadAsset={loadAsset} onRetry={onRetryAsset} />)}
     {blueprint && (onBlueprintApprove || blueprintApproved) && !hasBlueprintBlock ? <BlueprintCard blueprint={blueprint} onApprove={onBlueprintApprove} onNameChange={onBlueprintNameChange ?? (() => undefined)} approvalError={approvalError} approved={blueprintApproved} /> : null}
     {!structuredOnly && questionnaire && onQuestionnaireSubmit ? <CoreQuestionnaireCard key={questionnaire.requestId} questionnaire={questionnaire} onSubmit={onQuestionnaireSubmit} /> : null}
-    {!structuredOnly && !compactStream && todos?.length ? <CoreTodoProgress todos={todos} /> : null}
+    {!structuredOnly && !compactStream && todos?.length ? <CoreTodoProgress todos={todos} outcome={todoOutcome} onRetry={onRetryTodos} /> : null}
   </div>
 }

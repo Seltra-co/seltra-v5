@@ -20,7 +20,7 @@ import {
   ApplyVisualEditingChangesParams,
 } from "@/ipc/types";
 import { VALID_IMAGE_MIME_TYPES } from "@/ipc/types/visual-editing";
-import { DYAD_MEDIA_DIR_NAME } from "@/ipc/utils/media_path_utils";
+import { getDyadMediaDir } from "@/ipc/utils/media_path_utils";
 import { ensureDyadGitignored } from "@/ipc/handlers/gitignoreUtils";
 import {
   transformContent,
@@ -103,8 +103,8 @@ export function registerVisualEditingHandlers() {
               "base64",
             );
 
-            // Save to .dyad/media as a staging copy
-            const mediaDir = path.join(appPath, DYAD_MEDIA_DIR_NAME);
+            // Save to .seltra/media as a staging copy
+            const mediaDir = getDyadMediaDir(appPath);
             await fsPromises.mkdir(mediaDir, { recursive: true });
             await fsPromises.writeFile(
               path.join(mediaDir, finalFileName),

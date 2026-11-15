@@ -4746,6 +4746,40 @@ describe("handleLocalAgentStream", () => {
   });
 
   describe("Synthetic planning_questionnaire reflection", () => {
+    it("fails the turn when fast-model generation is exhausted", async () => {
+      const { event, getMessagesByChannel } = createFakeEvent();
+      mockSettings = buildTestSettings({ enableDyadPro: true });
+      mockChatData = buildTestChat();
+      mockStreamResult = createFakeStream([]);
+      vi.mocked(buildAgentToolSet).mockImplementationOnce((ctx) => {
+        ctx.planningQuestionnaireGenerationFailed = true;
+        return {};
+      });
+
+      const succeeded = await handleLocalAgentStream(
+        event,
+        { chatId: 1, prompt: "Create a fashion storefront" },
+        new AbortController(),
+        {
+          placeholderMessageId: 10,
+          systemPrompt: "You are helpful",
+          dyadRequestId,
+        },
+      );
+
+      expect(succeeded).toBe(false);
+      expect(getMessagesByChannel("chat:response:error")).toEqual([
+        expect.objectContaining({
+          args: [
+            expect.objectContaining({
+              chatId: 1,
+              error: "QUESTIONNAIRE_GENERATION_FAILED",
+            }),
+          ],
+        }),
+      ]);
+    });
+
     it("injects a non-persisted reflection message after invalid planning_questionnaire input", async () => {
       // Arrange
       const { event } = createFakeEvent();

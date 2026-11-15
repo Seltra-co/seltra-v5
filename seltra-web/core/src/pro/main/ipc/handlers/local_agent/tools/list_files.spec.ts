@@ -328,6 +328,28 @@ describe("listFilesTool", () => {
       expect(result).toContain("other-a.ts");
     });
 
+    it("excludes .seltra media from referenced apps when include_ignored is true", async () => {
+      mockContext.referencedApps.set("other-app", otherAppDir);
+      const seltraMediaDir = path.join(otherAppDir, ".seltra", "media");
+      await fs.promises.mkdir(seltraMediaDir, { recursive: true });
+      await fs.promises.writeFile(
+        path.join(seltraMediaDir, "private.png"),
+        "private media",
+      );
+
+      const result = await listFilesTool.execute(
+        {
+          app_name: "other-app",
+          directory: ".seltra",
+          include_ignored: true,
+          recursive: true,
+        },
+        mockContext,
+      );
+
+      expect(result).not.toContain(".seltra/media/private.png");
+    });
+
     it("emits app_name attribute in the final XML output", async () => {
       mockContext.referencedApps.set("other-app", otherAppDir);
       await listFilesTool.execute({ app_name: "other-app" }, mockContext);

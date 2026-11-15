@@ -22,7 +22,7 @@ export async function createFromTemplate({
   const templateId = requestedTemplateId ?? settings.selectedTemplateId;
 
   if (templateId === "react") {
-    const configuredScaffoldPath = process.env.DYAD_SCAFFOLD_DIR?.trim();
+    const configuredScaffoldPath = process.env.SELTRA_SCAFFOLD_DIR?.trim();
     const sourceScaffoldPath = path.resolve(
       __dirname,
       "..",

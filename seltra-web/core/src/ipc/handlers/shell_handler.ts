@@ -23,7 +23,7 @@ function isDyadOAuthUrl(url: string): boolean {
 
 // Only allow opening files with known safe media extensions via shell.openPath.
 // This prevents execution of arbitrary executables even if they reside under a
-// .dyad/media directory.
+// .seltra/media directory.
 const ALLOWED_MEDIA_EXTENSIONS = new Set([
   ".png",
   ".jpg",
@@ -90,14 +90,14 @@ export function registerShellHandlers() {
       throw new DyadError("No file path provided.", DyadErrorKind.External);
     }
 
-    // Security: only allow opening files within .dyad/media subdirectories.
+    // Security: only allow opening files within .seltra/media subdirectories.
     // The dyad-apps tree contains AI-generated code, so opening arbitrary files
     // there via shell.openPath could execute malicious executables.
     // App paths may be under the default dyad-apps base directory (normal) or
     // at an external location (imported with skipCopy).
     if (!isFileWithinAnyDyadMediaDir(fullPath)) {
       throw new DyadError(
-        "Can only open files within .dyad/media directories.",
+        "Can only open files within .seltra/media directories.",
         DyadErrorKind.External,
       );
     }

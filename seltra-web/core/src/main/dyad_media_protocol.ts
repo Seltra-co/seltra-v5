@@ -6,6 +6,7 @@ import {
   DYAD_INTERNAL_DIR_NAME,
   DYAD_MEDIA_SUBDIR,
   DYAD_SCREENSHOT_SUBDIR,
+  migrateLegacyMediaDirectories,
 } from "../ipc/utils/media_path_utils";
 import {
   createMediaThumbnailService,
@@ -33,6 +34,7 @@ async function resolveContainedMediaPath(
   subdir: string,
   filename: string,
 ): Promise<{ sourcePath: string; cacheKeyPath: string }> {
+  migrateLegacyMediaDirectories(appPath);
   const targetDir = path.resolve(
     path.join(appPath, DYAD_INTERNAL_DIR_NAME, subdir),
   );
@@ -61,7 +63,7 @@ async function resolveContainedMediaPath(
     throw error;
   }
 
-  // Do not let .dyad or its media subdirectory redirect the protocol to a
+  // Do not let .seltra or its media subdirectory redirect the protocol to a
   // different directory through a symlink.
   const expectedTargetDir = path.resolve(
     realAppPath,
@@ -72,7 +74,7 @@ async function resolveContainedMediaPath(
     throw new MediaThumbnailError("Forbidden", 403);
   }
 
-  // Prevent a symlink inside .dyad/media from escaping the app directory.
+  // Prevent a symlink inside .seltra/media from escaping the app directory.
   const relativeRealPath = path.relative(realTargetDir, realCandidatePath);
   if (relativeRealPath.startsWith("..") || path.isAbsolute(relativeRealPath)) {
     throw new MediaThumbnailError("Forbidden", 403);
@@ -101,8 +103,8 @@ export function createDyadMediaProtocolHandler({
       }
 
       // Formats:
-      // dyad-media://media/{app-path}/.dyad/{subdir}/{filename}
-      // dyad-media://media/app-id/{id}/.dyad/{subdir}/{filename}
+      // dyad-media://media/{app-path}/.seltra/{subdir}/{filename}
+      // dyad-media://media/app-id/{id}/.seltra/{subdir}/{filename}
       const pathSegments = url.pathname.slice(1).split("/");
       const allowedSubdirs = [DYAD_MEDIA_SUBDIR, DYAD_SCREENSHOT_SUBDIR];
       const usesAppId =

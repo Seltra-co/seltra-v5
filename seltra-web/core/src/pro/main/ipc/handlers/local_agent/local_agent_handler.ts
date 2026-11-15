@@ -1323,6 +1323,12 @@ export async function handleLocalAgentStream(
     const latestUserMessage = [...messageHistory]
       .reverse()
       .find((message) => message.role === "user");
+    ctx.planningQuestionnairePrompt = latestUserMessage
+      ? getMessageText(latestUserMessage)
+      : undefined;
+    ctx.appBlueprintQuestionnaireSkipped =
+      ctx.planningQuestionnairePrompt?.trim() ===
+      "Skip the project questions and continue from my original request without assuming preferences.";
     const shouldWarnIfAttachmentUnread =
       currentTurnHasOnDiskAttachment ??
       (latestUserMessage != null &&
@@ -1699,7 +1705,6 @@ export async function handleLocalAgentStream(
                       type: "text",
                       text: buildPlanningQuestionnaireReflectionMessage(
                         questionnaireError,
-                        planModeOnly,
                       ),
                     },
                   ]);
@@ -2341,6 +2346,13 @@ export async function handleLocalAgentStream(
       return false; // Cancelled - don't consume quota
     }
 
+    if (ctx.planningQuestionnaireGenerationFailed) {
+      throw new DyadError(
+        "QUESTIONNAIRE_GENERATION_FAILED",
+        DyadErrorKind.Precondition,
+      );
+    }
+
     if (modelRefused) {
       accumulatedAiMessages.push({
         role: "assistant",
@@ -2593,7 +2605,10 @@ export async function handleLocalAgentStream(
       error:
         error instanceof SubscriptionBillingError
           ? error.serialize()
-          : "Seltra could not reach the model provider. Check the Core connection and retry.",
+          : error instanceof Error &&
+              error.message === "QUESTIONNAIRE_GENERATION_FAILED"
+            ? "QUESTIONNAIRE_GENERATION_FAILED"
+            : "Seltra could not reach the model provider. Check the Core connection and retry.",
       warningMessages:
         warningMessages.length > 0 ? [...new Set(warningMessages)] : undefined,
     });
@@ -2854,7 +2869,11 @@ function getPlanningQuestionnaireErrorFromStep(step: {
     }
 
     if (part.type === "tool-error") {
-      return typeof part.error === "string" ? part.error : "Unknown tool error";
+      if (typeof part.error === "string") return part.error;
+      if (isRecord(part.error) && typeof part.error.message === "string") {
+        return part.error.message;
+      }
+      return "Unknown tool error";
     }
 
     if (
@@ -2871,14 +2890,12 @@ function getPlanningQuestionnaireErrorFromStep(step: {
 
 function buildPlanningQuestionnaireReflectionMessage(
   errorDetail?: string,
-  planModeOnly?: boolean,
 ): string {
-  const base = "Your planning_questionnaire tool call had a format error.";
   const detail = errorDetail ? ` The error was: ${errorDetail}` : "";
-  if (planModeOnly) {
-    return `[System]${base}${detail} Review the tool's input schema, fix the issue, and re-call planning_questionnaire with correct arguments.`;
+  if (errorDetail?.includes("QUESTIONNAIRE_GENERATION_FAILED")) {
+    return `[System]The fast-model questionnaire generator already retried and failed.${detail} Stop before writing the app blueprint and report QUESTIONNAIRE_GENERATION_FAILED. Do not skip the questionnaire or substitute default questions.`;
   }
-  return `[System]${base}${detail} Skip the questionnaire step and proceed directly to the planning phase.`;
+  return `[System]Your planning_questionnaire tool call had a format error.${detail} Correct the tool arguments and retry once. If that retry fails, stop before writing the app blueprint and report QUESTIONNAIRE_GENERATION_FAILED. Do not skip the questionnaire or substitute default questions.`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

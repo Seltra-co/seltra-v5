@@ -133,7 +133,7 @@ The app blueprint is a lightweight configuration step — it captures key decisi
 This tool returns immediately and ends the current turn. The user reviews the blueprint card and, on approval, the system applies the chosen name/template/theme and starts a new turn with a follow-up message that contains the approved blueprint — that's when you proceed with implementation.
 
 <when_to_use>
-For the initial blueprint, use this tool only after planning_questionnaire successfully returns the user's answers. A concrete initial prompt does not replace that required questionnaire. When updating an existing unapproved blueprint, another questionnaire is optional unless preferences are still missing. Call the tool with all fields populated, including the planned visuals.
+For the initial blueprint, use this tool only after planning_questionnaire successfully returns the user's answers or the user explicitly chooses to skip questions. A concrete initial prompt does not replace the required questionnaire. If questions were explicitly skipped, do not invent answers or preferences. When updating an existing unapproved blueprint, another questionnaire is optional unless preferences are still missing. Call the tool with all fields populated, including the planned visuals.
 </when_to_use>
 
 <guidelines>
@@ -198,14 +198,20 @@ export const writeAppBlueprintTool: ToolDefinition<
 
   execute: async (args, ctx: AgentContext) => {
     const existingBlueprint = getAppBlueprintForChat(ctx.chatId);
-    if (
+    const questionnaireRequired =
       ctx.enableAppBlueprint !== false &&
       !existingBlueprint &&
       !ctx.appBlueprintQuestionnaireCompleted &&
-      ctx.planningQuestionnaireAvailable !== false
-    ) {
+      !ctx.appBlueprintQuestionnaireSkipped;
+    if (questionnaireRequired && ctx.planningQuestionnaireAvailable === false) {
       throw new DyadError(
-        "The initial app blueprint requires a successfully completed planning_questionnaire. Call planning_questionnaire, wait for the user's answers, then retry write_app_blueprint.",
+        "Initial questionnaire is disabled in Settings → Build and Agent Permissions. Set planning_questionnaire to Ask or Always allow, or explicitly skip questions.",
+        DyadErrorKind.Precondition,
+      );
+    }
+    if (questionnaireRequired && ctx.planningQuestionnaireAvailable !== false) {
+      throw new DyadError(
+        "The initial app blueprint requires a completed planning_questionnaire or an explicit user choice to skip questions. Ask the user before proceeding without answers.",
         DyadErrorKind.Precondition,
       );
     }

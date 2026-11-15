@@ -50,7 +50,7 @@ const LIMITS = {
 };
 
 const ALLOWED_HOSTS = new Set([
-  "www.dyad.sh",
+  "seltra.co",
   "dyad.sh",
   "academy.dyad.sh",
   "nodejs.org",
@@ -240,7 +240,7 @@ export function normalizeTriage(
     }
     fixedIn = {
       version,
-      url: `https://www.dyad.sh/docs/releases/${version}`,
+      url: `https://seltra.co/docs/releases/${version}`,
     };
   }
   if (assessment === "fixed_in_release" && !fixedIn) {
@@ -325,7 +325,7 @@ function stepsWithUpdate(triage) {
     /dyad\.sh\/download/i.test(step),
   );
   if (alreadyMentionsDownload) return triage.steps;
-  const update = `Update to Dyad ${triage.fixedIn.version} or newer from https://www.dyad.sh/download, which includes the fix ([release notes](${triage.fixedIn.url})).`;
+  const update = `Update to Dyad ${triage.fixedIn.version} or newer from https://seltra.co/download, which includes the fix ([release notes](${triage.fixedIn.url})).`;
   return [update, ...triage.steps].slice(0, LIMITS.steps);
 }
 

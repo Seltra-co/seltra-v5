@@ -177,7 +177,7 @@ export function createRpcServer(
           return;
         }
         const scaffoldPath = path.resolve(
-          process.env.DYAD_SCAFFOLD_DIR?.trim() || "/opt/dyad/scaffold",
+          process.env.SELTRA_SCAFFOLD_DIR?.trim() || "/opt/seltra/scaffold",
         );
         const scaffoldEntries = await readdir(scaffoldPath);
         if (!scaffoldEntries.length) {

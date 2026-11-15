@@ -42,6 +42,7 @@ import { logError } from "./logger.js";
 import { GithubPublisher } from "./publish/github.js";
 import { R2ObjectStore } from "./publish/r2.js";
 import { uploadGeneratedImage } from "./image_asset_upload.js";
+import { projectHeroPublicUrl, uploadProjectHero } from "./project_hero_asset.js";
 import { WorkspaceDurability } from "./publish/snapshot.js";
 import { EditLeaseClient } from "./publish/edit_lease.js";
 import { VercelPublisher } from "./publish/vercel.js";
@@ -2211,6 +2212,42 @@ async function main(): Promise<void> {
     response: ServerResponse,
   ): Promise<void> {
     const url = new URL(request.url ?? "/", "http://gateway.invalid");
+    if (request.method === "POST" && url.pathname === "/internal/projects/hero-snapshot") {
+      const suppliedHeader = request.headers["x-core-service-secret"];
+      const supplied = Buffer.from(Array.isArray(suppliedHeader) ? suppliedHeader[0] ?? "" : suppliedHeader ?? "");
+      const expected = Buffer.from(config.CORE_SERVICE_SECRET);
+      if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected))
+        throw new HttpError(401, "UNAUTHORIZED", "Core service authentication is required.");
+      if (!config.CORE_PUBLIC_URL)
+        throw new HttpError(503, "IMAGE_STORAGE_NOT_CONFIGURED", "Project hero URLs are unavailable: configure CORE_PUBLIC_URL.");
+      if (!objectStore || !r2AssetBucket)
+        throw new HttpError(503, "IMAGE_STORAGE_NOT_CONFIGURED", "Project hero storage is unavailable: configure an R2 asset bucket.");
+      let body: { projectId?: unknown; base64?: unknown };
+      try {
+        body = JSON.parse((await readBody(request, MAX_IMAGE_UPLOAD_BODY_BYTES)).toString("utf8")) as typeof body;
+      } catch (error) {
+        if (error instanceof HttpError) throw error;
+        throw new HttpError(400, "INVALID_REQUEST", "A valid project hero image is required.");
+      }
+      if (
+        typeof body.projectId !== "string" ||
+        typeof body.base64 !== "string" ||
+        body.base64.length > Math.ceil(MAX_IMAGE_UPLOAD_BODY_BYTES * 4 / 3)
+      ) throw new HttpError(400, "INVALID_REQUEST", "A valid project hero image is required.");
+      try {
+        const uploaded = await uploadProjectHero(objectStore, r2AssetBucket, body.projectId, body.base64);
+        sendJson(response, 200, {
+          key: uploaded.key,
+          size: uploaded.size,
+          url: projectHeroPublicUrl(config.CORE_PUBLIC_URL, body.projectId, String(Date.now())),
+        });
+      } catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+        if (code === "R2_UPLOAD_FAILED") throw new HttpError(502, code, "Project hero image could not be uploaded to durable storage.");
+        throw new HttpError(400, "INVALID_IMAGE", error instanceof Error ? error.message : "Project hero image is invalid.");
+      }
+      return;
+    }
     if (request.method === "POST" && url.pathname === "/internal/diag/workspace-model-token") {
       const remoteAddress = request.socket.remoteAddress ?? "";
       if (config.NODE_ENV === "production" || config.RENDER !== undefined || process.env.SELTRA_LOCAL_DIAGNOSTICS !== "1" || !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(remoteAddress))
@@ -2338,6 +2375,26 @@ async function main(): Promise<void> {
     }
     if (isImageGenerationRoute(request.method ?? "", url.pathname)) {
       await handleImageGenerationRequest(request, response);
+      return;
+    }
+    const projectHeroMatch = url.pathname.match(/^\/v1\/projects\/([A-Za-z0-9_-]{1,128})\/hero\.webp$/);
+    if (request.method === "GET" && projectHeroMatch) {
+      if (!objectStore || !r2AssetBucket)
+        throw new HttpError(503, "IMAGE_STORAGE_NOT_CONFIGURED", "Project hero storage is unavailable.");
+      try {
+        const bytes = await objectStore.get(r2AssetBucket, `projects/${projectHeroMatch[1]}/hero.webp`);
+        response.writeHead(200, {
+          "content-type": "image/webp",
+          "content-length": bytes.length,
+          "cache-control": "public, max-age=31536000, immutable",
+          "x-content-type-options": "nosniff",
+        });
+        response.end(bytes);
+      } catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+        if (code === "R2_OBJECT_NOT_FOUND") throw new HttpError(404, "NOT_FOUND", "Project hero image was not found.");
+        throw new HttpError(502, "IMAGE_STORAGE_UNAVAILABLE", "Project hero image could not be loaded.");
+      }
       return;
     }
     if (request.method === "POST" && url.pathname === "/images/assets") {

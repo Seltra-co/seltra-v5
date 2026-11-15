@@ -33,37 +33,36 @@ export function resolveTargetAppPath(
 }
 
 /**
- * Glob pattern for `.dyad/` internals, for use in the node `glob` library's
+ * Glob pattern for private app internals, for use in the node `glob` library's
  * ignore list.
  *
- * A referenced app's `.dyad/` folder (rules, chat history, snapshots, etc.) is
- * not part of the `@app:Name` reference contract and must not be exposed to
- * read-only tools when targeting another app.
+ * A referenced app's `.dyad/` metadata and `.seltra/` media are not part of the
+ * `@app:Name` reference contract and must not be exposed to read-only tools.
  */
-export const DYAD_INTERNAL_GLOB = "**/.dyad/**";
+export const DYAD_INTERNAL_GLOBS = ["**/.dyad/**", "**/.seltra/**"];
 
 /**
- * Negated glob for ripgrep's `--glob` flag, excluding `.dyad/` at the app root
- * (ripgrep globs are relative to cwd, which is the target app path).
+ * Negated globs for ripgrep's `--glob` flag, excluding private app directories
+ * at the app root (ripgrep globs are relative to the target app path).
  */
-export const DYAD_INTERNAL_RIPGREP_EXCLUDE = "!.dyad/**";
+export const DYAD_INTERNAL_RIPGREP_EXCLUDES = ["!.dyad/**", "!.seltra/**"];
 
 /**
- * Is `relativePath` inside a `.dyad/` folder at the app root?
+ * Is `relativePath` inside a private app directory at the app root?
  *
  * Accepts slashes in either direction and a leading `./`; callers should pass a
- * path already resolved relative to the app root (so traversal aliases like
- * `src/../.dyad/...` normalize correctly before being checked).
+ * path already resolved relative to the app root (so traversal aliases
+ * normalize correctly before being checked).
  */
 export function isDyadInternalPath(relativePath: string): boolean {
   const normalized = relativePath.replace(/\\/g, "/").replace(/^\.\//, "");
-  return normalized.split("/")[0] === ".dyad";
+  const firstPathSegment = normalized.split("/")[0];
+  return firstPathSegment === ".dyad" || firstPathSegment === ".seltra";
 }
 
 /**
- * Strip `.dyad/` entries from a file list when targeting a referenced app.
- * No-op for the current app (`appName` omitted) — the user's own `.dyad/`
- * internals are always visible to them.
+ * Strip private app directories from a file list when targeting a referenced
+ * app. The current app's own internal files remain visible to the user.
  */
 export function filterDyadInternalFiles<T extends { path: string }>(
   files: T[],
@@ -76,10 +75,9 @@ export function filterDyadInternalFiles<T extends { path: string }>(
 }
 
 /**
- * Block Git metadata in every app and `.dyad/` content in referenced apps.
- * Current-app `.dyad/` content remains available. The relative path is
- * computed from the resolved `fullFilePath`, so normalized traversal aliases
- * (e.g. `src/../.dyad/...`) are caught.
+ * Block Git metadata in every app and private app directories in referenced
+ * apps. The relative path is computed from the resolved `fullFilePath`, so
+ * normalized traversal aliases are caught.
  */
 export function assertDyadInternalAccessAllowed({
   targetAppPath,
@@ -108,8 +106,12 @@ export function assertDyadInternalAccessAllowed({
     return;
   }
   if (isDyadInternalPath(relativeFromApp)) {
+    const internalDirName = relativeFromApp
+      .replace(/\\/g, "/")
+      .replace(/^\.\//, "")
+      .split("/")[0];
     throw new DyadError(
-      `Cannot read .dyad/ paths from referenced apps — these files are not part of the @app reference contract.`,
+      `Cannot read ${internalDirName}/ paths from referenced apps — these files are not part of the @app reference contract.`,
       DyadErrorKind.Validation,
     );
   }

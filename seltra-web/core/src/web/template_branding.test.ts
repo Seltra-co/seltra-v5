@@ -29,8 +29,8 @@ it("brands only the copied blank app when called by the web template path", asyn
   const logo = path.join(appPath, "assets", "icon", "seltra-mark.png");
   await fs.writeFile(logo, Buffer.from([137, 80, 78, 71]));
   await fs.writeFile(
-    path.join(appPath, "src", "components", "made-with-dyad.tsx"),
-    "Made with Dyad",
+    path.join(appPath, "src", "components", "made-with-seltra.tsx"),
+    "Made with Seltra",
   );
 
   await brandWebBlankScaffold(appPath, logo);
@@ -40,10 +40,10 @@ it("brands only the copied blank app when called by the web template path", asyn
   ).toContain("Welcome to Your New App");
   expect(
     await fs.readFile(
-      path.join(appPath, "src", "components", "made-with-dyad.tsx"),
+      path.join(appPath, "src", "components", "made-with-seltra.tsx"),
       "utf8",
     ),
-  ).toContain("MadeWithDyad = () => null");
+  ).toContain("MadeWithSeltra = () => null");
   const html = await fs.readFile(path.join(appPath, "index.html"), "utf8");
   expect(html).toContain('href="/seltra-mark.png"');
   expect(html).toContain("Powered by Seltra");

@@ -103,11 +103,37 @@ describe("app blueprint tools", () => {
         ctx,
       ),
     ).rejects.toThrow(
-      "The initial app blueprint requires a successfully completed planning_questionnaire",
+      "The initial app blueprint requires a completed planning_questionnaire",
     );
 
     expect(getAppBlueprintForChat(ctx.chatId)).toBeUndefined();
     expect(ctx.appBlueprintWrittenThisTurn).not.toBe(true);
+  });
+
+  it("allows the blueprint after the user explicitly skips questions", async () => {
+    const ctx = createAgentContext(1007);
+    ctx.appBlueprintQuestionnaireCompleted = false;
+    ctx.appBlueprintQuestionnaireSkipped = true;
+
+    await writeAppBlueprintTool.execute(
+      {
+        app_name: "Skipped Questions Blueprint",
+        user_prompt: "Build me an app",
+        attachments: [],
+        design_direction: "Clean and minimal.",
+        primary_color: "#2563EB",
+        visuals: [
+          {
+            type: "logo",
+            description: "App logo",
+            prompt: "Minimal logo",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    expect(ctx.appBlueprintWrittenThisTurn).toBe(true);
   });
 
   it("explains how to recover when the required questionnaire is disabled", async () => {

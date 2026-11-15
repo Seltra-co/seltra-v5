@@ -221,15 +221,15 @@ describe("sandbox capabilities", () => {
 
   it("allows reading and listing under .dyad/", async () => {
     await expect(
-      sandboxReadFile(appPath, ".dyad/media/stored-log.txt"),
+      sandboxReadFile(appPath, ".seltra/media/stored-log.txt"),
     ).resolves.toBe("line1\nline2\n");
     await expect(
-      sandboxReadFile(appPath, ".dyad/media/attachments-manifest.json"),
+      sandboxReadFile(appPath, ".seltra/media/attachments-manifest.json"),
     ).resolves.toContain("server.log");
-    await expect(sandboxListFiles(appPath, ".dyad/media")).resolves.toEqual(
+    await expect(sandboxListFiles(appPath, ".seltra/media")).resolves.toEqual(
       expect.arrayContaining([
-        ".dyad/media/attachments-manifest.json",
-        ".dyad/media/stored-log.txt",
+        ".seltra/media/attachments-manifest.json",
+        ".seltra/media/stored-log.txt",
       ]),
     );
   });

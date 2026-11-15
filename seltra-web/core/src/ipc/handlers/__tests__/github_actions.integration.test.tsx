@@ -225,7 +225,7 @@ describe("GitHub connector actions (integration)", () => {
       within(connectedRepo)
         .getByRole("link", { name: "See troubleshooting guide" })
         .getAttribute("href"),
-    ).toBe("https://www.dyad.sh/docs/integrations/github#troubleshooting");
+    ).toBe("https://seltra.co/docs/integrations/github#troubleshooting");
     expect(
       within(connectedRepo).getByRole("button", { name: "Copy" }),
     ).toBeTruthy();

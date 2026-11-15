@@ -529,16 +529,16 @@ describe("ImageGenerationService", () => {
     await expect(generation).resolves.toMatchObject({
       appPath: "moved-app",
       appName: "Moved app",
-      filePath: expect.stringContaining(path.join("moved-app", ".dyad")),
+      filePath: expect.stringContaining(path.join("moved-app", ".seltra")),
     });
     await expect(
       fs.promises.readFile(
         path.join(tempBase, "moved-app", ".gitignore"),
         "utf-8",
       ),
-    ).resolves.toContain(".dyad/");
+    ).resolves.toContain(".seltra/");
     expect(
-      fs.existsSync(path.join(tempBase, "test-app", ".dyad", "media")),
+      fs.existsSync(path.join(tempBase, "test-app", ".seltra", "media")),
     ).toBe(false);
   });
 
@@ -588,7 +588,7 @@ describe("ImageGenerationService", () => {
     await repositoryMutation;
     await expect(generation).resolves.toMatchObject({
       appPath: "test-app",
-      filePath: expect.stringContaining(path.join("test-app", ".dyad")),
+      filePath: expect.stringContaining(path.join("test-app", ".seltra")),
     });
   });
 

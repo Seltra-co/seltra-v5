@@ -26,14 +26,14 @@ const baseTriage = {
 
 test("sanitizeText strips HTML, foreign mentions, and disallowed links", () => {
   const input =
-    "Hi <b>@reporter</b>, ping @wwwillchen and see https://evil.example/x and https://www.dyad.sh/download. Also [docs](https://example.com/docs) and [notes](https://www.dyad.sh/docs/releases/1.13.0) cc support@dyad.sh";
+    "Hi <b>@reporter</b>, ping @wwwillchen and see https://evil.example/x and https://seltra.co/download. Also [docs](https://example.com/docs) and [notes](https://seltra.co/docs/releases/1.13.0) cc support@dyad.sh";
   const output = sanitizeText(input, {
     author: "reporter",
     repository: "dyad-sh/dyad",
   });
   assert.equal(
     output,
-    "Hi @reporter, ping wwwillchen and see [link removed] and https://www.dyad.sh/download. Also docs and [notes](https://www.dyad.sh/docs/releases/1.13.0) cc support@dyad.sh",
+    "Hi @reporter, ping wwwillchen and see [link removed] and https://seltra.co/download. Also docs and [notes](https://seltra.co/docs/releases/1.13.0) cc support@dyad.sh",
   );
 });
 
@@ -97,7 +97,7 @@ test("normalizeTriage accepts a version-shaped fixedIn when releases are unknown
   );
   assert.deepEqual(triage.fixedIn, {
     version: "1.13.0",
-    url: "https://www.dyad.sh/docs/releases/1.13.0",
+    url: "https://seltra.co/docs/releases/1.13.0",
   });
 });
 
@@ -234,7 +234,7 @@ test("composeComment offers the existing route on feature requests", () => {
       labels: ["feature request"],
       assessment: "feature_request",
       steps: [
-        "You can add it today as a custom model: https://www.dyad.sh/docs/guides/ai-models/custom-models",
+        "You can add it today as a custom model: https://seltra.co/docs/guides/ai-models/custom-models",
       ],
       developerNotes: "- Third provider request this month.",
       playbookMatch: "model-missing-or-new-provider",

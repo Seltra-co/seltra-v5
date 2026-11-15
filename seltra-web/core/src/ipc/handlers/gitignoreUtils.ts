@@ -37,9 +37,9 @@ async function ensureGitignored(
 }
 
 /**
- * Ensures `.dyad/` is listed in the project's `.gitignore`.
+ * Ensures Seltra-managed media and legacy Dyad internals are ignored by Git.
  * Creates `.gitignore` if it doesn't exist.
  */
 export async function ensureDyadGitignored(appPath: string): Promise<void> {
-  await ensureGitignored(appPath, [".dyad/"]);
+  await ensureGitignored(appPath, [".dyad/", ".seltra/"]);
 }

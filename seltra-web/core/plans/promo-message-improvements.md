@@ -64,6 +64,6 @@
 
 ## Link destination: dyad.sh/pro vs academy sign-in→checkout
 
-- **Education-style messages** (user may not know what Pro is) → `https://www.dyad.sh/pro?utm_...` — consideration page, low bounce.
+- **Education-style messages** (user may not know what Pro is) → `https://seltra.co/pro?utm_...` — consideration page, low bounce.
 - **Direct-offer messages** ("Start your free 7-day trial") → `https://academy.dyad.sh/redirect-to-checkout?trialCode=7PRO30&utm_...` — same pattern the app already uses. Prefer this over hardcoding `/sign-in?redirect_url=...`: the redirect endpoint owns the auth flow (survives auth changes) and carries the trial code.
 - **Best of both**: click → in-app `DyadProTrialDialog`, which offers "Start Free Trial" (checkout) and "Learn more" (/pro). Warm the user before the sign-in wall.

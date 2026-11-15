@@ -12,6 +12,10 @@ import {
   readAppResource,
 } from "@/ipc/services/app_operation_coordinator";
 import {
+  DYAD_MEDIA_DIR_NAME,
+  getDyadMediaDir,
+} from "@/ipc/utils/media_path_utils";
+import {
   copyGitOverlayEntriesOnWindows,
   createGitOverlayWorkspace,
   isGitOverlayWorkspaceActive,
@@ -86,7 +90,7 @@ export function unavailableBrowserQaPayload(appId: number, chatId: number, reaso
 export function capturedBrowserQaPayload(input: {
   appId: number;
   chatId: number;
-  evidence: { consoleErrors: string[]; failedRequests: string[]; ignoredNoise: string[]; screenshot: Buffer; imageIssues?: string[] };
+  evidence: { consoleErrors: string[]; failedRequests: string[]; ignoredNoise: string[]; screenshot: Buffer; heroSnapshotWebp?: Buffer; imageIssues?: string[] };
   screenshotPath: string;
 }) {
   const { appId, chatId, evidence, screenshotPath } = input;
@@ -101,6 +105,13 @@ export function capturedBrowserQaPayload(input: {
     screenshotPath,
     screenshotBytes: evidence.screenshot.byteLength,
     screenshotSha256: createHash("sha256").update(evidence.screenshot).digest("hex"),
+    heroSnapshotDataUrl:
+      evidence.heroSnapshotWebp &&
+      !evidence.consoleErrors.length &&
+      !evidence.failedRequests.length &&
+      !evidence.imageIssues?.length
+        ? `data:image/webp;base64,${evidence.heroSnapshotWebp.toString("base64")}`
+        : null,
   };
 }
 
@@ -680,8 +691,9 @@ export const runBuildTool: ToolDefinition<z.infer<typeof runBuildSchema>> = {
                   statusTitle = "Build passed; browser QA unavailable";
                   status = "warning";
                 } else {
-                  const screenshotPath = ".dyad/media/qa-screenshot.png";
-                  const screenshotFile = path.join(ctx.appPath, screenshotPath);
+                  const mediaDir = getDyadMediaDir(ctx.appPath);
+                  const screenshotPath = `${DYAD_MEDIA_DIR_NAME}/qa-screenshot.png`;
+                  const screenshotFile = path.join(mediaDir, "qa-screenshot.png");
                   await fs.mkdir(path.dirname(screenshotFile), { recursive: true });
                   await fs.writeFile(screenshotFile, evidence.screenshot);
                   broadcastToRegisteredWindows(ctx.event.sender, "agent-tool:browser-qa", capturedBrowserQaPayload({ appId: ctx.appId, chatId: ctx.chatId, evidence, screenshotPath }));

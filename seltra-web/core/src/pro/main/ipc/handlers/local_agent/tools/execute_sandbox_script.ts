@@ -234,7 +234,7 @@ declare function file_stats(path: string): Promise<FileStats>;
 ${includeWriteFile ? WRITE_FILE_HOST_DECLARATIONS : ""}
 \`\`\`
 
-Paths are app-relative (including \`.dyad/media/<stored-name>\`), or attachment paths like attachments:filename.ext for read_file/list_files/file_stats.${includeWriteFile ? " write_file accepts app-relative paths only, not attachments: paths." : ""} Prefer range reads, filtering, aggregation, and small summaries over returning entire files.`;
+Paths are app-relative (including \`.seltra/media/<stored-name>\`), or attachment paths like attachments:filename.ext for read_file/list_files/file_stats.${includeWriteFile ? " write_file accepts app-relative paths only, not attachments: paths." : ""} Prefer range reads, filtering, aggregation, and small summaries over returning entire files.`;
 }
 
 function buildMcpAddendum(typeDefsBlock: string): string {

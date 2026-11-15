@@ -347,9 +347,9 @@ export const createChatCompletionHandler =
 
     // Check for upload image to codebase using lastUserMessage (which already handles both string and array content)
     if (userTextContent.includes("[[UPLOAD_IMAGE_TO_CODEBASE]]")) {
-      // Extract the attachment path from the user message (format: "path: /path/to/app/.dyad/media/...")
+      // Extract the attachment path from the user message (format: "path: /path/to/app/.seltra/media/...")
       const pathMatch = userTextContent.match(/\(path: ([^\s)]+)\)/);
-      const attachmentPath = pathMatch?.[1] ?? ".dyad/media/unknown.png";
+      const attachmentPath = pathMatch?.[1] ?? ".seltra/media/unknown.png";
       messageContent = `Uploading image to codebase
 <dyad-copy from="${attachmentPath}" to="new/image/file.png" description="Uploaded image to codebase"></dyad-copy>
 `;
@@ -471,7 +471,7 @@ x.toString(); // replaced with existing method
       <dyad-write path="src/pages/Index.tsx">
       
 
-import { MadeWithDyad } from "@/components/made-with-dyad";
+import { MadeWithSeltra } from "@/components/made-with-seltra";
 
 const Index = () => {
   return (
@@ -479,7 +479,7 @@ const Index = () => {
       <div className="text-center">
         <h1 className="text-4xl font-bold mb-4">No more errors!</h1>
       </div>
-      <MadeWithDyad />
+      <MadeWithSeltra />
     </div>
   );
 };

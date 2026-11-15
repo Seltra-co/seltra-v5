@@ -79,7 +79,7 @@
     const viewport = getViewportDimensions();
     const boundedViewport = fitScreenshotToBudget(viewport);
     console.warn(
-      `[dyad-screenshot] Full page ${fullPage.width}x${fullPage.height} exceeds the screenshot memory budget; capturing viewport ${boundedViewport.width}x${boundedViewport.height} instead.`,
+      `[seltra-screenshot] Full page ${fullPage.width}x${fullPage.height} exceeds the screenshot memory budget; capturing viewport ${boundedViewport.width}x${boundedViewport.height} instead.`,
     );
     return {
       ...boundedViewport,
@@ -141,7 +141,7 @@
       }
       throw new Error("html-to-image library not found");
     } catch (error) {
-      console.error("[dyad-screenshot] Failed to capture screenshot:", error);
+      console.error("[seltra-screenshot] Failed to capture screenshot:", error);
       throw error;
     }
   }
@@ -163,11 +163,11 @@
   }
   async function handleScreenshotRequest(requestId) {
     try {
-      console.debug("[dyad-screenshot] Capturing screenshot...");
+      console.debug("[seltra-screenshot] Capturing screenshot...");
 
       const dataUrl = await captureScreenshot();
 
-      console.debug("[dyad-screenshot] Screenshot captured successfully");
+      console.debug("[seltra-screenshot] Screenshot captured successfully");
 
       // Send success response to parent
       window.parent.postMessage(
@@ -180,7 +180,7 @@
         "*",
       );
     } catch (error) {
-      console.error("[dyad-screenshot] Screenshot capture failed:", error);
+      console.error("[seltra-screenshot] Screenshot capture failed:", error);
 
       // Send error response to parent
       window.parent.postMessage(

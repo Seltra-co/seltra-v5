@@ -541,12 +541,14 @@ describe("local_agent_prompt", () => {
     );
     expect(prompt).toContain("write_app_blueprint");
     expect(prompt).toContain("planning_questionnaire");
-    expect(prompt).toContain("Ask 1-5 focused questions (usually 2-3)");
+    expect(prompt).toContain(
+      "Core's fast model generates 3-5 distinct questions grounded in this prompt",
+    );
     expect(prompt).toContain(
       "Every radio or checkbox question must have 1-3 options",
     );
     expect(prompt).toContain(
-      "It must successfully return the user's answers before you continue",
+      "If the user explicitly skips questions, proceed without inventing answers or preferences",
     );
     expect(prompt).toContain(
       "user-facing product requirements and high-level architectural needs",
@@ -819,7 +821,7 @@ describe("local_agent_prompt", () => {
     expect(prompt).toContain("Card-edited direction");
     expect(prompt).toContain("including edits made in the blueprint card");
     expect(prompt).toContain(
-      "Do not repeat it merely to update an existing unapproved blueprint",
+      "Use `planning_questionnaire` only if preferences are still missing",
     );
     expect(prompt).not.toContain(
       "You MUST call this tool even when the initial request seems concrete",
@@ -858,8 +860,7 @@ describe("local_agent_prompt", () => {
     });
 
     expect(prompt).toContain("initial questionnaire was already completed");
-    expect(prompt).toContain("questionnaire answers already recorded");
-    expect(prompt).toContain("Do not call `planning_questionnaire` again");
+    expect(prompt).toContain("Do not repeat `planning_questionnaire`");
     expect(prompt).not.toContain(
       "You MUST call this tool even when the initial request seems concrete",
     );
@@ -871,7 +872,7 @@ describe("local_agent_prompt", () => {
       planningQuestionnaireAvailable: false,
     });
 
-    expect(prompt).toContain('state="questionnaire-disabled"');
+    expect(prompt).toContain("planning_questionnaire` is disabled");
     expect(prompt).toContain("Settings → Build and Agent Permissions");
     expect(prompt).toContain(
       "set `planning_questionnaire` to Ask or Always allow",

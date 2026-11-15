@@ -59,6 +59,7 @@ import { addLog } from "../../lib/log_store";
 import { IS_TEST_BUILD } from "../utils/test_utils";
 import {
   DYAD_SCREENSHOT_DIR_NAME,
+  getDyadScreenshotDir,
   MAX_SCREENSHOTS_PER_APP,
   SCREENSHOT_FILENAME_REGEX,
 } from "../utils/media_path_utils";
@@ -2532,7 +2533,7 @@ export function registerAppHandlers() {
         }
 
         const appPath = getDyadAppPath(appRecord.path);
-        const screenshotDir = path.join(appPath, DYAD_SCREENSHOT_DIR_NAME);
+        const screenshotDir = getDyadScreenshotDir(appPath);
         await fsPromises.mkdir(screenshotDir, { recursive: true });
 
         const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
@@ -2568,7 +2569,7 @@ export function registerAppHandlers() {
     }
 
     const appPath = getDyadAppPath(appRecord.path);
-    const screenshotDir = path.join(appPath, DYAD_SCREENSHOT_DIR_NAME);
+    const screenshotDir = getDyadScreenshotDir(appPath);
 
     const entries = await readScreenshotEntries(screenshotDir);
     const screenshots = entries.map(({ name }) => ({
@@ -2596,7 +2597,7 @@ export function registerAppHandlers() {
           return { appId, thumbnailUrl: null };
         }
         const appPath = getDyadAppPath(record.path);
-        const screenshotDir = path.join(appPath, DYAD_SCREENSHOT_DIR_NAME);
+        const screenshotDir = getDyadScreenshotDir(appPath);
         const entries = await readScreenshotEntries(screenshotDir);
         const latest = entries[0];
         if (!latest) {

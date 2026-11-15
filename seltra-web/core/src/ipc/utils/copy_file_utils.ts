@@ -5,6 +5,7 @@ import { assertMutationPathAllowed, safeJoin } from "./path_utils";
 import { gitAdd } from "./git_utils";
 import {
   DYAD_MEDIA_DIR_NAME,
+  getDyadMediaDir,
   isWithinDyadMediaDir,
   resolveAttachmentLogicalPath,
 } from "./media_path_utils";
@@ -39,7 +40,7 @@ export interface CopyFileResult {
  * Copy a file within a Dyad app, with security validation, git staging,
  * and optional Supabase function deployment.
  *
- * @throws Error if an absolute source path is outside the app's .dyad/media directory.
+ * @throws Error if an absolute source path is outside the app's .seltra/media directory.
  *   Relative paths are resolved within the app root (consistent with write_file access).
  * @throws Error if the source file does not exist
  */
@@ -86,9 +87,10 @@ export async function executeCopyFile({
         throw new DyadError("App not found", DyadErrorKind.NotFound);
       }
       const appPath = getDyadAppPath(app.path);
+      getDyadMediaDir(appPath);
       const { supabaseProjectId, supabaseOrganizationSlug } = app;
 
-      // Resolve the source path: allow both .dyad/media paths and app-relative paths
+      // Resolve the source path: allow both .seltra/media paths and app-relative paths
       let fromFullPath: string;
       if (from.startsWith("attachments:")) {
         const attachment = await resolveAttachmentLogicalPath(appPath, from);
@@ -100,10 +102,10 @@ export async function executeCopyFile({
         }
         fromFullPath = attachment.filePath;
       } else if (path.isAbsolute(from)) {
-        // Security: only allow absolute paths within the app's .dyad/media directory
+        // Security: only allow absolute paths within the app's .seltra/media directory
         if (!isWithinDyadMediaDir(from, appPath)) {
           throw new Error(
-            `Absolute source paths are only allowed within the .dyad/media directory`,
+            `Absolute source paths are only allowed within the .seltra/media directory`,
           );
         }
         fromFullPath = path.resolve(from);
@@ -134,7 +136,7 @@ export async function executeCopyFile({
         !isWithinDyadMediaDir(realFromPath, resolvedAppPath)
       ) {
         throw new Error(
-          `Source path resolves to a location outside the .dyad/media directory (possible symlink traversal)`,
+          `Source path resolves to a location outside the .seltra/media directory (possible symlink traversal)`,
         );
       }
       if (

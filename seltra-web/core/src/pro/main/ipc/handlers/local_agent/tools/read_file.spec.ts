@@ -719,6 +719,16 @@ line 5`;
       ).rejects.toThrow(/Cannot read \.dyad\/ paths from referenced apps/);
     });
 
+    it("blocks .seltra/ media paths when targeting a referenced app", async () => {
+      mockContext.referencedApps.set("other-app", otherAppDir);
+      await expect(
+        readFileTool.execute(
+          { path: ".seltra/media/image.png", app_name: "other-app" },
+          mockContext,
+        ),
+      ).rejects.toThrow(/Cannot read \.seltra\/ paths from referenced apps/);
+    });
+
     it("blocks .dyad/ paths reached via traversal aliases (e.g. src/../.dyad/...)", async () => {
       mockContext.referencedApps.set("other-app", otherAppDir);
       const dyadDir = path.join(otherAppDir, ".dyad");

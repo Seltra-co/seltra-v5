@@ -111,14 +111,44 @@ import {
 
 const logger = log.scope("app_runtime_service");
 const pnpmVersionMigrationNotifiedAppIds = new Set<number>();
-const lastAppProcessExit = new Map<number, { exitCode: number | null; signal: NodeJS.Signals | null; command: string; cwd: string; expectedPort: number | null; stdout: string; stderr: string; dependencyInstallFinished: boolean; dependencyInstallDurationMs: number | null }>();
-const appProcessDiagnostics = new Map<number, {
-  pid: number | null; command: string; cwd: string; exitState: string; exitCode: number | null;
-  signal: NodeJS.Signals | null; expectedPort: number | null; stdout: string; stderr: string;
-  devUrlDetected: boolean; detectedDevUrl: string | null; mappingRegistered: boolean;
-  skipReason: string | null; mappingSkipReason: string | null;
-  loopbackProbeAttempts: { host: string; status?: number; errorClass?: string }[];
-}>();
+const lastAppProcessExit = new Map<
+  number,
+  {
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+    command: string;
+    cwd: string;
+    expectedPort: number | null;
+    stdout: string;
+    stderr: string;
+    dependencyInstallFinished: boolean;
+    dependencyInstallDurationMs: number | null;
+  }
+>();
+const appProcessDiagnostics = new Map<
+  number,
+  {
+    pid: number | null;
+    command: string;
+    cwd: string;
+    exitState: string;
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+    expectedPort: number | null;
+    stdout: string;
+    stderr: string;
+    devUrlDetected: boolean;
+    detectedDevUrl: string | null;
+    mappingRegistered: boolean;
+    skipReason: string | null;
+    mappingSkipReason: string | null;
+    loopbackProbeAttempts: {
+      host: string;
+      status?: number;
+      errorClass?: string;
+    }[];
+  }
+>();
 
 export function getAppProcessDiagnostics(appId: number) {
   const diagnostic = appProcessDiagnostics.get(appId);
@@ -151,11 +181,13 @@ function redactProcessDiagnostic(value: string): string {
 }
 
 function lastProcessLines(value: string, count = 50): string {
-  return redactProcessDiagnostic(value)
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .slice(-count)
-    .join("\n") || "(empty)";
+  return (
+    redactProcessDiagnostic(value)
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-count)
+      .join("\n") || "(empty)"
+  );
 }
 
 /**
@@ -269,9 +301,10 @@ async function getDefaultCommand({
     fs.existsSync(path.join(appPath, "node_modules"))
   ) {
     return {
-      command: packageManager === "npm"
-        ? `npm run dev -- --port ${port}`
-        : `${getPnpmRunCommand()} --port ${port}`,
+      command:
+        packageManager === "npm"
+          ? `npm run dev -- --port ${port}`
+          : `${getPnpmRunCommand()} --port ${port}`,
       isCustom: false,
       packageManager,
     };
@@ -960,7 +993,11 @@ async function executeAppLocalNode({
   });
   const webRuntime = process.env.DYAD_WEB_RUNTIME === "1";
   let launchCommand = command.command;
-  if (webRuntime && !command.isCustom && ["vite", "vite-nitro"].includes(detectFrameworkType(appPath) ?? "")) {
+  if (
+    webRuntime &&
+    !command.isCustom &&
+    ["vite", "vite-nitro"].includes(detectFrameworkType(appPath) ?? "")
+  ) {
     const hmrConfigPath = ensureWebRuntimeViteHmrConfig(appPath);
     if (hmrConfigPath) launchCommand += ` --config ${hmrConfigPath}`;
   }
@@ -1031,16 +1068,20 @@ Details: ${details || "n/a"}
     );
   }
 
-  logger.info(JSON.stringify({
-    event: "app_process_started",
-    projectId: process.env.DYAD_WORKSPACE_ID ?? null,
-    appId,
-    pid: spawnedProcess.pid,
-    command: redactProcessDiagnostic(command.command),
-    cwd: redactProcessDiagnostic(appPath),
-    expectedPort: getAppPort(appId),
-    dependenciesPresentAtStart: fs.existsSync(path.join(appPath, "node_modules")),
-  }));
+  logger.info(
+    JSON.stringify({
+      event: "app_process_started",
+      projectId: process.env.DYAD_WORKSPACE_ID ?? null,
+      appId,
+      pid: spawnedProcess.pid,
+      command: redactProcessDiagnostic(command.command),
+      cwd: redactProcessDiagnostic(appPath),
+      expectedPort: getAppPort(appId),
+      dependenciesPresentAtStart: fs.existsSync(
+        path.join(appPath, "node_modules"),
+      ),
+    }),
+  );
   lastAppProcessExit.delete(appId);
 
   const currentProcessId = processCounter.increment();
@@ -1107,15 +1148,17 @@ Details: ${details || "n/a"}
 
 /** Generate a hidden root-level wrapper so relative paths in user config resolve from the app root. */
 export function ensureWebRuntimeViteHmrConfig(appPath: string): string {
-  const userConfig = VITE_CONFIG_FILES.find((name) => fs.existsSync(path.join(appPath, name)));
-  const wrapperPath = path.join(appPath, ".dyad-vite-hmr.config.mjs");
+  const userConfig = VITE_CONFIG_FILES.find((name) =>
+    fs.existsSync(path.join(appPath, name)),
+  );
+  const wrapperPath = path.join(appPath, ".seltra-vite-hmr.config.mjs");
   fs.mkdirSync(path.dirname(wrapperPath), { recursive: true });
   const userImport = userConfig
     ? `import userConfig from ${JSON.stringify(`./${userConfig}`)};`
     : `const userConfig = {};`;
   const source = `${userImport}\nimport { mergeConfig } from "vite";\nexport default async (env) => {\n  const base = typeof userConfig === "function" ? await userConfig(env) : userConfig;\n  const hmrConfig = process.env.VITE_HMR_HOST && Number.isFinite(Number(process.env.VITE_HMR_CLIENT_PORT))\n    ? { host: process.env.VITE_HMR_HOST, clientPort: Number(process.env.VITE_HMR_CLIENT_PORT), protocol: process.env.VITE_HMR_PROTOCOL === "wss" ? "wss" : "ws", path: process.env.VITE_HMR_PATH ?? "/" }\n    : false;\n  return mergeConfig(base ?? {}, { server: { hmr: hmrConfig } });\n};\n`;
   fs.writeFileSync(wrapperPath, source, "utf8");
-  return ".dyad-vite-hmr.config.mjs";
+  return ".seltra-vite-hmr.config.mjs";
 }
 
 let cloudSandboxSyncUpdateListenerRegistered = false;
@@ -1232,9 +1275,14 @@ function listenToProcess({
   let processOutput = "";
   let stdoutTail = "";
   let stderrTail = "";
-  let dependencyInstallFinished = !/\b(?:npm|pnpm|yarn|bun)\s+(?:ci|install)\b/i.test(command ?? "");
-  const dependencyInstallStartedAt = dependencyInstallFinished ? undefined : Date.now();
-  let dependencyInstallDurationMs: number | null = dependencyInstallFinished ? 0 : null;
+  let dependencyInstallFinished =
+    !/\b(?:npm|pnpm|yarn|bun)\s+(?:ci|install)\b/i.test(command ?? "");
+  const dependencyInstallStartedAt = dependencyInstallFinished
+    ? undefined
+    : Date.now();
+  let dependencyInstallDurationMs: number | null = dependencyInstallFinished
+    ? 0
+    : null;
   let ignoredBuildsRecordedAfterInstall = false;
   const diagnostic = {
     pid: spawnedProcess.pid ?? null,
@@ -1251,7 +1299,11 @@ function listenToProcess({
     mappingRegistered: false,
     skipReason: "waiting_for_dev_url" as string | null,
     mappingSkipReason: "waiting_for_dev_url" as string | null,
-    loopbackProbeAttempts: [] as { host: string; status?: number; errorClass?: string }[],
+    loopbackProbeAttempts: [] as {
+      host: string;
+      status?: number;
+      errorClass?: string;
+    }[],
   };
   appProcessDiagnostics.set(appId, diagnostic);
   const urlScanner = new DevServerUrlScanner();
@@ -1261,20 +1313,44 @@ function listenToProcess({
     if (diagnostic.skipReason === reason) return;
     diagnostic.skipReason = reason;
     diagnostic.mappingSkipReason = reason;
-    logger.info(JSON.stringify({ event: "app_preview_mapping", transition: "skip_reason", appId, skipReason: reason, source }));
+    logger.info(
+      JSON.stringify({
+        event: "app_preview_mapping",
+        transition: "skip_reason",
+        appId,
+        skipReason: reason,
+        source,
+      }),
+    );
   };
   const clearExpectedPortProbe = () => {
     if (expectedPortProbeTimer) clearTimeout(expectedPortProbeTimer);
     expectedPortProbeTimer = undefined;
   };
   const scheduleExpectedPortProbe = (delayMs = 2_000) => {
-    if (!expectedPort || !expectedPortDevServerUrl(expectedPort) || diagnostic.mappingRegistered) return;
+    if (
+      !expectedPort ||
+      !expectedPortDevServerUrl(expectedPort) ||
+      diagnostic.mappingRegistered
+    )
+      return;
     clearExpectedPortProbe();
     expectedPortProbeTimer = setTimeout(() => {
       expectedPortProbeTimer = undefined;
-      if (runningApps.get(appId)?.process !== spawnedProcess || diagnostic.mappingRegistered) return;
-      void handleDetectedDevUrl(expectedPortDevServerUrl(expectedPort)!, "expected_port_probe").finally(() => {
-        if (runningApps.get(appId)?.process === spawnedProcess && !diagnostic.mappingRegistered && diagnostic.skipReason === "loopback_probe_failed")
+      if (
+        runningApps.get(appId)?.process !== spawnedProcess ||
+        diagnostic.mappingRegistered
+      )
+        return;
+      void handleDetectedDevUrl(
+        expectedPortDevServerUrl(expectedPort)!,
+        "expected_port_probe",
+      ).finally(() => {
+        if (
+          runningApps.get(appId)?.process === spawnedProcess &&
+          !diagnostic.mappingRegistered &&
+          diagnostic.skipReason === "loopback_probe_failed"
+        )
           scheduleExpectedPortProbe(1_000);
       });
     }, delayMs);
@@ -1284,53 +1360,108 @@ function listenToProcess({
     if (source === "stdout" && !diagnostic.devUrlDetected) {
       diagnostic.devUrlDetected = true;
       diagnostic.detectedDevUrl = redactProcessDiagnostic(originalUrl);
-      logger.info(JSON.stringify({ event: "app_dev_url_detected", transition: "detected", appId, source, url: diagnostic.detectedDevUrl }));
+      logger.info(
+        JSON.stringify({
+          event: "app_dev_url_detected",
+          transition: "detected",
+          appId,
+          source,
+          url: diagnostic.detectedDevUrl,
+        }),
+      );
     }
-    if (diagnostic.mappingRegistered || mappingAttempt) return mappingAttempt ?? Promise.resolve();
+    if (diagnostic.mappingRegistered || mappingAttempt)
+      return mappingAttempt ?? Promise.resolve();
     const attempt = (async () => {
-    setSkipReason("probing_loopback", source);
-    if (appPath && !ignoredBuildsRecordedAfterInstall) {
-      ignoredBuildsRecordedAfterInstall = true;
-      await recordIgnoredBuildsAfterInstall(appPath);
-    }
-    if (runningApps.get(appId)?.process !== spawnedProcess) {
-      setSkipReason("process_replaced_before_proxy_start", source);
-      return;
-    }
-    const probe = source === "expected_port_probe" && expectedPort
-      ? await probeExpectedDevServerPort(expectedPort)
-      : await probeDevServerUntilReady(originalUrl);
-    diagnostic.loopbackProbeAttempts = probe.attempts;
-    if (!probe.targetUrl) {
-      setSkipReason(probe.reason ?? "loopback_probe_failed", source);
-      logger.warn(JSON.stringify({ event: "app_preview_mapping", transition: "probe_failed", appId, source, skipReason: diagnostic.skipReason, attempts: probe.attempts }));
-      return;
-    }
-    setSkipReason("waiting_for_proxy_ready_signal", source);
-    try {
-      await ensureProxyForRunningApp({ appId, output, originalUrl: probe.targetUrl, mode: "host", invocationRef });
-      const current = runningApps.get(appId);
-      const registered = Boolean(current?.proxyUrl);
-      if (diagnostic.mappingRegistered !== registered) {
-        diagnostic.mappingRegistered = registered;
-        logger.info(JSON.stringify({ event: "app_preview_mapping", transition: "registered", appId, registered, source, proxyUrl: current?.proxyUrl ?? null }));
+      setSkipReason("probing_loopback", source);
+      if (appPath && !ignoredBuildsRecordedAfterInstall) {
+        ignoredBuildsRecordedAfterInstall = true;
+        await recordIgnoredBuildsAfterInstall(appPath);
       }
-      setSkipReason(registered
-        ? null
-        : current?.proxyStartupError
-          ? "proxy_startup_failed"
-          : current?.stopRequested
-            ? "app_stopping"
-            : "proxy_ready_signal_missing", source);
-    } catch (error) {
-      setSkipReason(error instanceof Error ? error.name : "proxy_startup_failed", source);
-    }
-    const current = runningApps.get(appId);
-    logger.info(JSON.stringify({ event: "app_preview_mapping", transition: "attempt_complete", appId, source, registered: diagnostic.mappingRegistered, skipReason: diagnostic.skipReason, proxyUrl: current?.proxyUrl ?? null, probeHost: probe.host, probeStatus: probe.status, attempts: probe.attempts }));
-    if (diagnostic.mappingRegistered) clearExpectedPortProbe();
+      if (runningApps.get(appId)?.process !== spawnedProcess) {
+        setSkipReason("process_replaced_before_proxy_start", source);
+        return;
+      }
+      const probe =
+        source === "expected_port_probe" && expectedPort
+          ? await probeExpectedDevServerPort(expectedPort)
+          : await probeDevServerUntilReady(originalUrl);
+      diagnostic.loopbackProbeAttempts = probe.attempts;
+      if (!probe.targetUrl) {
+        setSkipReason(probe.reason ?? "loopback_probe_failed", source);
+        logger.warn(
+          JSON.stringify({
+            event: "app_preview_mapping",
+            transition: "probe_failed",
+            appId,
+            source,
+            skipReason: diagnostic.skipReason,
+            attempts: probe.attempts,
+          }),
+        );
+        return;
+      }
+      setSkipReason("waiting_for_proxy_ready_signal", source);
+      try {
+        await ensureProxyForRunningApp({
+          appId,
+          output,
+          originalUrl: probe.targetUrl,
+          mode: "host",
+          invocationRef,
+        });
+        const current = runningApps.get(appId);
+        const registered = Boolean(current?.proxyUrl);
+        if (diagnostic.mappingRegistered !== registered) {
+          diagnostic.mappingRegistered = registered;
+          logger.info(
+            JSON.stringify({
+              event: "app_preview_mapping",
+              transition: "registered",
+              appId,
+              registered,
+              source,
+              proxyUrl: current?.proxyUrl ?? null,
+            }),
+          );
+        }
+        setSkipReason(
+          registered
+            ? null
+            : current?.proxyStartupError
+              ? "proxy_startup_failed"
+              : current?.stopRequested
+                ? "app_stopping"
+                : "proxy_ready_signal_missing",
+          source,
+        );
+      } catch (error) {
+        setSkipReason(
+          error instanceof Error ? error.name : "proxy_startup_failed",
+          source,
+        );
+      }
+      const current = runningApps.get(appId);
+      logger.info(
+        JSON.stringify({
+          event: "app_preview_mapping",
+          transition: "attempt_complete",
+          appId,
+          source,
+          registered: diagnostic.mappingRegistered,
+          skipReason: diagnostic.skipReason,
+          proxyUrl: current?.proxyUrl ?? null,
+          probeHost: probe.host,
+          probeStatus: probe.status,
+          attempts: probe.attempts,
+        }),
+      );
+      if (diagnostic.mappingRegistered) clearExpectedPortProbe();
     })();
     mappingAttempt = attempt;
-    return attempt.finally(() => { if (mappingAttempt === attempt) mappingAttempt = undefined; });
+    return attempt.finally(() => {
+      if (mappingAttempt === attempt) mappingAttempt = undefined;
+    });
   };
   const appendProcessOutput = (message: string) => {
     if (!onPnpmIgnoredBuildsFailure) {
@@ -1342,66 +1473,89 @@ function listenToProcess({
   };
   const appendTail = (previous: string, message: string) =>
     (previous + message).slice(-MAX_PROCESS_OUTPUT_TAIL_LENGTH);
-  if (spawnedProcess.stdout) listenForDevServerOutput(
-    spawnedProcess.stdout as Readable,
-    async (rawOutput) => {
-    const detectedDevUrls = urlScanner.push(rawOutput);
-    const message = util.stripVTControlCharacters(rawOutput);
-    if (/\b(?:added \d+ packages?|up to date|done in \d+(?:\.\d+)?s)\b/i.test(message)) {
-      dependencyInstallFinished = true;
-      dependencyInstallDurationMs ??= dependencyInstallStartedAt === undefined ? 0 : Date.now() - dependencyInstallStartedAt;
-    }
-    const activeApp = runningApps.get(appId);
-    if (activeApp?.process === spawnedProcess)
-      activeApp.lastOutputAt = Date.now();
-    appendProcessOutput(message);
-    stdoutTail = appendTail(stdoutTail, message);
-    diagnostic.stdout = redactProcessDiagnostic(lastProcessLines(stdoutTail));
-    logger.debug(
-      `App ${appId} (PID: ${spawnedProcess.pid}) stdout: ${message}`,
-    );
-
-    addLog({
-      level: "info",
-      type: "server",
-      message,
-      timestamp: Date.now(),
-      appId,
-    });
-
-    if (isNeon && message.includes("created or renamed from another")) {
-      spawnedProcess.stdin?.write(`\r\n`);
-      logger.info(
-        `App ${appId} (PID: ${spawnedProcess.pid}) wrote enter to stdin to automatically respond to drizzle push input`,
-      );
-    }
-
-    const inputRequestPattern = /\s*›\s*\([yY]\/[nN]\)\s*$/;
-    const isInputRequest = inputRequestPattern.test(message);
-    if (isInputRequest) {
-      output.send({
-        type: "input-requested",
-        message,
-        appId,
-      });
-    } else {
-      output.enqueue({
-        type: "stdout",
-        message,
-        appId,
-      });
-
-      for (const url of detectedDevUrls) {
-        try {
-          await handleDetectedDevUrl(url);
-        } catch (error) {
-          setSkipReason(error instanceof Error ? error.name : "preview_detection_failed", "stdout");
-          logger.error(JSON.stringify({ event: "app_preview_mapping", transition: "attempt_error", appId, registered: false, skipReason: diagnostic.skipReason }));
+  if (spawnedProcess.stdout)
+    listenForDevServerOutput(
+      spawnedProcess.stdout as Readable,
+      async (rawOutput) => {
+        const detectedDevUrls = urlScanner.push(rawOutput);
+        const message = util.stripVTControlCharacters(rawOutput);
+        if (
+          /\b(?:added \d+ packages?|up to date|done in \d+(?:\.\d+)?s)\b/i.test(
+            message,
+          )
+        ) {
+          dependencyInstallFinished = true;
+          dependencyInstallDurationMs ??=
+            dependencyInstallStartedAt === undefined
+              ? 0
+              : Date.now() - dependencyInstallStartedAt;
         }
-      }
-    }
-    },
-  );
+        const activeApp = runningApps.get(appId);
+        if (activeApp?.process === spawnedProcess)
+          activeApp.lastOutputAt = Date.now();
+        appendProcessOutput(message);
+        stdoutTail = appendTail(stdoutTail, message);
+        diagnostic.stdout = redactProcessDiagnostic(
+          lastProcessLines(stdoutTail),
+        );
+        logger.debug(
+          `App ${appId} (PID: ${spawnedProcess.pid}) stdout: ${message}`,
+        );
+
+        addLog({
+          level: "info",
+          type: "server",
+          message,
+          timestamp: Date.now(),
+          appId,
+        });
+
+        if (isNeon && message.includes("created or renamed from another")) {
+          spawnedProcess.stdin?.write(`\r\n`);
+          logger.info(
+            `App ${appId} (PID: ${spawnedProcess.pid}) wrote enter to stdin to automatically respond to drizzle push input`,
+          );
+        }
+
+        const inputRequestPattern = /\s*›\s*\([yY]\/[nN]\)\s*$/;
+        const isInputRequest = inputRequestPattern.test(message);
+        if (isInputRequest) {
+          output.send({
+            type: "input-requested",
+            message,
+            appId,
+          });
+        } else {
+          output.enqueue({
+            type: "stdout",
+            message,
+            appId,
+          });
+
+          for (const url of detectedDevUrls) {
+            try {
+              await handleDetectedDevUrl(url);
+            } catch (error) {
+              setSkipReason(
+                error instanceof Error
+                  ? error.name
+                  : "preview_detection_failed",
+                "stdout",
+              );
+              logger.error(
+                JSON.stringify({
+                  event: "app_preview_mapping",
+                  transition: "attempt_error",
+                  appId,
+                  registered: false,
+                  skipReason: diagnostic.skipReason,
+                }),
+              );
+            }
+          }
+        }
+      },
+    );
 
   spawnedProcess.stderr?.on("data", async (data) => {
     const message = util.stripVTControlCharacters(data.toString());
@@ -1430,7 +1584,15 @@ function listenToProcess({
     });
   });
 
-  logger.info(JSON.stringify({ event: "app_preview_mapping", transition: "initialized", appId, expectedPort: expectedPort ?? null, skipReason: diagnostic.skipReason }));
+  logger.info(
+    JSON.stringify({
+      event: "app_preview_mapping",
+      transition: "initialized",
+      appId,
+      expectedPort: expectedPort ?? null,
+      skipReason: diagnostic.skipReason,
+    }),
+  );
   // Retry by the app's assigned port even when its ready output is absent or unrecognized.
   scheduleExpectedPortProbe();
 
@@ -1444,20 +1606,22 @@ function listenToProcess({
         if (!diagnostic.devUrlDetected) {
           setSkipReason("process_exited_before_dev_url", "process_exit");
         }
-        logger.log(JSON.stringify({
-          event: "app_process_closed",
-          appId,
-          pid: spawnedProcess.pid,
-          exitCode: code,
-          signal,
-          command: redactProcessDiagnostic(command ?? "(unknown)"),
-          cwd: redactProcessDiagnostic(appPath ?? "(unknown)"),
-          expectedPort: expectedPort ?? null,
-          dependencyInstallFinished,
-          dependencyInstallDurationMs,
-          stdoutLast50Lines: lastProcessLines(stdoutTail),
-          stderrLast50Lines: lastProcessLines(stderrTail),
-        }));
+        logger.log(
+          JSON.stringify({
+            event: "app_process_closed",
+            appId,
+            pid: spawnedProcess.pid,
+            exitCode: code,
+            signal,
+            command: redactProcessDiagnostic(command ?? "(unknown)"),
+            cwd: redactProcessDiagnostic(appPath ?? "(unknown)"),
+            expectedPort: expectedPort ?? null,
+            dependencyInstallFinished,
+            dependencyInstallDurationMs,
+            stdoutLast50Lines: lastProcessLines(stdoutTail),
+            stderrLast50Lines: lastProcessLines(stderrTail),
+          }),
+        );
         output.flush();
         const currentAppInfo = runningApps.get(appId);
         if (!currentAppInfo || currentAppInfo.process !== spawnedProcess) {
@@ -2676,7 +2840,10 @@ async function waitForAppReady(
   const webRuntime = process.env.DYAD_WEB_RUNTIME === "1";
   const hardTimeoutMs = webRuntime
     ? Math.min(
-        positiveEnvInteger("WEB_APP_READY_TIMEOUT_MS", DEFAULT_WEB_APP_READY_TIMEOUT_MS),
+        positiveEnvInteger(
+          "WEB_APP_READY_TIMEOUT_MS",
+          DEFAULT_WEB_APP_READY_TIMEOUT_MS,
+        ),
         DEFAULT_WEB_APP_READY_TIMEOUT_MS,
       )
     : timeoutMs;

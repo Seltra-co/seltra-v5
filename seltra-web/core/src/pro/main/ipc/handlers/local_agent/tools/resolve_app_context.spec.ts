@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import path from "node:path";
 
 import { resolveTargetAppPath } from "./resolve_app_context";
 import type { AgentContext } from "./types";
@@ -38,7 +39,10 @@ function createContext(): AgentContext {
   } as AgentContext;
 }
 
-import { assertDyadInternalAccessAllowed } from "./resolve_app_context";
+import {
+  assertDyadInternalAccessAllowed,
+  isDyadInternalPath,
+} from "./resolve_app_context";
 it.each([undefined, "reference"])(
   "rejects Git metadata for %s app reads",
   (appName) => {
@@ -56,5 +60,19 @@ it.each([undefined, "reference"])(
         appName,
       }),
     ).toThrow("Git metadata");
+  },
+);
+
+it.each([".dyad/chats/secret.md", ".seltra/media/image.png"])(
+  "recognizes private app path %s",
+  (relativePath) => {
+    expect(isDyadInternalPath(relativePath)).toBe(true);
+    expect(() =>
+      assertDyadInternalAccessAllowed({
+        targetAppPath: "/apps/current",
+        fullFilePath: path.join("/apps/current", relativePath),
+        appName: "reference",
+      }),
+    ).toThrow(new RegExp(`Cannot read ${relativePath.split("/")[0]}\\/ paths`));
   },
 );

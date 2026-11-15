@@ -129,7 +129,7 @@ Proposed title: `[session report] No description (Dyad 1.9.0, Windows)`
 >
 > **What's going on:** Your report came through without a description, so we can't tell yet what went wrong. The logs show that Dyad's automatic update check failed, which is probably not what you noticed, but it does mean you're on an older version.
 >
-> **What you can do now:** Download the latest version from https://www.dyad.sh/download and try again. A lot has been fixed since 1.9.0.
+> **What you can do now:** Download the latest version from https://seltra.co/download and try again. A lot has been fixed since 1.9.0.
 >
 > **To help us fix it:** Reply with what you were doing and what you saw instead. A screenshot of the error is the fastest way for us to help.
 >
@@ -272,7 +272,7 @@ The agent keeps no network access. Give it read-only `Read`, `Grep`, and `Glob` 
 ### Apply script (`scripts/issue-triage/apply-triage.mjs`)
 
 - Compose the single comment from the fields, omitting empty sections, always appending the sign-off.
-- Sanitize all free text: strip HTML, strip @-mentions other than the reporter, allow links only to `github.com/dyad-sh/dyad`, `www.dyad.sh`, `nodejs.org`, `githubstatus.com`, `status.supabase.com`; cap lengths (summary 400 chars, each step 200, notes 1200).
+- Sanitize all free text: strip HTML, strip @-mentions other than the reporter, allow links only to `github.com/dyad-sh/dyad`, `seltra.co`, `nodejs.org`, `githubstatus.com`, `status.supabase.com`; cap lengths (summary 400 chars, each step 200, notes 1200).
 - Validate `fixedIn.version` against `RELEASE_INDEX` and `related[].number` against the repo.
 - On `needs_human` (credits, crashes we can't read, anything the bot can't answer), add a `triage/needs-human` label so the team can filter to the issues where the bot had nothing to offer.
 

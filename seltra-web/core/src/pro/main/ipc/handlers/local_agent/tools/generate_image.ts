@@ -10,7 +10,10 @@ import {
   escapeXmlContent,
 } from "./types";
 import { engineFetch, isSeltraEngineConfigured } from "./engine_fetch";
-import { DYAD_MEDIA_DIR_NAME } from "@/ipc/utils/media_path_utils";
+import {
+  DYAD_MEDIA_DIR_NAME,
+  getDyadMediaDir,
+} from "@/ipc/utils/media_path_utils";
 import { ImageGenerationApiResponseSchema } from "@/ipc/types/image_generation";
 import { DyadError, DyadErrorKind } from "@/errors/dyad_error";
 
@@ -24,7 +27,7 @@ const generateImageSchema = z.object({
     ),
 });
 
-const DESCRIPTION = `Generate an image using AI based on a text prompt. The generated image is saved to the project's .dyad/media directory.
+const DESCRIPTION = `Generate an image using AI based on a text prompt. The generated image is saved to the project's .seltra/media directory.
 
 ### When to Use
 - User requests a custom image, illustration, icon, or graphic for their app
@@ -44,7 +47,7 @@ Write detailed, descriptive prompts. Be specific about:
 - "Professional product photography of a sleek smartphone on a marble surface, soft studio lighting, shallow depth of field, warm neutral tones"
 
 ### After Generation
-The tool returns the file path in .dyad/media. Use the copy_file tool to copy it to the appropriate location in the project (e.g., public/assets/) and reference that path in your code.
+The tool returns the file path in .seltra/media. Use the copy_file tool to copy it to the appropriate location in the project (e.g., public/assets/) and reference that path in your code.
 `;
 
 async function callGenerateImage(
@@ -82,7 +85,7 @@ async function saveGeneratedImage(
   imageData: z.infer<typeof ImageGenerationApiResponseSchema>["data"][number],
   appPath: string,
 ): Promise<string> {
-  const mediaDir = path.join(appPath, DYAD_MEDIA_DIR_NAME);
+  const mediaDir = getDyadMediaDir(appPath);
   await fs.mkdir(mediaDir, { recursive: true });
 
   const hash = crypto.randomBytes(8).toString("hex");

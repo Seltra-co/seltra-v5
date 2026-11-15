@@ -6,7 +6,7 @@ import type {
 
 const RELEASE_NOTES_ORIGINS = new Set([
   "https://dyad.sh",
-  "https://www.dyad.sh",
+  "https://seltra.co",
 ]);
 const RESERVED_FRAME_NAMES = new Set([
   "_parent",

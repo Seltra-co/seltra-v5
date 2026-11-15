@@ -58,7 +58,7 @@ async function getSafeMediaDirectory(
 }
 
 /**
- * Delete media files older than TTL from all app .dyad/media directories.
+ * Delete media files older than TTL from all app .seltra/media directories.
  * Run on app startup to reclaim disk space.
  */
 export async function cleanupOldMediaFiles(): Promise<void> {

@@ -1,5 +1,5 @@
 //store/store-image.service.ts
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common'
+import { Injectable, BadRequestException, NotFoundException, Logger, ServiceUnavailableException } from '@nestjs/common'
 import { prisma } from '../db'
 import { validateImageUrl } from '../common/image-validation'
 import { uploadImageBuffer } from './cloudinary.service'
@@ -60,12 +60,16 @@ export class StoreImageService {
     if (snapshotUrl.startsWith('data:image/')) {
       const match = snapshotUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/)
       if (!match) throw new BadRequestException('The preview snapshot is not a valid base64 image.')
-      const uploaded = await uploadImageBuffer(
-        match[2],
-        match[1],
-        `seltra/${tenantId}/hero-snapshot/${Date.now()}`,
-      )
-      finalUrl = uploaded.secure_url
+      if (match[1].toLowerCase() === 'image/webp') {
+        finalUrl = await this.uploadProjectHeroToR2(tenantId, match[2])
+      } else {
+        const uploaded = await uploadImageBuffer(
+          match[2],
+          match[1],
+          `seltra/${tenantId}/hero-snapshot/${Date.now()}`,
+        )
+        finalUrl = uploaded.secure_url
+      }
     } else {
       finalUrl = await this.rehostExternalImage(snapshotUrl, `seltra/${tenantId}/hero-snapshot/${Date.now()}`)
     }
@@ -84,6 +88,52 @@ export class StoreImageService {
 
     void this.tenantEvents.recordForTenant(tenantId, 'theme_updated', { source: 'hero_snapshot_capture' })
     return { url: finalUrl, updatedAt: now.toISOString() }
+  }
+
+  private async uploadProjectHeroToR2(tenantId: string, base64: string): Promise<string> {
+    const gatewayUrl = (process.env.CORE_PUBLIC_URL ?? '').replace(/\/+$/, '')
+    const serviceSecret = process.env.CORE_SERVICE_SECRET ?? ''
+    if (!gatewayUrl || serviceSecret.length < 32) {
+      throw new ServiceUnavailableException('Durable project preview storage is not configured.')
+    }
+
+    let response: Response
+    try {
+      response = await fetch(`${gatewayUrl}/internal/projects/hero-snapshot`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-core-service-secret': serviceSecret,
+        },
+        body: JSON.stringify({ projectId: tenantId, base64 }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      })
+    } catch (error) {
+      this.logger.warn(`Project preview upload failed for ${tenantId}: ${error instanceof Error ? error.name : 'unknown'}`)
+      throw new ServiceUnavailableException('Could not save the project preview to durable storage.')
+    }
+
+    const result = await response.json().catch(() => null) as { url?: unknown } | null
+    if (!response.ok || typeof result?.url !== 'string') {
+      this.logger.warn(`Project preview upload failed for ${tenantId} (HTTP ${response.status}).`)
+      throw new ServiceUnavailableException('Could not save the project preview to durable storage.')
+    }
+
+    let storedUrl: URL
+    let expectedOrigin: string
+    try {
+      storedUrl = new URL(result.url)
+      expectedOrigin = new URL(gatewayUrl).origin
+    } catch {
+      throw new ServiceUnavailableException('Durable project preview storage returned an invalid URL.')
+    }
+    if (
+      storedUrl.origin !== expectedOrigin ||
+      storedUrl.pathname !== `/v1/projects/${encodeURIComponent(tenantId)}/hero.webp`
+    ) {
+      throw new ServiceUnavailableException('Durable project preview storage returned an invalid URL.')
+    }
+    return storedUrl.toString()
   }
 
   async setStoryImageUrl(tenantId: string, requestedUrl: string) {

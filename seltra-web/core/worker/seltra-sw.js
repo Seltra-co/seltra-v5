@@ -1,18 +1,18 @@
 /**
- * dyad-sw.js – Service Worker for network request interception
+ * seltra-sw.js – Service Worker for network request interception
  * Intercepts all fetch requests and reports them to the client
  */
 
 // Service Worker installation
 self.addEventListener("install", (_event) => {
-  console.log("[Dyad SW] Installing...");
+  console.log("[Seltra SW] Installing...");
   // Skip waiting to activate immediately
   self.skipWaiting();
 });
 
 // Service Worker activation
 self.addEventListener("activate", (event) => {
-  console.log("[Dyad SW] Activating...");
+  console.log("[Seltra SW] Activating...");
   // Claim all clients immediately
   event.waitUntil(self.clients.claim());
 });

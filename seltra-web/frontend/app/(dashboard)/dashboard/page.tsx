@@ -30,6 +30,7 @@ import { useWorkspace } from '@/context/WorkspaceContext'
 import { CoreClient, type CoreSession } from '@/lib/core/client'
 import { CoreEvents } from '@/lib/core/events'
 import { enqueueBrowserQaEvent, previewOverlayTransition, takePendingBrowserQaEvents } from '@/lib/core/preview-qa'
+import { hasUnfinishedRunTodos, latestRunTodoSnapshot, projectTodoStatuses, runTodoOutcome, type CoreTodoRunOutcome, type CoreTodoStatus, type PersistedRunEvent } from '@/lib/builder/core-todos'
 import { takePendingBuild } from '@/lib/builder/pending'
 import { applyWorkflowEvent, isWorkflowEvent, type WorkflowEvent } from '@/lib/builder/run-events'
 import { fetchSeltraAuthMe, fetchWithSeltraAuth } from '@/lib/auth-session'
@@ -187,24 +188,6 @@ const statusClass = (status: string) => {
 const ORDER_STATUSES = ['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded']
 const hasConfirmedPayment = (order: OrderRecord) => order.merchantAmount !== null && order.merchantAmount !== undefined
 const storeIdOf = (store: StoreData | null) => store?.id ?? store?.slug
-
-type PersistedRunEvent = { type: string; payload?: unknown }
-
-function latestRunTodoSnapshot(events?: PersistedRunEvent[]): { chatId?: number; todos: CoreTodo[] } | undefined {
-  const snapshot = [...(events ?? [])].reverse().find((event) =>
-    Boolean(event.payload && typeof event.payload === 'object' && Array.isArray((event.payload as { todos?: unknown }).todos)),
-  )
-  const payload = snapshot?.payload as { todos?: CoreTodo[]; chatId?: number } | undefined
-  const todos = payload?.todos
-  if (!todos?.every((todo) => todo && typeof todo.id === 'string' && typeof todo.content === 'string' && ['pending', 'in_progress', 'completed'].includes(todo.status))) return undefined
-  const chatId = payload?.chatId ?? [...(events ?? [])].reverse().map((event) => (event.payload as { chatId?: number } | undefined)?.chatId).find((id): id is number => typeof id === 'number')
-  return { ...(chatId !== undefined ? { chatId } : {}), todos }
-}
-
-function hasUnfinishedRunTodos(events?: PersistedRunEvent[]) {
-  const snapshot = latestRunTodoSnapshot(events)
-  return snapshot ? snapshot.todos.some((todo) => todo.status !== 'completed') : undefined
-}
 
 async function createConversation(title: string, signal?: AbortSignal) {
   const { data, error, aborted } = await apiFetch<Conversation>('/api/v5/conversations', {
@@ -482,11 +465,11 @@ function PendingImageChip({ attachment, onRemove, tone = 'light' }: { attachment
   )
 }
 
-function AgentReply({ content, streamingPreview, isStreaming, statusText, phase, todos, questionnaire, blueprint, approvalError, onQuestionnaireSubmit, onBlueprintApprove, onBlueprintNameChange, loadAsset, onRetryAsset, structuredOnly, blueprintApproved }: { content: string; streamingPreview?: string; isStreaming?: boolean; statusText?: string; phase?: string; todos?: CoreTodo[]; questionnaire?: CoreQuestionnaire; blueprint?: CoreBlueprint; approvalError?: string; onQuestionnaireSubmit?: (answers: Record<string, string> | null) => void; onBlueprintApprove?: () => Promise<void>; onBlueprintNameChange?: (name: string) => void; loadAsset?: (path: string) => Promise<string>; onRetryAsset?: (prompt: string) => Promise<void>; structuredOnly?: boolean; blueprintApproved?: boolean }) {
-  if (!structuredOnly && !content.trim() && (isStreaming || phase === 'asking')) return <AgentStreamStatus status={statusText || (phase === 'asking' ? 'Waiting for answers' : undefined)} skeleton={isStreaming && !statusText} phase={phase} />
+function AgentReply({ content, streamingPreview, isStreaming, statusText, phase, todos, todoOutcome, onRetryTodos, questionnaire, blueprint, approvalError, onQuestionnaireSubmit, onBlueprintApprove, onBlueprintNameChange, loadAsset, onRetryAsset, structuredOnly, blueprintApproved }: { content: string; streamingPreview?: string; isStreaming?: boolean; statusText?: string; phase?: string; todos?: CoreTodo[]; todoOutcome?: CoreTodoRunOutcome; onRetryTodos?: () => void; questionnaire?: CoreQuestionnaire; blueprint?: CoreBlueprint; approvalError?: string; onQuestionnaireSubmit?: (answers: Record<string, string> | null) => void; onBlueprintApprove?: () => Promise<void>; onBlueprintNameChange?: (name: string) => void; loadAsset?: (path: string) => Promise<string>; onRetryAsset?: (prompt: string) => Promise<void>; structuredOnly?: boolean; blueprintApproved?: boolean }) {
+  if (!structuredOnly && !content.trim() && (isStreaming || phase === 'asking')) return <><AgentStreamStatus status={statusText || (phase === 'asking' ? 'Waiting for answers' : undefined)} skeleton={isStreaming && !statusText} phase={phase} />{todos?.length ? <CoreTodoProgress todos={todos} outcome={todoOutcome} onRetry={onRetryTodos} /> : null}</>
   if (structuredOnly) return <CoreAgentMessage content={content} blueprint={blueprint} onBlueprintApprove={onBlueprintApprove} onBlueprintNameChange={onBlueprintNameChange} approvalError={approvalError} compactStream structuredOnly blueprintApproved={blueprintApproved} />
   const showStatus = Boolean(statusText && (isStreaming || phase === 'asking' || phase === 'building' || phase === 'ready'))
-  return <>{showStatus ? <AgentStreamStatus status={statusText} phase={phase} /> : null}<CoreAgentMessage content={content} streamingPreview={streamingPreview} isStreaming={isStreaming} todos={todos} questionnaire={questionnaire} blueprint={blueprint} approvalError={approvalError} onQuestionnaireSubmit={onQuestionnaireSubmit} onBlueprintApprove={onBlueprintApprove} onBlueprintNameChange={onBlueprintNameChange} loadAsset={loadAsset} onRetryAsset={onRetryAsset} compactStream /></>
+  return <>{showStatus ? <AgentStreamStatus status={statusText} phase={phase} /> : null}<CoreAgentMessage content={content} streamingPreview={streamingPreview} isStreaming={isStreaming} todos={todos} todoOutcome={todoOutcome} onRetryTodos={onRetryTodos} questionnaire={questionnaire} blueprint={blueprint} approvalError={approvalError} onQuestionnaireSubmit={onQuestionnaireSubmit} onBlueprintApprove={onBlueprintApprove} onBlueprintNameChange={onBlueprintNameChange} loadAsset={loadAsset} onRetryAsset={onRetryAsset} compactStream />{todos?.length ? <CoreTodoProgress todos={todos} outcome={todoOutcome} onRetry={onRetryTodos} /> : null}</>
 }
 
 function WorkbenchStepCard({ step, onPreview }: { step: { id: string; title: string; detail?: string; status: 'active' | 'done' }; onPreview: () => void }) {
@@ -904,8 +887,6 @@ function WhatsNewBanner({ onDismiss }: { onDismiss: () => void }) {
 export default function DashboardPage() {
   const workbench = useWorkbenchState()
   const fastIntentPromiseRef = useRef<Promise<{ name: string; intent: string }> | null>(null)
-  const preflightPlanRef = useRef<{ requestId: string; prompt: string; mode: 'build' | 'plan' | 'chat'; summary: string; storePromise: Promise<StoreData | null>; questions: CoreQuestion[] } | null>(null)
-  const plannerHandoffRef = useRef<{ requestId: string; questions: CoreQuestion[]; answers: Record<string, string>; summary: string; skipped: boolean } | null>(null)
   const projectCreatePromiseRef = useRef<{ prompt: string; promise: Promise<{ data: { store: StoreData } | null; error: string | null; aborted?: boolean }> } | null>(null)
   const replayApprovalResolveRef = useRef<(() => void) | null>(null)
   const replayAnswerResolveRef = useRef<(() => void) | null>(null)
@@ -926,7 +907,6 @@ export default function DashboardPage() {
   const coreImageFallbacksRef = useRef(new Set<string>())
   const coreRunCompletedRef = useRef(false)
   const coreRunFinalizationRef = useRef<{ runId: string; promise: Promise<void> }>()
-  const orchestratorProgressRef = useRef<CoreTodo[]>([])
   const [workflowEvents, setWorkflowEvents] = useState<WorkflowEvent[]>([])
   const workflowEventsRef = useRef<WorkflowEvent[]>([])
   const [workflowRunId, setWorkflowRunId] = useState('')
@@ -988,9 +968,6 @@ export default function DashboardPage() {
   const corePreviewFrameRef = useRef<HTMLIFrameElement | null>(null)
   const completionTonePlayedForRef = useRef('')
   const corePreviewScreenshotRequestRef = useRef<string>()
-  const coreSnapshotRequestRef = useRef<string>()
-  const coreSnapshotCapturedForRef = useRef('')
-  const coreSnapshotRetryRef = useRef({ key: '', count: 0 })
   const [corePreviewScreenshot, setCorePreviewScreenshot] = useState('')
   const [coreElementPickerActive, setCoreElementPickerActive] = useState(false)
   const [coreSelectedComponents, setCoreSelectedComponents] = useState<Array<{ id: string; name: string; runtimeId?: string; relativePath: string; lineNumber: number; columnNumber: number }>>([])
@@ -1041,7 +1018,17 @@ export default function DashboardPage() {
   }
   const [coreTodos, setCoreTodos] = useState<{ chatId: number; todos: CoreTodo[] } | null>(null)
   const coreTodosRef = useRef<{ chatId: number; todos: CoreTodo[] } | null>(null)
-  const coreTodoStateRef = useRef<{ chatId: number; statuses: Map<string, string> } | null>(null)
+  const coreTodoProgressRef = useRef<{
+    runId: string
+    chatId: number
+    requestedStatuses: Map<string, CoreTodoStatus>
+    fileWrittenTodoIds: Set<string>
+    currentTodoId?: string
+    buildPassed: boolean
+    browserQaPassed: boolean
+    snapshotPersisted: boolean
+  }>()
+  const [coreTodoOutcomeState, setCoreTodoOutcomeState] = useState<{ runId: string; chatId: number; outcome: CoreTodoRunOutcome } | null>(null)
   const [coreBlueprint, setCoreBlueprint] = useState<CoreBlueprint | null>(null)
   const [workflowBlueprint, setWorkflowBlueprint] = useState<CoreBlueprint | null>(null)
   const autoApproveAttemptedRef = useRef(new Set<number>())
@@ -1060,40 +1047,34 @@ export default function DashboardPage() {
     const questionnaire = coreQuestionnaire
     const client = coreClientRef.current
     const runtime = coreRuntimeRef.current
+    if (questionnaire?.generationError) {
+      coreQuestionnaireRef.current = null
+      setCoreQuestionnaire(null)
+      if (answers === null) {
+        await persistRunEventRef.current('questionnaire.skipped', 'understand', 'running', {
+          requestId: questionnaire.requestId,
+          reason: 'USER_SKIPPED_AFTER_GENERATION_FAILURE',
+        })
+        const last = coreLastPromptRef.current
+        if (last?.store) {
+          void runCorePrompt(
+            'Skip the project questions and continue from my original request without assuming preferences.',
+            last.mode,
+            last.store,
+            [],
+            false,
+            true,
+          )
+        }
+      }
+      return
+    }
     if (questionnaire?.requestId === 'replay-question') {
       if (answers !== null) {
         replayAnswersRef.current = answers
         replayAnswerResolveRef.current?.()
         replayAnswerResolveRef.current = null
       }
-      return
-    }
-    const preflightPlan = preflightPlanRef.current
-    if (questionnaire?.requestId.startsWith('preflight:') && preflightPlan?.requestId === questionnaire.requestId) {
-      if (coreQuestionnaireInFlightRef.current.has(questionnaire.requestId)) return
-      coreQuestionnaireInFlightRef.current.add(questionnaire.requestId)
-      setCoreQuestionnaire({ ...questionnaire, isResponding: true })
-      const store = await preflightPlan.storePromise
-      if (!store) {
-        coreQuestionnaireInFlightRef.current.delete(questionnaire.requestId)
-        setCoreQuestionnaire((current) => current?.requestId === questionnaire.requestId ? { ...current, isResponding: false } : current)
-        setCoreGatewayError('Seltra could not create this project. Retry your prompt to continue.')
-        return
-      }
-      agentTimingRef.current.answeredAt = Date.now()
-      logAgentTiming('questionnaire_answered', agentTimingRef.current.answeredAt)
-      const summary = [preflightPlan.summary, 'The user answered the planning questionnaire:', ...questionnaire.questions.map((question) => `- ${question.question}: ${answers?.[question.id] || 'Skipped'}`)].filter(Boolean).join('\n')
-      plannerHandoffRef.current = { requestId: questionnaire.requestId, questions: preflightPlan.questions, answers: answers ?? {}, summary: preflightPlan.summary, skipped: answers === null }
-      setCoreQuestionnaireSummary(questionnaire.questions.map((question) => ({ question: question.question, answer: answers?.[question.id] || 'Skipped' })))
-      preflightPlanRef.current = null
-      coreQuestionnaireRef.current = null
-      setCoreQuestionnaire(null)
-      dispatchWorkbench({ type: 'answer' })
-      captureWorkbenchEvent({ type: 'answer' })
-      localStorage.setItem(`seltra:core:preflight-complete:${store.id}`, '1')
-      setSending(true)
-      setAgentStreamPhase('narrating')
-      void runCorePrompt(`${preflightPlan.prompt}\n\n${summary}`, preflightPlan.mode, store, [], false, true).finally(() => coreQuestionnaireInFlightRef.current.delete(questionnaire.requestId))
       return
     }
     if (!questionnaire || !client || !runtime || coreQuestionnaireInFlightRef.current.has(questionnaire.requestId)) return
@@ -1110,9 +1091,23 @@ export default function DashboardPage() {
     try {
       await client.invoke('user-input:respond', [{ requestId: questionnaire.requestId, response: { kind: 'questionnaire', answers } }], runtime)
       if (answers === null) {
+        await persistRunEventRef.current('questionnaire.skipped', 'understand', 'running', {
+          requestId: questionnaire.requestId,
+          reason: 'USER_SKIPPED',
+        })
         coreQuestionnaireRef.current = null
         setCoreQuestionnaire(null)
       } else {
+        for (const question of questionnaire.questions) {
+          await persistRunEventRef.current('questionnaire.answered', 'understand', 'running', {
+            requestId: questionnaire.requestId,
+            questionId: question.id,
+            question: question.question,
+            shapes: question.shapes,
+            answer: answers[question.id] ?? '',
+            answers: { [question.id]: answers[question.id] ?? '' },
+          })
+        }
         setCoreStartupStatus('')
         setCoreQuestionnaireSummary(questionnaire.questions.map((item) => ({ question: item.question, answer: answers[item.id] || 'Skipped' })))
       }
@@ -1199,7 +1194,6 @@ export default function DashboardPage() {
         // Persist only after Core confirms approval. Retrying a failed follow-up
         // must not reapply a template and overwrite work already in the app.
         localStorage.setItem(approvalKey, '1')
-        localStorage.removeItem(`seltra:core:preflight-complete:${activeStore?.id ?? ''}`)
       }
 
       const photoSlots = blueprintPhotoSlots(blueprint.visuals ?? [])
@@ -1247,7 +1241,7 @@ export default function DashboardPage() {
         const requestId = crypto.randomUUID()
         const operationId = crypto.randomUUID()
         const jobId = crypto.randomUUID()
-        const receipt = await client.invoke<{ kind: string; reason?: string }>('distributed-machine:dispatch', [{ ...machine, expectedActorInstanceId: actor.actorInstanceId, expectedRevision: actor.revision, messageId: crypto.randomUUID(), encodedEvent: { type: 'SUBMIT', requestId, operationId, job: { id: jobId, startedAt: Date.now(), prompt: slot.prompt, themeMode: 'real-photography', targetAppId: appId, targetAppName: finalAppName, assetSlot: slot.slot, source: 'chat' } } }], activeRuntime)
+        const receipt = await client.invoke<{ kind: string; reason?: string }>('distributed-machine:dispatch', [{ ...machine, expectedActorInstanceId: actor.actorInstanceId, expectedRevision: actor.revision, messageId: crypto.randomUUID(), encodedEvent: { type: 'SUBMIT', requestId, operationId, job: { id: jobId, startedAt: Date.now(), prompt: slot.prompt, themeMode: 'plain', targetAppId: appId, targetAppName: finalAppName, assetSlot: slot.slot, source: 'chat' } } }], activeRuntime)
         if (receipt.kind !== 'applied' && receipt.kind !== 'replayed') throw new Error(receipt.reason || 'Core did not accept the image generation request.')
         const outcome = await client.invoke<{ kind: string; result?: { fileName: string; publicAssetPath?: string }; message?: string }>('image-generation:wait-for-operation', [{ requestId }], activeRuntime)
         if (outcome.kind !== 'succeeded' || !outcome.result?.fileName || !outcome.result.publicAssetPath) throw new Error(outcome.message || 'Core image generation did not save a public raster.')
@@ -1370,7 +1364,7 @@ export default function DashboardPage() {
 
       const visuals = blueprint.visuals?.length ? blueprint.visuals.map((visual) => `- ${visual.type}: ${visual.description}\n  Prompt: ${visual.prompt}`).join('\n') : 'No visuals planned'
       const assetManifest = generatedAssets.filter((asset) => asset.path).map(({ slot, path }) => `- ${slot}: ${path}`).join('\n') || 'No photo assets were available; continue without them.'
-      const prompt = ['The app blueprint has been approved. Please build the app based on the following approved blueprint.', 'This is a multi-step build: immediately use Core’s update_todos tool to create a concise plan before editing files, update it as work proceeds, and mark each step complete only after doing it. The first todo and first edits must create a runnable storefront shell in App.tsx and pages/Index.tsx, with a real navigation bar, hero and section placeholders, and footer; start the preview and verify that shell before doing data-heavy product/catalog work. Continue implementation in this same turn; do not stop after writing the plan.', 'Before declaring completion, inspect the actual project files, resolve every planned page in the app router, and verify navigation destinations. Implement every page promised by the blueprint; a page file that is not imported and routed does not count as complete. Run the project build and fix import, compile, and browser-visible runtime errors before marking the build complete.', 'Core has already generated and saved the planned photo rasters. Use only the exact public paths in the asset manifest for those photo slots. Do not call generate_image again, use remote hotlinks, or substitute SVGs or gradients for photography. Keep SVG for logos, icons, and vector decoration. Verification fails if any manifest path is missing or not referenced by the page.', '', `App Name: ${finalAppName}`, `Template: ${blueprint.templateId}`, `Theme: ${blueprint.themeId}`, `Primary Color: ${blueprint.primaryColor}`, `Design Direction: ${blueprint.designDirection}`, '', 'Visual Assets:', visuals, '', 'Generated photo asset manifest:', assetManifest, '', `Original Prompt: ${blueprint.userPrompt}`].join('\n')
+      const prompt = ['The app blueprint has been approved. Please build the app based on the following approved blueprint.', 'This is a multi-step build: immediately use Core’s update_todos tool to create one stable 6-9 item implementation checklist derived from the approved blueprint before editing files. Update the same list as work proceeds. Mark an item in progress when you start it; only mark implementation items complete after their files have been written, and mark the final build/QA item complete only after the build succeeds and browser QA passes. Do not add preview, workspace-sync, or save phases as todos; Seltra reports those as separate run phases. The first todo and first edits must create a runnable storefront shell in App.tsx and pages/Index.tsx, with a real navigation bar, hero and section placeholders, and footer; start the preview and verify that shell before doing data-heavy product/catalog work. Continue implementation in this same turn; do not stop after writing the plan.', 'Before declaring completion, inspect the actual project files, resolve every planned page in the app router, and verify navigation destinations. Implement every page promised by the blueprint; a page file that is not imported and routed does not count as complete. Run the project build and fix import, compile, and browser-visible runtime errors before marking the build complete.', 'Core has already generated and saved the planned photo rasters. Use only the exact public paths in the asset manifest for those photo slots. Do not call generate_image again, use remote hotlinks, or substitute SVGs or gradients for photography. Keep SVG for logos, icons, and vector decoration. Verification fails if any manifest path is missing or not referenced by the page.', '', `App Name: ${finalAppName}`, `Template: ${blueprint.templateId}`, `Theme: ${blueprint.themeId}`, `Primary Color: ${blueprint.primaryColor}`, `Design Direction: ${blueprint.designDirection}`, '', 'Visual Assets:', visuals, '', 'Generated photo asset manifest:', assetManifest, '', `Original Prompt: ${blueprint.userPrompt}`].join('\n')
       const visiblePrompt = blueprint.userPrompt || `Build ${finalAppName}`
       const machine = { protocolVersion: 1, machineId: 'chat_stream', encodedKey: { chatId } }
       setCoreStartupStatus('Building your app')
@@ -1563,83 +1557,6 @@ export default function DashboardPage() {
       }
     }, 10_000)
   }
-
-  useEffect(() => {
-    if (!corePreviewLoaded || !corePreviewUrl || !activeStore?.id) return
-    const appId = activeStore.dashboardApp?.coreAppId
-      ?? activeStore.apps?.find((app) => app.coreAppId === coreAppRef.current)?.coreAppId
-      ?? coreAppRef.current
-    const frame = corePreviewFrameRef.current
-    if (!appId || !frame?.contentWindow) return
-
-    const captureKey = `${activeStore.id}:${appId}:${activeStore.dashboardApp?.version ?? ''}:${corePreviewUrl}`
-    if (coreSnapshotCapturedForRef.current === captureKey) return
-    if (coreSnapshotRetryRef.current.key !== captureKey) coreSnapshotRetryRef.current = { key: captureKey, count: 0 }
-    coreSnapshotCapturedForRef.current = captureKey
-    const requestId = crypto.randomUUID()
-    const origin = new URL(corePreviewUrl).origin
-    coreSnapshotRequestRef.current = requestId
-    const retryOrFail = () => {
-      if (coreSnapshotRetryRef.current.count < 1) {
-        coreSnapshotRetryRef.current.count += 1
-        coreSnapshotCapturedForRef.current = ''
-        setCorePreviewLoaded(false)
-        setPreviewReloadKey((key) => key + 1)
-      } else {
-        setPreviewOverlayError('PREVIEW_SNAPSHOT_FAILED', 'Seltra could not capture the preview after retrying.')
-      }
-    }
-
-    const timeout = window.setTimeout(() => {
-      if (coreSnapshotRequestRef.current !== requestId) return
-      coreSnapshotRequestRef.current = undefined
-      coreSnapshotCapturedForRef.current = ''
-      window.removeEventListener('message', handleSnapshot)
-      retryOrFail()
-    }, 15_000)
-    const handleSnapshot = async (event: MessageEvent) => {
-      const data = event.data as { type?: string; requestId?: string; success?: boolean; dataUrl?: string }
-      if (event.origin !== origin || event.source !== frame.contentWindow) return
-      if (data?.type !== 'dyad-screenshot-response' || data.requestId !== requestId) return
-      window.clearTimeout(timeout)
-      window.removeEventListener('message', handleSnapshot)
-      coreSnapshotRequestRef.current = undefined
-      if (!data.success || typeof data.dataUrl !== 'string' || !data.dataUrl.startsWith('data:image/')) {
-        coreSnapshotCapturedForRef.current = ''
-        retryOrFail()
-        return
-      }
-      coreSnapshotRetryRef.current.count = 0
-
-      const { data: saved, error } = await apiFetch<{ url: string }>(
-        `/api/v5/seltra/store/${encodeURIComponent(activeStore.id!)}/hero-snapshot`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ snapshotUrl: data.dataUrl, coreAppId: appId }),
-        },
-      )
-      if (error || !saved?.url) {
-        coreSnapshotCapturedForRef.current = ''
-        console.warn('[dashboard] Could not persist the Core preview snapshot.')
-        return
-      }
-      setStores((current) => current.map((store) => store.id !== activeStore.id ? store : {
-        ...store,
-        heroSnapshotUrl: saved.url,
-        apps: store.apps?.map((app) => app.coreAppId === appId
-          ? { ...app, heroSnapshotUrl: saved.url }
-          : app),
-      }))
-    }
-
-    window.addEventListener('message', handleSnapshot)
-    frame.contentWindow.postMessage({ type: 'dyad-take-screenshot', requestId }, origin)
-    return () => {
-      window.clearTimeout(timeout)
-      window.removeEventListener('message', handleSnapshot)
-      if (coreSnapshotRequestRef.current === requestId) coreSnapshotRequestRef.current = undefined
-    }
-  }, [activeStore?.id, activeStore?.dashboardApp?.coreAppId, activeStore?.dashboardApp?.version, activeStore?.apps, corePreviewLoaded, corePreviewUrl, setPreviewOverlayError])
 
   const toggleCoreElementPicker = () => {
     if (!corePreviewFrameRef.current?.contentWindow || !corePreviewUrl) return
@@ -1899,18 +1816,61 @@ export default function DashboardPage() {
         )
         return coreRunEventQueueRef.current.then(() => undefined)
       }
-      const updateOrchestratorProgress = (updates: Record<string, CoreTodo['status']>, phase: string) => {
-        const todos = orchestratorProgressRef.current.map((todo) =>
-          updates[todo.id] ? { ...todo, status: updates[todo.id] } : todo,
+      const ensureTodoProgress = (chatId: number) => {
+        const run = coreRunRef.current
+        if (!run) return undefined
+        if (coreTodoProgressRef.current?.runId !== run.id || coreTodoProgressRef.current.chatId !== chatId) {
+          coreTodoProgressRef.current = {
+            runId: run.id,
+            chatId,
+            requestedStatuses: new Map(),
+            fileWrittenTodoIds: new Set(),
+            buildPassed: false,
+            browserQaPassed: false,
+            snapshotPersisted: false,
+          }
+          setCoreTodoOutcomeState({ runId: run.id, chatId, outcome: 'running' })
+        }
+        return coreTodoProgressRef.current
+      }
+      const publishTodoProgress = (chatId: number, requestedTodos: CoreTodo[]) => {
+        const progress = ensureTodoProgress(chatId)
+        const run = coreRunRef.current
+        if (!progress || !run || requestedTodos.length === 0) return
+        const previousTodos = coreTodosRef.current?.chatId === chatId ? coreTodosRef.current.todos : []
+        const todos = projectTodoStatuses(
+          requestedTodos,
+          previousTodos,
+          {
+            fileWrittenTodoIds: progress.fileWrittenTodoIds,
+            buildPassed: progress.buildPassed,
+            browserQaPassed: progress.browserQaPassed,
+          },
+          !progress.snapshotPersisted,
         )
-        orchestratorProgressRef.current = todos
-        const current = todos.find((todo) => todo.status === 'in_progress')
-        persistRunEvent('step.progress', phase, 'running', {
-          todos,
-          total: todos.length,
-          completed: todos.filter((todo) => todo.status === 'completed').length,
-          current: current?.content ?? null,
-        })
+        coreTodosRef.current = { chatId, todos }
+        setCoreTodos({ chatId, todos })
+        if (!progress.snapshotPersisted) {
+          progress.snapshotPersisted = true
+          void persistRunEvent('step.progress', 'build', 'running', { chatId, todos })
+          return
+        }
+        const previousStatuses = new Map(previousTodos.map((todo) => [todo.id, todo.status]))
+        for (const todo of todos) {
+          if (previousStatuses.get(todo.id) !== todo.status) {
+            void persistRunEvent('step.progress', 'build', 'running', { chatId, todoId: todo.id, status: todo.status })
+          }
+        }
+      }
+      const refreshTodoEvidence = (chatId: number) => {
+        const progress = coreTodoProgressRef.current
+        const current = coreTodosRef.current
+        if (!progress || progress.chatId !== chatId || current?.chatId !== chatId) return
+        const requestedTodos = current.todos.map((todo) => ({
+          ...todo,
+          status: progress.requestedStatuses.get(todo.id) ?? todo.status,
+        }))
+        publishTodoProgress(chatId, requestedTodos)
       }
       flushPendingBrowserQaRef.current = () => {
         if (!coreRunRef.current?.id || pendingBrowserQaRef.current.length === 0) return
@@ -1921,9 +1881,9 @@ export default function DashboardPage() {
       const syncBeforeRunCompleted = async () => {
         const client = coreClientRef.current
         if (!client) throw Object.assign(new Error('CORE_CLIENT_UNAVAILABLE'), { code: 'CORE_CLIENT_UNAVAILABLE' })
+        setCoreStartupStatus('Saving your work')
         const result = await client.syncNow(coreRunRef.current?.id)
         if (result.verified !== true) throw Object.assign(new Error('MANIFEST_NOT_VERIFIED'), { code: 'MANIFEST_NOT_VERIFIED' })
-        updateOrchestratorProgress({ 'workspace-sync': 'completed' }, 'verify')
       }
       const persistAppState = async (eventType: string, values: { name?: string; status?: 'draft' | 'planning' | 'awaiting_answers' | 'building' | 'preview_ready' | 'published' | 'live' | 'failed' | 'stopped'; previewUrl?: string; blueprint?: Record<string, unknown>; approved?: boolean; errorCode?: string; errorDetail?: string } = {}) => {
         const appId = coreAppRef.current
@@ -1950,18 +1910,25 @@ export default function DashboardPage() {
                 summary: `Your app is ready to preview; ${imageFallbacks.length} image${imageFallbacks.length === 1 ? ' is' : 's are'} pending regeneration.`,
               } : {}),
             }, true)
+            setCoreTodoOutcomeState({
+              runId: run.id,
+              chatId: coreChatRef.current ?? -1,
+              outcome: imageFallbacks.length ? 'degraded' : 'ready',
+            })
           } catch (error) {
             const code = typeof error === 'object' && error && 'code' in error && typeof error.code === 'string'
               ? error.code
               : 'WORKSPACE_SYNC_FAILED'
             console.warn('[builder] Could not finalize Core run', { runId: run.id, code })
             await persistRunEvent('run.failed', 'verify', 'failed', { chatId: coreChatRef.current, code })
+            setCoreTodoOutcomeState({ runId: run.id, chatId: coreChatRef.current ?? -1, outcome: 'failed' })
             await persistAppState('app.build.incomplete', {
               status: 'building',
               errorCode: code,
               errorDetail: 'Workspace synchronization could not be verified.',
             })
           } finally {
+            setCoreStartupStatus('')
             coreRunCompletedRef.current = false
             if (coreRunRef.current?.id === run.id) coreRunRef.current = undefined
           }
@@ -1984,28 +1951,33 @@ export default function DashboardPage() {
       }
       if (channel === 'agent-tool:file-written') {
         const payload = frame.payload as { chatId?: number; path?: string; bytes?: number; sha256?: string }
-        if (payload.chatId === coreChatRef.current) {
+        if (typeof payload.chatId === 'number' && payload.chatId === coreChatRef.current) {
           setCoreStartupStatus('Writing your app files')
           dispatchWorkbench({ type: 'step-started', id: `files-${Date.now()}`, title: payload.path ? `Writing ${payload.path}` : 'Writing your app files' })
-          if (orchestratorProgressRef.current.length) updateOrchestratorProgress({ 'app-files': 'in_progress' }, 'build')
           if (payload.path && Number.isSafeInteger(payload.bytes) && typeof payload.sha256 === 'string') {
+            const progress = ensureTodoProgress(payload.chatId)
+            if (progress?.currentTodoId) progress.fileWrittenTodoIds.add(progress.currentTodoId)
             persistRunEvent('file.written', 'build', 'running', { appId: coreAppRef.current, path: payload.path, bytes: payload.bytes, sha256: payload.sha256 })
+            refreshTodoEvidence(payload.chatId)
           }
         }
       }
       if (channel === 'agent-tool:build-result') {
         const payload = frame.payload as { appId?: number; chatId?: number; executed?: boolean; exitCode?: number | null; timedOut?: boolean }
-        if (payload.appId === coreAppRef.current && payload.chatId === coreChatRef.current) {
+        if (payload.appId === coreAppRef.current && typeof payload.chatId === 'number' && payload.chatId === coreChatRef.current) {
+          const progress = ensureTodoProgress(payload.chatId)
+          if (progress) progress.buildPassed = payload.executed === true && payload.exitCode === 0 && payload.timedOut !== true
           persistRunEvent('build.result', 'build', 'running', {
             executed: payload.executed === true,
             exitCode: payload.exitCode ?? null,
             timedOut: payload.timedOut === true,
           })
+          refreshTodoEvidence(payload.chatId)
         }
       }
       if (channel === 'agent-tool:browser-qa') {
-        const payload = frame.payload as { appId?: number; chatId?: number; status?: 'passed' | 'failed' | 'unavailable'; reason?: string | null; ignoredNoise?: string[]; consoleErrors?: string[]; failedRequests?: string[]; imageIssues?: string[]; screenshotPath?: string | null; screenshotBytes?: number | null; screenshotSha256?: string | null }
-        if (payload.appId === coreAppRef.current && payload.chatId === coreChatRef.current) {
+        const payload = frame.payload as { appId?: number; chatId?: number; status?: 'passed' | 'failed' | 'unavailable'; reason?: string | null; ignoredNoise?: string[]; consoleErrors?: string[]; failedRequests?: string[]; imageIssues?: string[]; screenshotPath?: string | null; screenshotBytes?: number | null; screenshotSha256?: string | null; heroSnapshotDataUrl?: string | null }
+        if (payload.appId === coreAppRef.current && typeof payload.chatId === 'number' && payload.chatId === coreChatRef.current) {
           const qaPayload = {
             status: payload.status ?? 'unavailable',
             reason: payload.reason ?? null,
@@ -2017,28 +1989,78 @@ export default function DashboardPage() {
             screenshotBytes: payload.screenshotBytes ?? null,
             screenshotSha256: payload.screenshotSha256 ?? null,
           }
+          const progress = ensureTodoProgress(payload.chatId)
+          if (progress) progress.browserQaPassed = qaPayload.status === 'passed'
           if (coreRunRef.current?.id) persistRunEvent('browser.qa', 'verifying', 'running', qaPayload)
           else {
             if (enqueueBrowserQaEvent(pendingBrowserQaRef.current, qaPayload, 50)) {
               console.warn('[builder] Dropped buffered browser.qa event because the run event buffer reached 50 entries.')
             }
           }
+          refreshTodoEvidence(payload.chatId)
+          if (qaPayload.status === 'passed' && typeof payload.heroSnapshotDataUrl === 'string' && activeStore?.id && payload.appId) {
+            const projectId = activeStore.id
+            const coreAppId = payload.appId
+            void apiFetch<{ url: string; updatedAt?: string }>(`/api/v5/seltra/store/${encodeURIComponent(projectId)}/hero-snapshot`, {
+              method: 'POST',
+              body: JSON.stringify({ snapshotUrl: payload.heroSnapshotDataUrl, coreAppId }),
+            }).then(({ data, error }) => {
+              if (error || !data?.url) {
+                console.error('[builder] Could not persist the Playwright project hero snapshot.', error || 'No snapshot URL returned.')
+                return
+              }
+              const heroSnapshotUpdatedAt = data.updatedAt ?? new Date().toISOString()
+              setStores((current) => current.map((store) => store.id !== projectId ? store : {
+                ...store,
+                heroSnapshotUrl: data.url,
+                heroSnapshotUpdatedAt,
+                dashboardApp: store.dashboardApp?.coreAppId === coreAppId
+                  ? { ...store.dashboardApp, heroSnapshotUrl: data.url, heroSnapshotUpdatedAt }
+                  : store.dashboardApp,
+                apps: store.apps?.map((app) => app.coreAppId === coreAppId
+                  ? { ...app, heroSnapshotUrl: data.url, heroSnapshotUpdatedAt }
+                  : app),
+              }))
+              if (storeContext.activeStore?.id === projectId) {
+                storeContext.setActiveStore({
+                  ...storeContext.activeStore,
+                  heroSnapshotUrl: data.url,
+                  heroSnapshotUpdatedAt,
+                  dashboardApp: storeContext.activeStore.dashboardApp?.coreAppId === coreAppId
+                    ? { ...storeContext.activeStore.dashboardApp, heroSnapshotUrl: data.url, heroSnapshotUpdatedAt }
+                    : storeContext.activeStore.dashboardApp,
+                  apps: storeContext.activeStore.apps?.map((app) => app.coreAppId === coreAppId
+                    ? { ...app, heroSnapshotUrl: data.url, heroSnapshotUpdatedAt }
+                    : app),
+                })
+              }
+            }).catch((error: unknown) => {
+              console.error('[builder] Could not persist the Playwright project hero snapshot.', error)
+            })
+          }
         }
       }
       if (frame.channel === 'agent-tool:todos-update') {
         const payload = frame.payload as { chatId?: number; todos?: CoreTodo[] }
         if (payload.chatId !== undefined && payload.chatId === coreChatRef.current && Array.isArray(payload.todos)) {
-          const previousStatuses = coreTodoStateRef.current?.chatId === payload.chatId
-            ? coreTodoStateRef.current.statuses
-            : new Map<string, string>()
-          const nextStatuses = new Map(payload.todos.map((todo) => [todo.id, todo.status]))
-          const changedTodos = payload.todos.filter((todo) => previousStatuses.get(todo.id) !== todo.status)
-          coreTodoStateRef.current = { chatId: payload.chatId, statuses: nextStatuses }
-          const nextTodos = { chatId: payload.chatId, todos: payload.todos }
-          coreTodosRef.current = nextTodos
-          setCoreTodos(nextTodos)
-          const currentTodo = payload.todos.find((todo) => todo.status === 'in_progress')
-          payload.todos.filter((todo) => todo.status === 'completed').forEach((todo) => {
+          const previousTodos = coreTodosRef.current?.chatId === payload.chatId ? coreTodosRef.current.todos : []
+          const progress = ensureTodoProgress(payload.chatId)
+          for (const todo of payload.todos) progress?.requestedStatuses.set(todo.id, todo.status)
+          const activeTodo = payload.todos.find((todo) => todo.status === 'in_progress')
+          const pendingEvidenceTodo = payload.todos.find((todo, index) =>
+            todo.status === 'completed'
+            && previousTodos.find((previous) => previous.id === todo.id)?.status !== 'completed'
+            && (index === payload.todos!.length - 1
+              ? !(progress?.buildPassed && progress.browserQaPassed)
+              : !progress?.fileWrittenTodoIds.has(todo.id)),
+          )
+          if (progress) progress.currentTodoId = activeTodo?.id ?? pendingEvidenceTodo?.id
+          publishTodoProgress(payload.chatId, payload.todos)
+          const nextTodos = coreTodosRef.current?.chatId === payload.chatId ? coreTodosRef.current.todos : []
+          const previousStatuses = new Map(previousTodos.map((todo) => [todo.id, todo.status]))
+          const changedTodos = nextTodos.filter((todo) => previousStatuses.get(todo.id) !== todo.status)
+          const currentTodo = nextTodos.find((todo) => todo.status === 'in_progress')
+          nextTodos.filter((todo) => todo.status === 'completed' && previousStatuses.get(todo.id) !== 'completed').forEach((todo) => {
             dispatchWorkbench({ type: 'step-finished', id: todo.id, title: todo.content })
             captureWorkbenchEvent({ type: 'step-finished', id: todo.id, title: todo.content })
           })
@@ -2047,9 +2069,8 @@ export default function DashboardPage() {
             setCoreStartupStatus(title)
             dispatchWorkbench({ type: 'step-started', id: currentTodo.id, title })
             captureWorkbenchEvent({ type: 'step-started', id: currentTodo.id, title })
-          }
-          for (const changedTodo of changedTodos) {
-            persistRunEvent('step.progress', 'build', 'running', { chatId: payload.chatId, changedTodoId: changedTodo.id, total: payload.todos.length, completed: payload.todos.filter((todo) => todo.status === 'completed').length, current: payload.todos.find((todo) => todo.status === 'in_progress')?.content ?? null, todos: payload.todos })
+          } else if (changedTodos.some((todo) => previousStatuses.get(todo.id) === 'in_progress')) {
+            setCoreStartupStatus('')
           }
         }
       }
@@ -2112,7 +2133,6 @@ export default function DashboardPage() {
           setAgentStreamPhase('narrating')
           setCoreStartupStatus('')
           coreMessageRef.current = undefined
-          persistRunEvent('questionnaire.answered', 'understand', 'running', { requestId: payload.requestId })
         }
       }
       if (frame.channel === 'app-blueprint:approved') {
@@ -2236,11 +2256,26 @@ export default function DashboardPage() {
             coreRunHeartbeatRef.current = undefined
           }
           if (failedRun) {
+            setCoreTodoOutcomeState({ runId: failedRun.id, chatId: coreChatRef.current ?? -1, outcome: 'failed' })
             setResumeProjectAvailable(true)
+            const questionnaireFailed = payload.error === 'QUESTIONNAIRE_GENERATION_FAILED'
             persistRunEvent('run.failed', 'build', 'failed', {
+              ...(questionnaireFailed ? { code: 'QUESTIONNAIRE_GENERATION_FAILED' } : {}),
               reason: 'core_response_error',
-              message: 'Seltra could not reach the model provider. Check the Core connection and retry.',
+              message: questionnaireFailed
+                ? 'Seltra could not generate a valid project questionnaire after one retry.'
+                : 'Seltra could not reach the model provider. Check the Core connection and retry.',
             })
+            if (questionnaireFailed) {
+              const questionnaire = {
+                requestId: `questionnaire-error:${failedRun.id}`,
+                chatId: coreChatRef.current ?? -1,
+                questions: [],
+                generationError: true,
+              } satisfies CoreQuestionnaire
+              coreQuestionnaireRef.current = questionnaire
+              setCoreQuestionnaire(questionnaire)
+            }
           }
           dispatchWorkbench({ type: 'failed', friendlyMessage: 'Something went wrong on our side. Try again.' })
           captureWorkbenchEvent({ type: 'failed', friendlyMessage: 'Something went wrong on our side. Try again.' })
@@ -2282,7 +2317,6 @@ export default function DashboardPage() {
                       await persistAppState('app.preview.ready', { status: 'preview_ready', previewUrl: readyPreviewUrl })
                       await persistRunEvent('preview.ready', 'verifying', undefined, { status: probe.status, previewUrl: readyPreviewUrl })
                       previewHealthTiming({ status: 'ready', previewUrl: readyPreviewUrl, probeStatus: probe.status, attempts: attempt + 1 })
-                      updateOrchestratorProgress({ 'preview-check': 'completed' }, 'verify')
                       if (coreRunCompletedRef.current) {
                         await finalizeRun()
                       }
@@ -2304,6 +2338,7 @@ export default function DashboardPage() {
             }
           }
           if (value.encodedState?.phase === 'errored') {
+            if (coreRunRef.current) setCoreTodoOutcomeState({ runId: coreRunRef.current.id, chatId: coreChatRef.current ?? -1, outcome: 'failed' })
             setAgentStreamPhase('error')
             dispatchWorkbench({ type: 'failed', friendlyMessage: 'Something went wrong on our side. Try again.' })
             captureWorkbenchEvent({ type: 'failed', friendlyMessage: 'Something went wrong on our side. Try again.' })
@@ -2340,17 +2375,10 @@ export default function DashboardPage() {
                 chatId: coreChatRef.current,
                 outcome: completion.outcome,
                 error: completion.error ? 'Build could not be completed.' : null,
-                todos: coreTodosRef.current?.chatId === coreChatRef.current ? coreTodosRef.current?.todos ?? [] : [],
               }, completion.outcome === 'completed')
               if (completion.outcome === 'completed') {
                 void workerEvent.then(() => {
                   coreRunCompletedRef.current = true
-                  const previewReady = Boolean(corePreviewUrlRef.current)
-                  updateOrchestratorProgress({
-                    'app-files': 'completed',
-                    'preview-check': previewReady ? 'completed' : 'in_progress',
-                    'workspace-sync': previewReady ? 'in_progress' : 'pending',
-                  }, 'verify')
                   if (corePreviewUrlRef.current) return finalizeRun()
                 }).catch((error) => {
                   console.warn('[builder] Could not persist Core worker completion', { code: error instanceof Error ? error.message : 'RUN_EVENT_PERSIST_FAILED' })
@@ -2387,6 +2415,8 @@ export default function DashboardPage() {
               if (completion.outcome === 'errored') persistAppState('app.build.failed', { status: 'failed', errorCode: 'BUILD_FAILED', errorDetail: 'The build failed. See the run event log for diagnostics.' })
               if (completion.outcome === 'stopped') persistAppState('app.build.stopped', { status: 'stopped' })
               if (completion.outcome !== 'completed') {
+                if (completedRun) setCoreTodoOutcomeState({ runId: completedRun.id, chatId: coreChatRef.current ?? -1, outcome: 'failed' })
+                setCoreStartupStatus('')
                 coreRunFinalizationRef.current = undefined
                 coreRunRef.current = undefined
               }
@@ -2493,9 +2523,6 @@ export default function DashboardPage() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const shouldFollowStreamRef = useRef(true)
 
-  // Asks the planner agent whether the prompt needs clarifying questions before build.
-  // Returns null when nothing needs asking (ready to build immediately), or the
-  // PlannerResult (with questions) when the merchant should be prompted first.
   const runPlanner = useCallback(async (prompt: string, signal?: AbortSignal): Promise<PlannerResult | null> => {
     const lower = prompt.toLowerCase()
     const product = /coffee|tea|drink|beverage/.test(lower) ? 'drinks'
@@ -2650,6 +2677,8 @@ export default function DashboardPage() {
     if (coreRunProjectRef.current !== projectId) {
       coreRunProjectRef.current = projectId
       coreRunRef.current = undefined
+      coreTodoProgressRef.current = undefined
+      setCoreTodoOutcomeState(null)
       setWorkflowRunId('')
       workflowEventsRef.current = []
       setWorkflowEvents([])
@@ -2678,8 +2707,11 @@ export default function DashboardPage() {
       coreRunRef.current = { id: data.id, idempotencyKey: '' }
       flushPendingBrowserQaRef.current()
       setWorkflowRunId(data.id)
+      const eventOutcome = runTodoOutcome(data.events)
       if (data.state === 'stopped' || data.state === 'interrupted' || data.state === 'paused_no_credits' || data.state === 'failed') {
+        setCoreTodoOutcomeState({ runId: data.id, chatId: coreChatRef.current ?? -1, outcome: eventOutcome ?? 'failed' })
         setSending(false)
+        setCoreStartupStatus('')
         const todoSnapshot = latestRunTodoSnapshot(data.events)
         if (todoSnapshot) {
           const restored = { chatId: todoSnapshot.chatId ?? coreChatRef.current ?? -1, todos: todoSnapshot.todos }
@@ -2688,8 +2720,10 @@ export default function DashboardPage() {
         }
         setResumeProjectAvailable(true)
       } else if (data.state === 'completed') {
+        setCoreTodoOutcomeState({ runId: data.id, chatId: coreChatRef.current ?? -1, outcome: eventOutcome ?? 'ready' })
         coreRunRef.current = undefined
         setSending(false)
+        setCoreStartupStatus('')
         const todoSnapshot = latestRunTodoSnapshot(data.events)
         if (todoSnapshot) {
           const restored = { chatId: todoSnapshot.chatId ?? coreChatRef.current ?? -1, todos: todoSnapshot.todos }
@@ -2699,9 +2733,11 @@ export default function DashboardPage() {
         const hasUnfinishedTodos = hasUnfinishedRunTodos(data.events) ?? Boolean(coreTodosRef.current?.chatId === coreChatRef.current && coreTodosRef.current?.todos.some((todo) => todo.status !== 'completed'))
         setResumeProjectAvailable(Boolean(hasUnfinishedTodos))
       } else if (data.state === 'waiting_for_user') {
+        setCoreTodoOutcomeState({ runId: data.id, chatId: coreChatRef.current ?? -1, outcome: 'running' })
         setSending(false)
         setResumeProjectAvailable(false)
       } else {
+        setCoreTodoOutcomeState({ runId: data.id, chatId: coreChatRef.current ?? -1, outcome: 'running' })
         setSending(true)
         // Reattaching the dashboard is not proof that a Core worker is alive.
         // Do not renew its lease here; otherwise a dead stream looks active
@@ -2742,6 +2778,8 @@ export default function DashboardPage() {
           if (coreRunHeartbeatRef.current) window.clearInterval(coreRunHeartbeatRef.current)
           coreRunHeartbeatRef.current = undefined
           setSending(false)
+          setCoreStartupStatus('')
+          setCoreTodoOutcomeState({ runId, chatId: coreChatRef.current ?? -1, outcome: runTodoOutcome(data.events) ?? 'failed' })
           const todoSnapshot = latestRunTodoSnapshot(data.events)
           if (todoSnapshot) {
             const restored = { chatId: todoSnapshot.chatId ?? coreChatRef.current ?? -1, todos: todoSnapshot.todos }
@@ -2759,6 +2797,8 @@ export default function DashboardPage() {
           coreRunHeartbeatRef.current = undefined
           coreRunRef.current = undefined
           setSending(false)
+          setCoreStartupStatus('')
+          setCoreTodoOutcomeState({ runId, chatId: coreChatRef.current ?? -1, outcome: runTodoOutcome(data.events) ?? 'ready' })
           const todoSnapshot = latestRunTodoSnapshot(data.events)
           if (todoSnapshot) {
             const restored = { chatId: todoSnapshot.chatId ?? coreChatRef.current ?? -1, todos: todoSnapshot.todos }
@@ -3258,11 +3298,6 @@ export default function DashboardPage() {
     let dispatchRunIdForCatch: string | undefined
     let coreDispatchAccepted = false
     try {
-      const savedPreflightComplete = localStorage.getItem(`seltra:core:preflight-complete:${tenantId}`) === '1'
-      if (!coreRuntimeRef.current && savedPreflightComplete) {
-        await client.prewarm('user_send')
-        coreEventsRef.current?.retryNow()
-      }
       const runtimeStarted = Date.now()
       // The gateway can spend several minutes starting a tenant runtime
       // before its event socket supplies the RPC session ID.
@@ -3365,6 +3400,8 @@ export default function DashboardPage() {
         setCoreQuestionnaire(null)
         coreTodosRef.current = null
         setCoreTodos(null)
+        coreTodoProgressRef.current = undefined
+        setCoreTodoOutcomeState(null)
         setCoreBlueprint(null)
         setWorkflowBlueprint(null)
         setCoreBlueprintName('')
@@ -3430,17 +3467,14 @@ export default function DashboardPage() {
       const userPrompt = text || 'Use the attached files as context for this app.'
       setCoreStreamingPreview('')
       const blueprintApproved = localStorage.getItem(`seltra:core:blueprint-approved:${tenantId}`) === '1'
-      const preflightComplete = localStorage.getItem(`seltra:core:preflight-complete:${tenantId}`) === '1'
       const prompt = resumeExistingChat
         ? `Continue the existing project from its current files and conversation. Preserve completed work, identify the unfinished build steps, and continue until the app builds and a working preview is available. Do not restart or recreate completed work.\n\n${userPrompt}`
         : coreMode === 'build' && continuingPlan && !blueprintApproved
         ? `Continue from the completed plan in this conversation. The planning questionnaire has already been answered in this chat; do not ask it again. First call write_app_blueprint to present the initial app blueprint for approval. Do not create todos, edit files, or call implementation tools before the user approves the blueprint. After approval, implement the completed plan and carry it through to a working preview.\n\n${userPrompt}`
         : coreMode === 'build' && continuingPlan
           ? `Continue from the completed plan in this conversation and implement it now. Use the plan as the implementation specification, create/update the todo list, and carry the work through to a working preview.\n\n${userPrompt}`
-          : coreMode === 'build' && preflightComplete && !blueprintApproved
-            ? `A model-backed planning turn has already completed without runtime tools, and any questionnaire answers are included below. Do not call planning_questionnaire again. First call write_app_blueprint to present the initial app blueprint for approval. Do not create todos, edit files, or use implementation tools before approval.\n\n${userPrompt}`
           : coreMode === 'build' && !blueprintApproved
-            ? `This app still needs its initial blueprint. Make planning_questionnaire your first tool call. Ask at most three concise questions with no more than three options each. Do not call update_todos, write files, or use implementation tools until the user answers and approves the blueprint.\n\n${userPrompt}`
+            ? `This app still needs its initial blueprint. Make planning_questionnaire your first tool call. Seltra's fast model will generate 3-5 distinct questions grounded in the request. Do not call update_todos, write files, or use implementation tools until the user answers and approves the blueprint.\n\n${userPrompt}`
           : userPrompt
       const intent = { schemaVersion: 1, intentId, chatId, appId, invocationRef: { kind: 'chat-stream', entityKey: chatId, operationId }, prompt, redo: false, attachments: serializedAttachments, selectedComponents: coreSelectedComponents, requestedChatMode: coreMode }
       const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(intent))))
@@ -3459,12 +3493,9 @@ export default function DashboardPage() {
       coreImageFallbacksRef.current.clear()
       coreRunFinalizationRef.current = undefined
       coreRunRef.current = { id: runStart.data.id, idempotencyKey: runKey }
+      coreTodoProgressRef.current = undefined
+      setCoreTodoOutcomeState({ runId: runStart.data.id, chatId, outcome: 'running' })
       const workspaceReadyTimer = beginRunTiming('workspace_ready', { runId: runStart.data.id, projectId: tenantId })
-      orchestratorProgressRef.current = [
-        { id: 'app-files', content: 'Generate application files', status: 'pending' },
-        { id: 'preview-check', content: 'Start and verify the app preview', status: 'pending' },
-        { id: 'workspace-sync', content: 'Verify and persist workspace files', status: 'pending' },
-      ]
       setWorkflowRunId(runStart.data.id)
       const dispatchRunId = runStart.data.id
       const startEvent = await apiFetch(`/api/v5/runs/${encodeURIComponent(dispatchRunId)}/events`, {
@@ -3472,12 +3503,6 @@ export default function DashboardPage() {
         body: JSON.stringify({ type: 'run.started', phase: 'planning', agent: 'builder', eventKey: crypto.randomUUID(), state: 'running', payload: {} }),
       })
       if (startEvent.error) console.warn('[builder] Could not persist run start event', { runId: dispatchRunId, error: startEvent.error })
-      await persistRunEventRef.current('step.progress', 'planning', 'running', {
-        todos: orchestratorProgressRef.current,
-        total: orchestratorProgressRef.current.length,
-        completed: 0,
-        current: orchestratorProgressRef.current[0]?.content ?? null,
-      })
       flushPendingBrowserQaRef.current()
       const planTiming = beginRunTiming('plan_llm', { chatId, appId, mode: coreMode, runId: dispatchRunId })
       const receipt = await client.invoke<{ kind: string; reason?: string }>('distributed-machine:dispatch', [{ ...machine, expectedActorInstanceId: actor.actorInstanceId, expectedRevision: actor.revision, messageId: crypto.randomUUID(), encodedEvent: { type: 'SUBMIT', intent: { ...intent, payloadHash }, observedStopPolicyVersion: actor.encodedState.stopPolicyVersion ?? 0 } }], runtime)
@@ -3486,20 +3511,6 @@ export default function DashboardPage() {
       workspaceReadyTimer({ runId: dispatchRunId, projectId: tenantId, status: 'ready' })
       coreDispatchAccepted = true
       logCorePhase('prompt received')
-      const plannerHandoff = plannerHandoffRef.current
-      if (plannerHandoff) {
-        const appendPlannerEvent = (type: 'questionnaire.requested' | 'questionnaire.answered' | 'questionnaire.skipped', payload: Record<string, unknown>) => apiFetch(`/api/v5/runs/${encodeURIComponent(dispatchRunId)}/events`, {
-          method: 'POST',
-          body: JSON.stringify({ type, phase: 'understand', agent: 'planner', eventKey: crypto.randomUUID(), state: type === 'questionnaire.requested' ? 'waiting_for_user' : 'running', payload: { requestId: plannerHandoff.requestId, ...payload } }),
-        })
-        if (plannerHandoff.questions.length) await appendPlannerEvent('questionnaire.requested', { questionnaire: plannerHandoff.questions })
-        await appendPlannerEvent(plannerHandoff.skipped ? 'questionnaire.skipped' : 'questionnaire.answered', {
-          answers: plannerHandoff.answers,
-          summary: plannerHandoff.summary,
-          skipped: plannerHandoff.skipped,
-        })
-        plannerHandoffRef.current = null
-      }
       void apiFetch(`/api/v5/runs/${encodeURIComponent(dispatchRunId)}/events`, {
         method: 'POST',
         body: JSON.stringify({ type: 'phase.changed', phase: 'planning', agent: 'supervisor', eventKey: crypto.randomUUID(), payload: { status: 'Planning your app' } }),
@@ -3555,6 +3566,7 @@ export default function DashboardPage() {
           method: 'POST',
           body: JSON.stringify({ type: 'run.failed', eventKey: crypto.randomUUID(), state: 'failed', payload: { code: 'CORE_DISPATCH_FAILED', reason: 'Seltra could not start this request.' } }),
         }).catch(() => undefined)
+        setCoreTodoOutcomeState({ runId: dispatchRunIdForCatch, chatId: coreChatRef.current ?? -1, outcome: 'failed' })
         if (coreRunRef.current?.id === dispatchRunIdForCatch) coreRunRef.current = undefined
       }
       setSending(false)
@@ -3757,83 +3769,6 @@ const send = async () => {
     if (process.env.NODE_ENV === 'development') console.debug('[builder-intent] deterministic fallback', { reason: 'intent_request_failed', durationMs: Math.round(performance.now() - intentStartedAt) })
     return fallback
   })
-  if (!replayRequested && builderMode === 'build') {
-    const requestId = `preflight:${crypto.randomUUID()}`
-    const preflightStorePromise = (async () => {
-      let store = activeStore
-      if (!store && projectCreatePromiseRef.current?.prompt === earlyCorePrompt) {
-        const created = await projectCreatePromiseRef.current.promise.catch(() => null)
-        store = created?.data?.store ?? null
-        if (store) {
-          setStores((current) => [store!, ...current.filter((item) => item.id !== store!.id)])
-          storeContext.setActiveStore(store)
-        }
-      }
-      if (store?.id) {
-        const storeId = store.id
-        setCoreWorkspaceOpened(true)
-        const getSession = () => getCoreSession(storeId)
-        const refreshSession = () => getCoreSession(storeId, true)
-        const client = coreTenantRef.current === storeId && coreClientRef.current
-          ? coreClientRef.current
-          : new CoreClient(getSession, refreshSession)
-        coreTenantRef.current = storeId
-        coreClientRef.current = client
-        void client.prewarm().catch(() => {
-          console.warn('[builder] Workspace prewarm failed; the build will retry runtime startup.', { projectId: storeId })
-        })
-      }
-      return store
-    })()
-    preflightPlanRef.current = { requestId, prompt: corePrompt, mode: builderMode, summary: '', storePromise: preflightStorePromise, questions: [] }
-    void runPlanner(corePrompt).then((plan) => {
-      const activePlan = preflightPlanRef.current
-      if (!activePlan || activePlan.requestId !== requestId || stoppedRef.current) return
-      activePlan.summary = plan?.inferredSummary?.trim() ?? ''
-      const questions: CoreQuestion[] = (plan?.questions ?? []).map((item) => ({
-        id: item.id,
-        type: item.options?.length ? 'radio' : 'text',
-        question: item.question,
-        why: item.why,
-        options: item.options,
-        required: false,
-      }))
-      activePlan.questions = questions
-      if (!questions.length) {
-        plannerHandoffRef.current = { requestId, questions: [], answers: {}, summary: activePlan.summary, skipped: true }
-        preflightPlanRef.current = null
-        setCoreQuestionnaire(null)
-        setSending(true)
-        setAgentStreamPhase('narrating')
-        setCoreStartupStatus('')
-        localStorage.setItem(`seltra:core:preflight-complete:${activeStore?.id ?? coreTenantRef.current ?? ''}`, '1')
-        const plannerSummary = activePlan.summary ? `\n\nPlanner summary: ${activePlan.summary}` : ''
-        void activePlan.storePromise.then((store) => store && runCorePrompt(`${activePlan.prompt}${plannerSummary}`, activePlan.mode, store, [], false, true))
-        return
-      }
-      const questionnaire: CoreQuestionnaire = { requestId, chatId: -2, questions }
-      coreQuestionnaireRef.current = questionnaire
-      setCoreQuestionnaire(questionnaire)
-      dispatchWorkbench({ type: 'questionnaire' })
-      captureWorkbenchEvent({ type: 'questionnaire' })
-      setAgentStreamPhase('asking')
-      setCoreStartupStatus('Waiting for answers')
-      setSending(false)
-      logAgentTiming('questionnaire_visible')
-    }).catch(() => {
-      const activePlan = preflightPlanRef.current
-      if (!activePlan || activePlan.requestId !== requestId || stoppedRef.current) return
-      activePlan.summary = ''
-      plannerHandoffRef.current = { requestId, questions: [], answers: {}, summary: '', skipped: true }
-      preflightPlanRef.current = null
-      setSending(true)
-      setAgentStreamPhase('narrating')
-      setCoreStartupStatus('')
-      localStorage.setItem(`seltra:core:preflight-complete:${activeStore?.id ?? coreTenantRef.current ?? ''}`, '1')
-      void activePlan.storePromise.then((store) => store && runCorePrompt(activePlan.prompt, activePlan.mode, store, [], false, true))
-    })
-    return
-  }
   if (replayRequested) {
     const replayFrames = getWorkbenchReplayFrames() ?? DEV_STREAM_REPLAY
     let buildStartedAt: number | undefined
@@ -3918,6 +3853,8 @@ const send = async () => {
     setCoreQuestionnaire(null)
     coreTodosRef.current = null
     setCoreTodos(null)
+    coreTodoProgressRef.current = undefined
+    setCoreTodoOutcomeState(null)
     setCoreBlueprint(null)
     setCoreBlueprintName('')
     coreBlueprintRef.current = null
@@ -4174,6 +4111,13 @@ const handleAgentAttach = async (f: File) => {
     && msgs[coreMessageRef.current]?.role === 'assistant'
     && Boolean(msgs[coreMessageRef.current]?.content.trim())
   const activeTodos = coreTodos && coreTodos.chatId === coreChatRef.current ? coreTodos.todos : []
+  const activeTodoOutcome = coreTodoOutcomeState && coreTodoOutcomeState.chatId === coreChatRef.current
+    ? coreTodoOutcomeState.outcome
+    : 'running'
+  const retryCoreTodoRun = () => {
+    const last = coreLastPromptRef.current
+    if (last?.store) void runCorePrompt(last.text, last.mode, last.store, [], false, true)
+  }
   const storeHref = corePreviewUrl
 
   useEffect(() => {
@@ -4380,16 +4324,6 @@ const handleAgentAttach = async (f: File) => {
             showUpgrade={user?.plan !== 'premium'}
             activeStore={activeStore}
             onOpenStore={openStoreProject}
-            onStoreSnapshotSaved={(storeId, coreAppId, url) => setStores((current) => current.map((store) => {
-              if (store.id !== storeId) return store
-              return {
-                ...store,
-                heroSnapshotUrl: url,
-                apps: store.apps?.map((app) => app.coreAppId === coreAppId
-                  ? { ...app, heroSnapshotUrl: url }
-                  : app),
-              }
-            }))}
             onSeeAllStores={() => setTab('store')}
             onAttach={handleAgentAttach}
             builderMode={builderMode}
@@ -4518,6 +4452,8 @@ const handleAgentAttach = async (f: File) => {
                           statusText={!structuredWorkflow && isLatestAssistant && !workbench.currentStep ? coreStartupStatus : undefined}
                           phase={isLatestAssistant ? agentStreamPhase : undefined}
                           todos={!structuredWorkflow && isLatestAssistant && coreTodos && coreTodos.chatId === coreChatRef.current ? coreTodos.todos : undefined}
+                          todoOutcome={!structuredWorkflow && isLatestAssistant && coreTodoOutcomeState && coreTodoOutcomeState.chatId === coreChatRef.current ? coreTodoOutcomeState.outcome : undefined}
+                          onRetryTodos={!structuredWorkflow && isLatestAssistant ? retryCoreTodoRun : undefined}
                           questionnaire={undefined}
                           blueprint={isLatestAssistant && (structuredWorkflow ? workflowBlueprint : coreBlueprint) && (structuredWorkflow ? workflowBlueprint : coreBlueprint)?.chatId === coreChatRef.current ? (structuredWorkflow ? workflowBlueprint : coreBlueprint) ?? undefined : undefined}
                           approvalError={isLatestAssistant ? coreBlueprintApprovalError : undefined}
@@ -4537,7 +4473,7 @@ const handleAgentAttach = async (f: File) => {
                   {structuredWorkflow ? <>{workflowEvents.length > 0 ? <WorkflowProgressCard events={workflowEvents} openingMessage={coreUnderstanding} active={sending} onOpenPreview={() => setPreviewOpen(true)} onFollowUp={setInput} onRetry={() => { const last = coreLastPromptRef.current; if (last?.store) void runCorePrompt(last.text, last.mode, last.store, [], false, true) }} onRetryAsset={(prompt) => coreRetryAssetRef.current(prompt)} /> : <section className="w-full max-w-[680px] animate-pulse rounded-xl border border-white/[0.08] bg-[#171b19] p-4 text-sm text-white/55" aria-live="polite">Preparing your build status…</section>}</> : workbench.steps.map((step) => <WorkbenchStepCard key={step.id} step={step} onPreview={() => setPreviewOpen(true)} />)}
         {!structuredWorkflow && workbench.phase === 'error' && <section className="w-full max-w-[680px] rounded-xl border border-rose-300/15 bg-[#171b19] p-3" role="alert"><p className="text-sm text-white/75">{workbench.error || 'Seltra couldn’t finish this request. Retry to continue.'}</p><button type="button" className="mt-2 rounded-lg bg-emerald-400 px-3 py-1.5 text-sm font-semibold text-[#082012]" onClick={() => { const last = coreLastPromptRef.current; if (last?.store) { dispatchWorkbench({ type: 'send', keepSplit: Boolean(corePreviewUrl) }); void runCorePrompt(last.text, last.mode, last.store, [], false, true) } }}>Retry</button></section>}
                   {!structuredWorkflow && workbench.phase === 'planReady' && !coreBlueprint && <section className="w-full max-w-[680px] rounded-2xl border border-emerald-400/20 bg-[#171b19] p-4" aria-label="App plan"><p className="font-semibold text-white">Your app plan is ready</p><p className="mt-1 text-sm text-white/55">A focused services catalog with clear tiers and contact details.</p><button type="button" onClick={() => { setAgentStreamPhase('building'); setPreviewOpen(true); setSidebarOpen(false); replayApprovalResolveRef.current?.(); replayApprovalResolveRef.current = null }} className="mt-3 rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-[#082012]">Approve and build</button></section>}
-                  {!structuredWorkflow && !workflowEvents.length && !sending && !activeAssistantVisible && activeTodos.length > 0 && <CoreTodoProgress todos={activeTodos} />}
+                  {!structuredWorkflow && !workflowEvents.length && !sending && !activeAssistantVisible && activeTodos.length > 0 && <CoreTodoProgress todos={activeTodos} outcome={activeTodoOutcome} onRetry={retryCoreTodoRun} />}
                   {!structuredWorkflow && (buildProgress && (buildId || buildProgress.phase === 'ready' || buildProgress.phase === 'error')) && (
                     <BuildFlow
                       key={buildProgress.phase === 'error' ? 'failed' : (buildId ?? 'done')}
@@ -4550,7 +4486,13 @@ const handleAgentAttach = async (f: File) => {
                 {!shouldFollowStreamRef.current && hasNewActivity && <button type="button" onClick={() => { const viewport = scrollRef.current; if (viewport) viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' }); shouldFollowStreamRef.current = true; setHasNewActivity(false) }} className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-white/15 bg-[#252925] px-3.5 py-2 text-xs font-medium text-white shadow-lg hover:bg-[#303530]">↓ New activity</button>}
                 </div>
                 <div className="mx-auto w-full min-w-0 max-w-[760px] shrink-0 bg-gradient-to-t from-[#1b241f] via-[#1b241f]/95 to-transparent px-3 pb-3 pt-4 sm:px-4">
-                  {coreQuestionnaire && <div className="mb-3" aria-label="Questionnaire"><CoreQuestionnaireCard questionnaire={coreQuestionnaire} onSubmit={respondToCoreQuestionnaire} /></div>}
+                  {coreQuestionnaire && <div className="mb-3" aria-label="Questionnaire"><CoreQuestionnaireCard questionnaire={coreQuestionnaire} onSubmit={respondToCoreQuestionnaire} onRetry={() => {
+                    const last = coreLastPromptRef.current
+                    if (last?.store) {
+                      setCoreQuestionnaire(null)
+                      void runCorePrompt(last.text, last.mode, last.store, [], false, true)
+                    }
+                  }} /></div>}
                   <ChatInput
                     input={input}
                     setInput={setInput}
@@ -5269,17 +5211,20 @@ function MobileSidebarDrawer({
 }
 
 // ── Empty state ────────────────────────────────────────────────────────────────
+function storeInitials(store: StoreData) {
+  const words = (store.canonical?.brandName || store.name).trim().split(/\s+/).filter(Boolean)
+  return words.length > 1
+    ? words.slice(0, 2).map((word) => word[0]).join('').toUpperCase()
+    : (words[0]?.slice(0, 2) || 'S').toUpperCase()
+}
+
 function storeCover(store: StoreData) {
-  const visuals = store.dashboardApp?.blueprint?.visuals
-  const visualImage = Array.isArray(visuals)
-    ? visuals.map((visual) => visual && typeof visual === 'object' ? (visual as { url?: unknown }).url : null).find((url): url is string => typeof url === 'string' && Boolean(imageUrl(url)))
-    : undefined
-  const productImage = store.products?.flatMap((product) => product.images ?? []).find((image) => imageUrl(image?.url))?.url
   const snapshot = store.dashboardApp?.heroSnapshotUrl || store.heroSnapshotUrl
+  if (store.dashboardApp) return imageUrl(snapshot)
+  const productImage = store.products?.flatMap((product) => product.images ?? []).find((image) => imageUrl(image?.url))?.url
   return imageUrl(snapshot)
     || imageUrl(store.canonical?.heroImageUrl)
     || imageUrl(store.heroSource)
-    || imageUrl(visualImage)
     || imageUrl(productImage)
     || imageUrl(store.canonical?.logoUrl)
 }
@@ -5297,142 +5242,39 @@ function storeStatusLabel(store: StoreData) {
   return 'Pending'
 }
 
-function ProjectCardPreview({ store, cover, onSnapshotSaved }: {
+function ProjectCardPreview({ store, cover }: {
   store: StoreData
   cover: string
-  onSnapshotSaved: (storeId: string, coreAppId: number, url: string) => void
 }) {
-  const [previewReady, setPreviewReady] = useState(false)
-  const [previewSrc, setPreviewSrc] = useState('')
   const [snapshotLoaded, setSnapshotLoaded] = useState(false)
   const [snapshotFailed, setSnapshotFailed] = useState(false)
-  const snapshotCaptureRequested = useRef(false)
-  const previewFrameRef = useRef<HTMLIFrameElement | null>(null)
-  const { session, refreshSession } = useWorkspace()
-  const hasPersistedSnapshot = Boolean(imageUrl(store.dashboardApp?.heroSnapshotUrl || store.heroSnapshotUrl))
-  const blueprint = store.dashboardApp?.blueprint
-  const primaryColor = typeof blueprint?.primaryColor === 'string' && /^#[\da-f]{3,8}$/i.test(blueprint.primaryColor)
-    ? blueprint.primaryColor
-    : '#27b47e'
-  const projectPrompt = typeof blueprint?.userPrompt === 'string' ? blueprint.userPrompt.trim() : ''
-  const direction = typeof blueprint?.designDirection === 'string' ? blueprint.designDirection.trim() : ''
-  const summary = projectPrompt || direction || `A first look at ${store.name}.`
 
   useEffect(() => {
     setSnapshotLoaded(false)
     setSnapshotFailed(false)
-    snapshotCaptureRequested.current = false
   }, [cover])
 
-  useEffect(() => {
-    snapshotCaptureRequested.current = false
-  }, [store.id, store.dashboardApp?.coreAppId])
-
-  useEffect(() => {
-    if (!previewReady || !previewSrc || hasPersistedSnapshot || snapshotCaptureRequested.current) return
-    snapshotCaptureRequested.current = true
-    const requestId = crypto.randomUUID()
-    const origin = new URL(previewSrc).origin
-    const handleScreenshot = async (event: MessageEvent) => {
-      const data = event.data as { type?: string; requestId?: string; success?: boolean; dataUrl?: string }
-      if (event.origin !== origin || event.source !== previewFrameRef.current?.contentWindow) return
-      if (data?.type !== 'dyad-screenshot-response' || data.requestId !== requestId) return
-      window.removeEventListener('message', handleScreenshot)
-      if (!data.success || typeof data.dataUrl !== 'string' || !data.dataUrl.startsWith('data:image/')) return
-      if (!store.id) return
-      const { data: saved, error } = await apiFetch<{ url: string }>(`/api/v5/seltra/store/${encodeURIComponent(store.id)}/hero-snapshot`, {
-        method: 'POST',
-        body: JSON.stringify({ snapshotUrl: data.dataUrl, coreAppId: store.dashboardApp?.coreAppId }),
-      })
-      if (error || !saved?.url || !store.dashboardApp?.coreAppId) {
-        console.warn('[dashboard] Could not persist the project preview snapshot.')
-        return
-      }
-      onSnapshotSaved(store.id, store.dashboardApp.coreAppId, saved.url)
-    }
-    window.addEventListener('message', handleScreenshot)
-    previewFrameRef.current?.contentWindow?.postMessage({ type: 'dyad-take-screenshot', requestId }, origin)
-    window.setTimeout(() => window.removeEventListener('message', handleScreenshot), 15_000)
-    return () => window.removeEventListener('message', handleScreenshot)
-  }, [previewReady, previewSrc, hasPersistedSnapshot, store.id, store.dashboardApp?.coreAppId, onSnapshotSaved])
-
-  useEffect(() => {
-    let cancelled = false
-    const rawPreviewUrl = store.dashboardApp?.previewUrl
-    if (!rawPreviewUrl || (hasPersistedSnapshot && !snapshotFailed)) {
-      setPreviewSrc('')
-      return
-    }
-
-    const refreshPreview = async () => {
-      try {
-        const client = new CoreClient(refreshSession, refreshSession)
-        const appId = store.dashboardApp?.coreAppId
-        const probe = appId ? await client.probePreview(appId) : undefined
-        if (!cancelled) setPreviewSrc(probe?.ready && probe.previewUrl ? probe.previewUrl : rawPreviewUrl)
-      } catch {
-        if (!cancelled) setPreviewSrc(rawPreviewUrl)
-      }
-    }
-
-    void refreshPreview()
-    if (!session) return () => { cancelled = true }
-    const timer = window.setTimeout(() => { void refreshPreview() }, Math.max(60_000, (session.expiresIn - 60) * 1000))
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-  }, [store.dashboardApp?.coreAppId, store.dashboardApp?.previewUrl, session?.expiresIn, refreshSession, hasPersistedSnapshot, snapshotFailed])
-
   return (
-    <div className="absolute inset-0 overflow-hidden bg-[#101916]">
-      {cover ? (
-        <>
-          {!snapshotLoaded && !snapshotFailed && (
-            <div className="absolute inset-0 animate-pulse bg-[linear-gradient(110deg,#101916_8%,#1b2921_18%,#101916_33%)] bg-[length:200%_100%]" />
-          )}
-          {!snapshotFailed && (
-            <img
-              src={cover}
-              alt=""
-              onLoad={() => setSnapshotLoaded(true)}
-              onError={() => setSnapshotFailed(true)}
-              className={`absolute inset-0 h-full w-full object-cover transition-opacity ${snapshotLoaded ? 'opacity-100' : 'opacity-0'}`}
-            />
-          )}
-          {snapshotFailed && (
-            <div className="absolute inset-0" style={{ background: `linear-gradient(145deg, ${primaryColor}55, #101916 68%)` }} />
-          )}
-        </>
-      ) : (
-        <div className="absolute inset-0 p-4" style={{ background: `linear-gradient(145deg, ${primaryColor}55, #101916 68%)` }}>
-          <div className="flex items-center justify-between border-b border-white/20 pb-2 text-[9px] font-semibold text-white/90">
-            <span className="max-w-[65%] truncate">{store.name}</span>
-            <span className="flex gap-2 text-white/55"><i className="h-1 w-5 rounded bg-white/50"/><i className="h-1 w-5 rounded bg-white/35"/><i className="h-1 w-5 rounded bg-white/25"/></span>
-          </div>
-          <div className="flex h-[calc(100%-22px)] flex-col justify-center">
-            <span className="mb-1 text-[8px] font-semibold uppercase tracking-[0.22em]" style={{ color: primaryColor }}>{direction || 'Project preview'}</span>
-            <span className="line-clamp-2 text-xl font-semibold leading-tight text-white">{store.name}</span>
-            <span className="mt-1 line-clamp-2 max-w-[90%] text-[9px] leading-relaxed text-white/65">{summary}</span>
-            <span className="mt-2 h-5 w-16 rounded-md" style={{ backgroundColor: primaryColor }} />
-          </div>
-        </div>
-      )}
-      {previewSrc && (!cover || snapshotFailed) && (
-        <iframe
-          ref={previewFrameRef}
-          src={previewSrc}
-          title={`${store.name} project preview`}
-          sandbox="allow-same-origin allow-scripts"
-          tabIndex={-1}
-          aria-hidden="true"
-          onLoad={() => setPreviewReady(true)}
-          onError={() => setPreviewReady(false)}
-          className="pointer-events-none absolute left-0 top-0 h-[400%] w-[400%] origin-top-left border-0 opacity-0"
-          style={{ transform: 'scale(0.25)' }}
+    <div className="absolute inset-0 flex items-center justify-center overflow-hidden bg-[#101211]">
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-gradient-to-br from-indigo-700/70 via-violet-700/60 to-sky-600/60"
+      />
+      <span aria-hidden="true" className="text-4xl font-semibold tracking-widest text-white/80">
+        {storeInitials(store)}
+      </span>
+      {cover && !snapshotFailed && (
+        <Image
+          src={cover}
+          alt={`${store.name} project preview`}
+          fill
+          unoptimized
+          sizes="(max-width: 768px) 50vw, 320px"
+          onLoad={() => setSnapshotLoaded(true)}
+          onError={() => setSnapshotFailed(true)}
+          className={`absolute inset-0 h-full w-full object-cover transition-opacity ${snapshotLoaded ? 'opacity-100' : 'opacity-0'}`}
         />
       )}
-      {cover && store.dashboardApp?.previewUrl && !previewReady && <div className="absolute inset-0 bg-black/20" />}
     </div>
   )
 }
@@ -5440,7 +5282,7 @@ function ProjectCardPreview({ store, cover, onSnapshotSaved }: {
 function EmptyState({
   input, setInput, send, sending, name, userId, merchantProfile, onAttach, pendingAttachment, onClearAttachment, coreFiles = [], onRemoveCoreFile,
   builderMode = 'build', onBuilderModeChange, onOpenCoreComposer,
-  stores, storesLoading = false, sidebarOpen, onToggleSidebar, onMenu, onUpgrade, showUpgrade, activeStore, onOpenStore, onStoreSnapshotSaved, onSeeAllStores,
+  stores, storesLoading = false, sidebarOpen, onToggleSidebar, onMenu, onUpgrade, showUpgrade, activeStore, onOpenStore, onSeeAllStores,
   announcementVisible, onDismissAnnouncement,
 }: {
   input: string; setInput: (v: string) => void; send: () => void
@@ -5460,7 +5302,6 @@ function EmptyState({
   showUpgrade: boolean
   activeStore: StoreData | null
   onOpenStore: (store: StoreData) => void
-  onStoreSnapshotSaved: (storeId: string, coreAppId: number, url: string) => void
   onSeeAllStores: () => void
   announcementVisible?: boolean
   onDismissAnnouncement?: () => void
@@ -5828,10 +5669,11 @@ function EmptyState({
                   return (
                     <button key={store.dashboardApp ? `${store.id}:${store.dashboardApp.coreAppId}` : store.id ?? store.slug} type="button" onClick={() => onOpenStore(store)} className="overflow-hidden rounded-2xl bg-[#242624] text-left transition-colors hover:bg-[#2c2e2c]">
                       <div className="relative h-36 bg-[#101211] sm:h-[168px]">
-                        {store.dashboardApp ? <ProjectCardPreview store={store} cover={cover} onSnapshotSaved={onStoreSnapshotSaved} /> : cover ? (
+                        {store.dashboardApp ? <ProjectCardPreview store={store} cover={cover} /> : cover ? (
                           <img src={cover} alt="" className="h-full w-full object-cover" />
                         ) : (
-                          <div className="flex h-full items-end bg-[radial-gradient(circle_at_30%_20%,rgba(74,222,128,0.35),transparent_55%),linear-gradient(160deg,#10241a,#1a1c1b)] p-4">
+                          <div className="flex h-full items-end justify-between bg-[radial-gradient(circle_at_30%_20%,rgba(74,222,128,0.35),transparent_55%),linear-gradient(160deg,#10241a,#1a1c1b)] p-4">
+                            <span className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/15 bg-black/10 text-lg font-semibold text-white/85">{storeInitials(store)}</span>
                             <span className="text-sm font-medium text-white/80">{store.name}</span>
                           </div>
                         )}

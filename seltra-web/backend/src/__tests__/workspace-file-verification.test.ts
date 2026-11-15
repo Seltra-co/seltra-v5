@@ -109,9 +109,9 @@ describe('workspace file keys and verification evidence', () => {
   it('syncs QA screenshots as files without registering them as generated merchant assets', async () => {
     const builder = new BuilderService({} as never, {} as never)
     const content = Buffer.from('png-bytes').toString('base64')
-    await builder.syncWorkspaceFiles({ tenantId: 'tenant-1', coreAppId: 7, files: [{ path: 'apps/catalog/.dyad/media/qa-screenshot.png', content: `base64:${content}` }] })
+    await builder.syncWorkspaceFiles({ tenantId: 'tenant-1', coreAppId: 7, files: [{ path: 'apps/catalog/.seltra/media/qa-screenshot.png', content: `base64:${content}` }] })
 
-    expect(mockProjectFiles.has('apps/catalog/.dyad/media/qa-screenshot.png')).toBe(true)
+    expect(mockProjectFiles.has('apps/catalog/.seltra/media/qa-screenshot.png')).toBe(true)
     expect(mockProjectAssetCreate).not.toHaveBeenCalled()
   })
 
@@ -134,7 +134,7 @@ describe('workspace file keys and verification evidence', () => {
     const run = new RunService({} as never)
     const events = [
       { type: 'build.result', payload: { executed: true, exitCode: 0 } },
-      { type: 'browser.qa', payload: { status: 'passed', consoleErrors: [], failedRequests: [], screenshotPath: '.dyad/media/qa-screenshot.png', screenshotBytes: 8, screenshotSha256: contentHash('png-bytes') } },
+      { type: 'browser.qa', payload: { status: 'passed', consoleErrors: [], failedRequests: [], screenshotPath: '.seltra/media/qa-screenshot.png', screenshotBytes: 8, screenshotSha256: contentHash('png-bytes') } },
       { type: 'manifest.verified', payload: { verified: true, pagesRouted: true, assetsVerified: true, packageScriptsValid: true, mismatches: [] } },
       { type: 'preview.ready', payload: { status: 200, previewUrl: 'https://preview.example.test/' } },
     ]
@@ -153,7 +153,7 @@ describe('workspace file keys and verification evidence', () => {
     const run = new RunService({} as never)
     const events = [
       { type: 'build.result', payload: { executed: true, exitCode: 0 } },
-      { type: 'browser.qa', payload: { status: 'passed', consoleErrors: [], failedRequests: [], screenshotPath: '.dyad/media/qa-screenshot.png', screenshotBytes: 8, screenshotSha256: contentHash('png-bytes') } },
+      { type: 'browser.qa', payload: { status: 'passed', consoleErrors: [], failedRequests: [], screenshotPath: '.seltra/media/qa-screenshot.png', screenshotBytes: 8, screenshotSha256: contentHash('png-bytes') } },
       { type: 'manifest.verified', payload: { verified: true, pagesRouted: true, assetsVerified: true, packageScriptsValid: true, mismatches: [] } },
       { type: 'preview.ready', payload: { status: 200, previewUrl: 'https://preview.example.test/' } },
       { type: 'asset.updated', payload: { slot: 'hero', state: 'fallback' } },

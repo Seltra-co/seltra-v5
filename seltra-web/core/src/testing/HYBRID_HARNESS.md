@@ -206,7 +206,7 @@ harness.dispose()                     // race-free teardown (see §6)
   (`chatAttachmentsByIdAtom`, or `attachmentsAtom` for the home composer):
   browser `File` objects plus the `chat-context` / `upload-to-codebase` type.
   Submit still runs through the real `ChatInput` path, including `FileReader`
-  conversion to IPC attachments and `.dyad/media` persistence.
+  conversion to IPC attachments and `.seltra/media` persistence.
 - **Seeding selected components**: use `setSelectedComponents(components)` for
   queue edit/restore assertions that only need ChatInput state. Keep Playwright
   coverage for picking a component inside the real preview iframe.

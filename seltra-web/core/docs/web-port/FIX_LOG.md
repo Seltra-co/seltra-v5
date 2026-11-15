@@ -234,7 +234,7 @@ model slug ... Available streaming text-generation slugs: none returned.`
   a mid-stream provider 404 is not yet captured.
 - Web UI: pnpm-install, browser-notification, and Dyad documentation actions
   are hidden in web mode; the error boundary gives reload-page guidance. The
-  blank-app scaffold still carries upstream “Made with Dyad” content.
+  blank-app scaffold still carries upstream “Made with Seltra” content.
 - Gateway integration startup: prior no-output health failures were
   intermittent. With test-only startup-stage tracing, `npm.cmd run web:test`
   passed: 5 files / 17 tests; focused bridge/date tests passed 7/7. No

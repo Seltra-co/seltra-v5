@@ -63,7 +63,7 @@ test("local-agent builds a Vite scaffold without stopping its preview", async ({
 
   // Build mode creates an app from the actual bundled Vite scaffold.
   await po.chatActions.selectChatMode("build");
-  await po.sendPrompt("tc=edit-made-with-dyad", {
+  await po.sendPrompt("tc=edit-made-with-seltra", {
     timeout: Timeout.EXTRA_LONG,
   });
   await po.appManagement.ensurePnpmInstall();

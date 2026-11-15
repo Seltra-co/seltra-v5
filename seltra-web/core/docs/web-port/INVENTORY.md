@@ -678,9 +678,9 @@ The rows below are the 399 literal `channel:` fields found under `src/ipc/types/
 | `src/connection_flow/oauth_deep_link.ts:10` | `supabase: "https://supabase-oauth.dyad.sh/api/connect-supabase/login",` | Review host and classify; disable desktop service unless required |
 | `src/components/AppUpgrades.tsx:135` | `upgrade.manualUpgradeUrl ?? "https://dyad.sh/docs",` | Review host and classify; disable desktop service unless required |
 | `src/main/window_security.ts:8` | `"https://dyad.sh",` | Review host and classify; disable desktop service unless required |
-| `src/main/window_security.ts:9` | `"https://www.dyad.sh",` | Review host and classify; disable desktop service unless required |
-| `src/pages/home.tsx:201` | `"https://www.dyad.sh/pro?utm_source=dyad-app&utm_medium=app&utm_campaign=home-upgrade-to-pro",` | Review host and classify; disable desktop service unless required |
-| `src/main/settings.ts:96` | `"https://www.dyad.sh/docs/guides/migrate-restore#restoring-settings-from-backup";` | Review host and classify; disable desktop service unless required |
+| `src/main/window_security.ts:9` | `"https://seltra.co",` | Review host and classify; disable desktop service unless required |
+| `src/pages/home.tsx:201` | `"https://seltra.co/pro?utm_source=dyad-app&utm_medium=app&utm_campaign=home-upgrade-to-pro",` | Review host and classify; disable desktop service unless required |
+| `src/main/settings.ts:96` | `"https://seltra.co/docs/guides/migrate-restore#restoring-settings-from-backup";` | Review host and classify; disable desktop service unless required |
 | `src/components/CapacitorControls.tsx:140` | `"https://dyad.sh/docs/guides/mobile-app#troubleshooting",` | Review host and classify; disable desktop service unless required |
 | `src/components/chat/ChatErrorBox.tsx:82` | `href="https://dyad.sh/pro?utm_source=dyad-app&utm_medium=app&utm_campaign=free-quota-error"` | Review host and classify; disable desktop service unless required |
 | `src/components/chat/ChatErrorBox.tsx:110` | `href="https://dyad.sh/pro?utm_source=dyad-app&utm_medium=app&utm_campaign=rate-limit-error"` | Review host and classify; disable desktop service unless required |
@@ -688,7 +688,7 @@ The rows below are the 399 literal `channel:` fields found under `src/ipc/types/
 | `src/components/chat/ChatErrorBox.tsx:168` | `href="https://dyad.sh/pro?utm_source=dyad-app&utm_medium=app&utm_campaign=free-agent-quota-exceeded"` | Review host and classify; disable desktop service unless required |
 | `src/components/chat/ChatErrorBox.tsx:206` | `href="https://academy.dyad.sh/subscription?utm_source=dyad-app&utm_medium=app&utm_campaign=exceeded-budget-error"` | Review host and classify; disable desktop service unless required |
 | `src/components/chat/ChatErrorBox.tsx:226` | `href="https://dyad.sh/pro?utm_source=dyad-app&utm_medium=app&utm_campaign=general-error"` | Review host and classify; disable desktop service unless required |
-| `src/components/chat/ChatErrorBox.tsx:246` | `<ExternalLink href="https://www.dyad.sh/docs/faq">` | Review host and classify; disable desktop service unless required |
+| `src/components/chat/ChatErrorBox.tsx:246` | `<ExternalLink href="https://seltra.co/docs/faq">` | Review host and classify; disable desktop service unless required |
 | `src/components/chat/ChatInput.tsx:1021` | `ipc.system.openExternalUrl("https://dyad.sh/pro");` | Review host and classify; disable desktop service unless required |
 | `src/components/chat/ChatInput.tsx:1126` | `ipc.system.openExternalUrl("https://dyad.sh/pro")` | Review host and classify; disable desktop service unless required |
 | `src/supabase_admin/supabase_management_client.ts:280` | `"https://supabase-oauth.dyad.sh/api/connect-supabase/refresh",` | Review host and classify; disable desktop service unless required |
@@ -699,27 +699,27 @@ The rows below are the 399 literal `channel:` fields found under `src/ipc/types/
 | `src/components/chat/HomeChatInput.tsx:232` | `ipc.system.openExternalUrl("https://dyad.sh/pro")` | Review host and classify; disable desktop service unless required |
 | `src/components/chat/FreeAgentQuotaBanner.tsx:47` | `ipc.system.openExternalUrl("https://dyad.sh/pro");` | Review host and classify; disable desktop service unless required |
 | `src/components/DyadProTrialDialog.tsx:22` | ``https://academy.dyad.sh/redirect-to-checkout?trialCode=7PRO30&${utmParams}`,` | Review host and classify; disable desktop service unless required |
-| `src/components/DyadProTrialDialog.tsx:28` | `ipc.system.openExternalUrl(`https://www.dyad.sh/pro?${utmParams}`);` | Review host and classify; disable desktop service unless required |
+| `src/components/DyadProTrialDialog.tsx:28` | `ipc.system.openExternalUrl(`https://seltra.co/pro?${utmParams}`);` | Review host and classify; disable desktop service unless required |
 | `src/components/HelpDialog.tsx:47` | `const UPLOAD_URL_ENDPOINT = "https://upload-logs.dyad.sh/generate-upload-url";` | Review host and classify; disable desktop service unless required |
-| `src/components/HelpDialog.tsx:1114` | `ipc.system.openExternalUrl("https://www.dyad.sh/docs")` | Review host and classify; disable desktop service unless required |
-| `src/components/GitHubConnector.tsx:77` | `href="https://www.dyad.sh/docs/integrations/github#troubleshooting"` | Review host and classify; disable desktop service unless required |
-| `src/components/GitHubConnector.tsx:81` | `"https://www.dyad.sh/docs/integrations/github#troubleshooting",` | Review host and classify; disable desktop service unless required |
-| `src/components/ModelPicker.tsx:109` | `"https://www.dyad.sh/pro?utm_source=dyad-app&utm_medium=app";` | Review host and classify; disable desktop service unless required |
+| `src/components/HelpDialog.tsx:1114` | `ipc.system.openExternalUrl("https://seltra.co/docs")` | Review host and classify; disable desktop service unless required |
+| `src/components/GitHubConnector.tsx:77` | `href="https://seltra.co/docs/integrations/github#troubleshooting"` | Review host and classify; disable desktop service unless required |
+| `src/components/GitHubConnector.tsx:81` | `"https://seltra.co/docs/integrations/github#troubleshooting",` | Review host and classify; disable desktop service unless required |
+| `src/components/ModelPicker.tsx:109` | `"https://seltra.co/pro?utm_source=dyad-app&utm_medium=app";` | Review host and classify; disable desktop service unless required |
 | `src/components/ModelPicker.tsx:1644` | `"https://academy.dyad.sh/subscription",` | Review host and classify; disable desktop service unless required |
 | `src/components/preview_panel/AnnotatorOnlyForPro.tsx:11` | `ipc.system.openExternalUrl("https://dyad.sh/pro");` | Review host and classify; disable desktop service unless required |
-| `src/components/PortalMigrate.tsx:44` | `"https://www.dyad.sh/docs/templates/portal#create-a-database-migration",` | Review host and classify; disable desktop service unless required |
+| `src/components/PortalMigrate.tsx:44` | `"https://seltra.co/docs/templates/portal#create-a-database-migration",` | Review host and classify; disable desktop service unless required |
 | `src/components/preview_panel/PackageManagerWarningBanner.tsx:90` | `? "https://dyad.sh/docs/upgrades/pnpm-migration"` | Review host and classify; disable desktop service unless required |
 | `src/__tests__/evals/README.md:48` | ``https://engine.dyad.sh/v1`).` | Model gateway/runtime route; never expose provider credentials |
 | `src/__tests__/evals/helpers/get_eval_model.ts:18` | `process.env.DYAD_ENGINE_URL ?? "https://engine.dyad.sh/v1";` | Model gateway/runtime route; never expose provider credentials |
 | `src/components/RuntimeModeSelector.tsx:122` | `onClick={() => ipc.system.openExternalUrl("https://dyad.sh/pro#ai")}` | Review host and classify; disable desktop service unless required |
 | `src/components/SetupBanner.tsx:84` | `"https://academy.dyad.sh/redirect-to-checkout?trialCode=7PRO30&utm_source=dyad-app&utm_medium=app&utm_campaign=setup-dialog-v2",` | Review host and classify; disable desktop service unless required |
-| `src/components/preview_panel/SecurityPanel.tsx:283` | `"https://www.dyad.sh/docs/guides/security-review",` | Review host and classify; disable desktop service unless required |
+| `src/components/preview_panel/SecurityPanel.tsx:283` | `"https://seltra.co/docs/guides/security-review",` | Review host and classify; disable desktop service unless required |
 | `src/components/ReleaseChannelSelector.tsx:33` | `ipc.system.openExternalUrl("https://dyad.sh/download");` | Review host and classify; disable desktop service unless required |
 | `src/components/ProModeSelector.tsx:72` | `ipc.system.openExternalUrl("https://dyad.sh/pro#ai");` | Review host and classify; disable desktop service unless required |
 | `src/components/ProModeSelector.tsx:74` | `title="Visit dyad.sh/pro to unlock Pro features"` | Review host and classify; disable desktop service unless required |
 | `src/components/ProBanner.tsx:40` | `ipc.system.openExternalUrl("https://academy.dyad.sh/settings");` | Review host and classify; disable desktop service unless required |
-| `src/components/ProBanner.tsx:56` | `"https://www.dyad.sh/pro?utm_source=dyad-app&utm_medium=app&utm_campaign=in-app-banner-ai-access",` | Review host and classify; disable desktop service unless required |
-| `src/components/ProBanner.tsx:123` | `"https://www.dyad.sh/pro?utm_source=dyad-app&utm_medium=app&utm_campaign=in-app-banner-smart-context",` | Review host and classify; disable desktop service unless required |
+| `src/components/ProBanner.tsx:56` | `"https://seltra.co/pro?utm_source=dyad-app&utm_medium=app&utm_campaign=in-app-banner-ai-access",` | Review host and classify; disable desktop service unless required |
+| `src/components/ProBanner.tsx:123` | `"https://seltra.co/pro?utm_source=dyad-app&utm_medium=app&utm_campaign=in-app-banner-smart-context",` | Review host and classify; disable desktop service unless required |
 | `src/components/TelemetryBanner.tsx:48` | `"https://dyad.sh/docs/policies/privacy-policy",` | Review host and classify; disable desktop service unless required |
 | `src/shared/subscription_billing_error.ts:10` | `url: "https://academy.dyad.sh/subscription",` | Review host and classify; disable desktop service unless required |
 | `src/shared/subscription_billing_error.ts:17` | `url: "https://academy.dyad.sh",` | Review host and classify; disable desktop service unless required |
@@ -733,7 +733,7 @@ The rows below are the 399 literal `channel:` fields found under `src/ipc/types/
 | `src/ipc/handlers/app_upgrade_handlers.ts:37` | `manualUpgradeUrl: "https://dyad.sh/docs/upgrades/select-component",` | Review host and classify; disable desktop service unless required |
 | `src/ipc/handlers/app_upgrade_handlers.ts:45` | `"https://dyad.sh/docs/guides/mobile-app#upgrade-your-app",` | Review host and classify; disable desktop service unless required |
 | `src/ipc/handlers/app_upgrade_handlers.ts:54` | `manualUpgradeUrl: "https://dyad.sh/docs/upgrades/pnpm-migration",` | Review host and classify; disable desktop service unless required |
-| `src/ipc/utils/openrouter_attribution.ts:1` | `export const OPENROUTER_APP_REFERER = "https://www.dyad.sh";` | Review host and classify; disable desktop service unless required |
+| `src/ipc/utils/openrouter_attribution.ts:1` | `export const OPENROUTER_APP_REFERER = "https://seltra.co";` | Review host and classify; disable desktop service unless required |
 | `src/ipc/utils/socket_firewall.ts:70` | `"https://api.dyad.sh/v1/default-approve-builds.txt";` | DISABLE or replace with Seltra service |
 | `src/ipc/utils/template_utils.ts:41` | `const response = await fetch("https://api.dyad.sh/v1/templates");` | DISABLE or replace with Seltra service |
 | `src/ipc/handlers/help_bot_handlers.ts:69` | `baseURL: "https://helpchat.dyad.sh/v1",` | Review host and classify; disable desktop service unless required |
@@ -748,7 +748,7 @@ The rows below are the 399 literal `channel:` fields found under `src/ipc/types/
 | `src/ipc/shared/remote_language_model_catalog.ts:43` | `return "https://api.dyad.sh/v1/language-model-catalog";` | DISABLE or replace with Seltra service |
 | `src/ipc/shared/language_model_constants.ts:649` | `websiteUrl: "https://academy.dyad.sh/subscription",` | Review host and classify; disable desktop service unless required |
 | `src/ipc/shared/remote_desktop_config.ts:36` | `return "https://api.dyad.sh/v1/desktop-config";` | DISABLE or replace with Seltra service |
-| `src/ipc/handlers/release_note_handlers.ts:28` | `const releaseNoteUrl = `https://www.dyad.sh/docs/releases/${version}`;` | Review host and classify; disable desktop service unless required |
+| `src/ipc/handlers/release_note_handlers.ts:28` | `const releaseNoteUrl = `https://seltra.co/docs/releases/${version}`;` | Review host and classify; disable desktop service unless required |
 | `src/ipc/services/user_budget_service.ts:26` | `process.env.DYAD_USER_INFO_URL ?? "https://api.dyad.sh/v1/user/info",` | DISABLE or replace with Seltra service |
 
 ## Native module and child-process source index

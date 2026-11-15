@@ -158,7 +158,7 @@ import { ensureDyadGitignored } from "./gitignoreUtils";
 import {
   appendAttachmentManifestEntriesWithLogicalNames,
   createUniqueAttachmentLogicalName,
-  DYAD_MEDIA_DIR_NAME,
+  getDyadMediaDir,
   type AttachmentManifestEntryInput,
 } from "../utils/media_path_utils";
 import {
@@ -1266,8 +1266,8 @@ export function registerChatStreamHandlers() {
       if (incomingAttachments && incomingAttachments.length > 0) {
         attachmentInfo = "\n\nAttachments:\n";
 
-        // Create persistent .dyad/media directory for this app
-        const mediaDir = path.join(appPath, DYAD_MEDIA_DIR_NAME);
+        // Create persistent .seltra/media directory for this app
+        const mediaDir = getDyadMediaDir(appPath);
         if (!fs.existsSync(mediaDir)) {
           fs.mkdirSync(mediaDir, { recursive: true });
         }
@@ -1337,7 +1337,7 @@ export function registerChatStreamHandlers() {
             usedLogicalNames,
           );
 
-          // Save to .dyad/media dir
+          // Save to .seltra/media dir
           const persistentPath = path.join(mediaDir, filename);
           await writeFile(persistentPath, fileBuffer);
           attachmentPaths.push(persistentPath);
@@ -1365,7 +1365,7 @@ export function registerChatStreamHandlers() {
           // Use a fixed hostname to avoid URL hostname normalization (lowercasing)
           // Encode path segments so special characters (spaces, #, ?, %) don't
           // break URL parsing. The protocol handler already decodeURIComponent's.
-          const mediaUrl = `dyad-media://media/${encodeURIComponent(chat.app.path)}/.dyad/media/${encodeURIComponent(filename)}`;
+          const mediaUrl = `dyad-media://media/${encodeURIComponent(chat.app.path)}/.seltra/media/${encodeURIComponent(filename)}`;
 
           // Build display tag for inline rendering (escape attribute values)
           displayAttachmentInfo += buildDyadAttachmentTag({
@@ -1377,7 +1377,7 @@ export function registerChatStreamHandlers() {
           });
 
           if (attachment.attachmentType === "upload-to-codebase") {
-            // Provide the .dyad/media path so the AI can copy it into the codebase
+            // Provide the .seltra/media path so the AI can copy it into the codebase
             attachmentInfo += `\n\nFile to upload to codebase: "${attachment.name}" (path: ${persistentPath})\nUse the copy_file tool when tools are available, or emit a <dyad-copy> tag otherwise, to copy this file into the codebase at the appropriate location.\n`;
           } else {
             // For chat-context, provide file info for reference (no path to avoid auto-copying)
@@ -2476,7 +2476,7 @@ ${componentSnippet}
 
 When files are attached to this conversation for upload to the codebase, copy them into the project using this exact format:
 
-<dyad-copy from="/absolute/path/to/.dyad/media/source.ext" to="path/to/destination/filename.ext" description="Upload file to codebase"></dyad-copy>
+<dyad-copy from="/absolute/path/to/.seltra/media/source.ext" to="path/to/destination/filename.ext" description="Upload file to codebase"></dyad-copy>
 
 Use the attached file path from the user's message as the \`from\` value. Choose an appropriate project-relative \`to\` path.
 

@@ -1,20 +1,118 @@
+import fsSync from "node:fs";
 import path from "node:path";
 import fs from "node:fs/promises";
 import crypto from "node:crypto";
 import { withLock } from "./lock_utils";
 
-/**
- * The root ".dyad" directory within each app that holds Dyad-managed files.
- */
-export const DYAD_INTERNAL_DIR_NAME = ".dyad";
+const LEGACY_INTERNAL_DIR_NAME = ".dyad";
+
+function assertRealDirectory(dirPath: string): void {
+  const stats = fsSync.lstatSync(dirPath);
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw new Error(
+      `Cannot migrate media through a non-directory path: ${dirPath}`,
+    );
+  }
+}
+
+function mergeLegacyDirectory(sourceDir: string, targetDir: string): void {
+  for (const entry of fsSync.readdirSync(sourceDir, { withFileTypes: true })) {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const targetPath = path.join(targetDir, entry.name);
+    let targetStats: ReturnType<typeof fsSync.lstatSync> | undefined;
+    try {
+      targetStats = fsSync.lstatSync(targetPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+
+    if (entry.isDirectory() && !entry.isSymbolicLink()) {
+      if (!targetStats) {
+        fsSync.renameSync(sourcePath, targetPath);
+      } else {
+        assertRealDirectory(sourcePath);
+        assertRealDirectory(targetPath);
+        mergeLegacyDirectory(sourcePath, targetPath);
+      }
+      continue;
+    }
+
+    if (!entry.isFile() || entry.isSymbolicLink()) {
+      throw new Error(`Cannot migrate unsupported media entry: ${sourcePath}`);
+    }
+    if (!targetStats) {
+      fsSync.renameSync(sourcePath, targetPath);
+      continue;
+    }
+    throw new Error(`Conflicting legacy and Seltra media files: ${sourcePath}`);
+  }
+  fsSync.rmdirSync(sourceDir);
+}
+
+export function migrateLegacyMediaDirectories(appPath: string): void {
+  const legacyRoot = path.join(appPath, LEGACY_INTERNAL_DIR_NAME);
+  let legacyRootStats: ReturnType<typeof fsSync.lstatSync> | undefined;
+  try {
+    legacyRootStats = fsSync.lstatSync(legacyRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  if (!legacyRootStats) return;
+  assertRealDirectory(legacyRoot);
+
+  const currentRoot = path.join(appPath, DYAD_INTERNAL_DIR_NAME);
+  let currentRootStats: ReturnType<typeof fsSync.lstatSync> | undefined;
+  try {
+    currentRootStats = fsSync.lstatSync(currentRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  for (const subdir of [DYAD_MEDIA_SUBDIR, DYAD_SCREENSHOT_SUBDIR]) {
+    const legacyDir = path.join(legacyRoot, subdir);
+    let legacyDirStats: ReturnType<typeof fsSync.lstatSync> | undefined;
+    try {
+      legacyDirStats = fsSync.lstatSync(legacyDir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (!legacyDirStats) continue;
+    assertRealDirectory(legacyDir);
+
+    if (!currentRootStats) {
+      fsSync.mkdirSync(currentRoot, { recursive: true });
+      currentRootStats = fsSync.lstatSync(currentRoot);
+    }
+    assertRealDirectory(currentRoot);
+    const currentDir = path.join(currentRoot, subdir);
+    let currentDirStats: ReturnType<typeof fsSync.lstatSync> | undefined;
+    try {
+      currentDirStats = fsSync.lstatSync(currentDir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+
+    if (!currentDirStats) {
+      fsSync.renameSync(legacyDir, currentDir);
+    } else {
+      assertRealDirectory(currentDir);
+      mergeLegacyDirectory(legacyDir, currentDir);
+    }
+  }
+}
 
 /**
- * The ".dyad"-relative subdir for uploaded media files.
+ * The root ".seltra" directory within each app that holds Seltra-managed media.
+ */
+export const DYAD_INTERNAL_DIR_NAME = ".seltra";
+
+/**
+ * The ".seltra"-relative subdir for uploaded media files.
  */
 export const DYAD_MEDIA_SUBDIR = "media";
 
 /**
- * The ".dyad"-relative subdir for screenshot files.
+ * The ".seltra"-relative subdir for screenshot files.
  */
 export const DYAD_SCREENSHOT_SUBDIR = "screenshot";
 
@@ -65,7 +163,7 @@ export type AttachmentManifestEntryInput = Omit<
 };
 
 /**
- * Check if an absolute path falls within the app's .dyad/media directory.
+ * Check if an absolute path falls within the app's .seltra/media directory.
  * Used to validate that file copy operations only read from the allowed media dir.
  */
 export function isWithinDyadMediaDir(
@@ -81,9 +179,9 @@ export function isWithinDyadMediaDir(
 }
 
 /**
- * Check if an absolute path is a file inside a .dyad/media directory
+ * Check if an absolute path is a file inside a .seltra/media directory
  * (without requiring a known app path). Validates by finding consecutive
- * ".dyad" + "media" path segments with at least one segment (filename) after,
+ * ".seltra" + "media" path segments with at least one segment (filename) after,
  * then confirms the resolved path doesn't escape via ".." traversal.
  */
 export function isFileWithinAnyDyadMediaDir(absPath: string): boolean {
@@ -92,7 +190,7 @@ export function isFileWithinAnyDyadMediaDir(absPath: string): boolean {
 
   let mediaIdx = -1;
   for (let i = 0; i < segments.length - 2; i++) {
-    if (segments[i] === ".dyad" && segments[i + 1] === "media") {
+    if (segments[i] === ".seltra" && segments[i + 1] === "media") {
       mediaIdx = i + 1;
       break;
     }
@@ -107,7 +205,13 @@ export function isFileWithinAnyDyadMediaDir(absPath: string): boolean {
 }
 
 export function getDyadMediaDir(appPath: string): string {
+  migrateLegacyMediaDirectories(appPath);
   return path.join(appPath, DYAD_MEDIA_DIR_NAME);
+}
+
+export function getDyadScreenshotDir(appPath: string): string {
+  migrateLegacyMediaDirectories(appPath);
+  return path.join(appPath, DYAD_SCREENSHOT_DIR_NAME);
 }
 
 export function getAttachmentsManifestPath(appPath: string): string {

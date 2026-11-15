@@ -194,26 +194,26 @@ try {
 }
 
 // Load Service Worker files
-let dyadSwContent = null;
-let dyadSwRegisterContent = null;
+let seltraSwContent = null;
+let seltraSwRegisterContent = null;
 
 try {
-  const dyadSwPath = path.join(__dirname, "dyad-sw.js");
-  dyadSwContent = fs.readFileSync(dyadSwPath, "utf-8");
-  parentPort?.postMessage("[proxy-worker] dyad-sw.js loaded.");
+  const seltraSwPath = path.join(__dirname, "seltra-sw.js");
+  seltraSwContent = fs.readFileSync(seltraSwPath, "utf-8");
+  parentPort?.postMessage("[proxy-worker] seltra-sw.js loaded.");
 } catch (error) {
   parentPort?.postMessage(
-    `[proxy-worker] Failed to read dyad-sw.js: ${error.message}`,
+    `[proxy-worker] Failed to read seltra-sw.js: ${error.message}`,
   );
 }
 
 try {
-  const dyadSwRegisterPath = path.join(__dirname, "dyad-sw-register.js");
-  dyadSwRegisterContent = fs.readFileSync(dyadSwRegisterPath, "utf-8");
-  parentPort?.postMessage("[proxy-worker] dyad-sw-register.js loaded.");
+  const seltraSwRegisterPath = path.join(__dirname, "seltra-sw-register.js");
+  seltraSwRegisterContent = fs.readFileSync(seltraSwRegisterPath, "utf-8");
+  parentPort?.postMessage("[proxy-worker] seltra-sw-register.js loaded.");
 } catch (error) {
   parentPort?.postMessage(
-    `[proxy-worker] Failed to read dyad-sw-register.js: ${error.message}`,
+    `[proxy-worker] Failed to read seltra-sw-register.js: ${error.message}`,
   );
 }
 
@@ -318,11 +318,11 @@ function injectHTML(buf) {
       '<script>console.warn("[proxy-worker] dyad_logs.js was not injected.");</script>',
     );
   }
-  if (dyadSwRegisterContent) {
-    scripts.push(`<script>${dyadSwRegisterContent}</script>`);
+  if (seltraSwRegisterContent) {
+    scripts.push(`<script>${seltraSwRegisterContent}</script>`);
   } else {
     scripts.push(
-      '<script>console.warn("[proxy-worker] dyad-sw-register.js was not injected.");</script>',
+      '<script>console.warn("[proxy-worker] seltra-sw-register.js was not injected.");</script>',
     );
   }
   const allScripts = scripts.join("\n");
@@ -456,14 +456,14 @@ const server = http.createServer((clientReq, clientRes) => {
     return;
   }
   // Special handling for Service Worker file
-  if (clientReq.url === "/dyad-sw.js") {
-    if (dyadSwContent) {
+  if (clientReq.url === "/seltra-sw.js") {
+    if (seltraSwContent) {
       clientRes.writeHead(200, {
         "content-type": "application/javascript",
         "service-worker-allowed": "/",
         "cache-control": "no-cache",
       });
-      clientRes.end(dyadSwContent);
+      clientRes.end(seltraSwContent);
       return;
     } else {
       clientRes.writeHead(404, { "content-type": "text/plain" });
@@ -677,7 +677,9 @@ function listenWithFallback(port, nextFallback, attemptsLeft) {
     server.removeListener("error", onError);
     const boundPort = server.address()?.port ?? port;
     previewOrigin = `http://${PREVIEW_HOSTNAME}:${boundPort}`;
-    parentPort?.postMessage(`proxy-server-bind address=${LISTEN_HOST} port=${boundPort}`);
+    parentPort?.postMessage(
+      `proxy-server-bind address=${LISTEN_HOST} port=${boundPort}`,
+    );
     parentPort?.postMessage(`proxy-server-start url=${previewOrigin}`);
   });
 }
@@ -688,7 +690,8 @@ function hasPreviewAuthority(req) {
   // Never forward cookies received through localhost, another app's name, or
   // a conflicting absolute-form request target.
   const expectedAuthority = previewOrigin && new URL(previewOrigin).host;
-  const forwardedAuthority = req.headers["x-seltra-preview-host"]?.toLowerCase();
+  const forwardedAuthority =
+    req.headers["x-seltra-preview-host"]?.toLowerCase();
   if (
     !previewOrigin ||
     (req.headers.host?.toLowerCase() !== expectedAuthority &&
