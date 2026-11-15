@@ -6,6 +6,7 @@ ENV DYAD_WEB_RUNTIME_ENTRY=1
 ENV DYAD_USER_DATA=/workspace/userData
 ENV DYAD_APPS_DIR=/workspace/apps
 ENV DYAD_TMP_DIR=/workspace/tmp
+ENV SELTRA_SCAFFOLD_DIR=/opt/seltra/scaffold
 ENV HOME=/workspace
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /opt/dyad
