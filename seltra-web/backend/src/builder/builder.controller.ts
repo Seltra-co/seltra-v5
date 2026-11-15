@@ -51,6 +51,16 @@ export class BuilderController {
     return this.builder.retryAsset(authorization, body.tenantId, appId, slot, body.prompt)
   }
 
+  @Post('apps/:appId/assets/:slot/result')
+  completeAssetRetry(@Headers('authorization') authorization: string | undefined, @Param('appId') appId: string, @Param('slot') slot: string, @Body() body: { tenantId: string; status: 'generated' | 'failed'; url?: string; error?: string; source?: 'pexels' | 'pixabay' | 'unsplash'; attribution?: string }) {
+    return this.builder.completeAssetRetry(authorization, body.tenantId, appId, slot, body)
+  }
+
+  @Post('apps/:appId/assets/:slot/stock')
+  sourceStockAsset(@Headers('authorization') authorization: string | undefined, @Param('appId') appId: string, @Body() body: { tenantId: string; prompt: string }) {
+    return this.builder.sourceStockAsset(authorization, body.tenantId, appId, body.prompt)
+  }
+
   @Post('workspace/files-sync')
   @UseGuards(CoreServiceGuard)
   syncWorkspaceFiles(@Body() body: { tenantId: string; workspaceId?: string; coreAppId?: number; runId?: string; files: Array<{ path: string; content: string }> }) {

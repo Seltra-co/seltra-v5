@@ -16,7 +16,6 @@ import { SignJWT, jwtVerify } from "jose";
 import { GatewayModule } from "./app.module.js";
 import { loadConfig, type GatewayConfig } from "./config.js";
 import { assertCorePublicUrlResolvable, assertModelProviderReachable, classifyModelStartupFailure } from "./startup_checks.js";
-import { seltraEngineModelBaseUrl } from "./model_gateway_url.js";
 import { redactSensitiveText } from "./security.js";
 import {
   FileControlStore,
@@ -33,6 +32,8 @@ import { rewritePreviewUrls } from "../../src/web/preview_urls.js";
 import { WorkspaceSupervisor, type WorkspaceRuntime } from "./workspace_supervisor.js";
 import { browserPreviewProbeUrl } from "./preview_probe.js";
 import { previewProxyOptions } from "./preview_proxy_options.js";
+import { frameAncestors as buildFrameAncestors } from "./frame_ancestors.js";
+import { isImageGenerationRoute } from "./image_generation_route.js";
 import {
   parseFigmaFileUrl,
   retrieveFigmaReference,
@@ -40,18 +41,21 @@ import {
 import { logError } from "./logger.js";
 import { GithubPublisher } from "./publish/github.js";
 import { R2ObjectStore } from "./publish/r2.js";
+import { uploadGeneratedImage } from "./image_asset_upload.js";
 import { WorkspaceDurability } from "./publish/snapshot.js";
 import { EditLeaseClient } from "./publish/edit_lease.js";
 import { VercelPublisher } from "./publish/vercel.js";
 import { PublishOrchestrator } from "./publish/orchestrator.js";
 import { resolvePromptIntent } from "./prompt_intent.js";
 import { WorkspaceSyncState } from "./workspace_sync.js";
+import { probeWorkspacePreviewStatus } from "./publish/preview_probe.js";
 
 const encoder = new TextEncoder();
 // Chat attachments are sent as base64 in the distributed-machine intent.
 // The UI permits 25 MiB of source files, which expands to ~33.4 MiB on the
 // wire before the prompt and RPC envelope are added.
 const MAX_RPC_BODY_BYTES = 40 * 1024 * 1024;
+const MAX_IMAGE_UPLOAD_BODY_BYTES = 28 * 1024 * 1024;
 const MAX_RPC_WEBSOCKET_PAYLOAD_BYTES = 1024 * 1024;
 const MAX_MODEL_BODY_BYTES = 10 * 1024 * 1024;
 const MAX_WORKSPACE_SYNC_BODY_BYTES = 10 * 1024 * 1024;
@@ -205,7 +209,7 @@ async function performWorkspaceFileBatches(
 
 async function syncWorkspaceAppsNow(
   config: GatewayConfig,
-  claims: SessionClaims,
+  claims: Pick<SessionClaims, "workspaceId" | "coreWorkspaceKey" | "creditWorkspaceId">,
   runtime: WorkspaceRuntime,
   forceVerify = false,
   runId?: string,
@@ -308,7 +312,7 @@ function setSecurityHeaders(response: ServerResponse): void {
 }
 
 function frameAncestors(config: GatewayConfig): string {
-  return ["'self'", ...config.allowedOrigins].join(" ");
+  return buildFrameAncestors(config.allowedOrigins);
 }
 
 function setPreviewFrameHeaders(
@@ -640,7 +644,7 @@ async function main(): Promise<void> {
   if (process.env.NODE_ENV === "test") {
     console.info(JSON.stringify({ event: "ai_startup_selfcheck", status: "skipped", reason: "test environment" }));
   } else if (config.EXECUTION_PROVIDER === "cloudflare") {
-    console.info(JSON.stringify({ event: "ai_startup_selfcheck", status: "deferred", role: "planner", reason: "requires an active runtime-scoped workspace token" }));
+    console.info(JSON.stringify({ event: "ai_startup_selfcheck", status: "skipped", role: "planner", reason: "Cloudflare model health is checked by user requests; startup probes consume model tokens." }));
   } else {
     try {
       await assertModelProviderReachable({
@@ -679,7 +683,7 @@ async function main(): Promise<void> {
   if (!process.env.DEPLOY_MODE?.trim() || !["hobby", "team"].includes(process.env.DEPLOY_MODE.trim().toLowerCase())) {
     console.warn(JSON.stringify({ event: "deploy_mode_defaulted", variable: "DEPLOY_MODE", mode: "team" }));
   }
-  console.info(JSON.stringify({ event: "publish_config_validation", enabled: config.publish.enabled, passed: !config.publish.configurationErrors.length, missing: config.publish.configurationErrors }));
+  console.info(JSON.stringify({ event: "publish_config_validation", enabled: config.publish.enabled, persistenceEnabled: config.publish.persistenceEnabled, restoreEnabled: config.publish.restoreEnabled, passed: !config.publish.configurationErrors.length, missing: config.publish.configurationErrors }));
   if ((config.publish.enabled || config.publish.persistenceEnabled || config.publish.restoreEnabled) && config.publish.configurationErrors.length) {
     console.error(JSON.stringify({ event: "publish_startup_refused", code: "CONFIG_MISSING", variables: config.publish.configurationErrors }));
     process.exitCode = 1;
@@ -746,9 +750,11 @@ async function main(): Promise<void> {
   const durabilityEnabled = config.publish.persistenceEnabled || config.publish.restoreEnabled;
   const github = (config.publish.enabled || durabilityEnabled) ? new GithubPublisher({
     org: config.publish.githubOrg!, appId: config.publish.githubAppId!, installationId: config.publish.githubInstallationId!,
-    privateKeyPem: config.publish.githubPrivateKeyPem!, mode: config.publish.deployMode, repoPrefix: config.publish.repoPrefix,
+    privateKeyPem: config.publish.githubPrivateKeyPem!, repoPrefix: config.publish.repoPrefix,
   }) : undefined;
-  const objectStore = (config.publish.enabled || durabilityEnabled) ? new R2ObjectStore({
+  const r2AssetBucket = config.publish.assetsBucket;
+  const r2CredentialsReady = Boolean(config.R2_ACCESS_KEY_ID?.trim() && config.R2_SECRET_ACCESS_KEY?.trim() && config.R2_ACCOUNT_ID?.trim() && (config.R2_S3_API_ENDPOINT?.trim() || config.R2_ACCOUNT_ID?.trim()));
+  const objectStore = (config.publish.enabled || durabilityEnabled || (r2CredentialsReady && r2AssetBucket)) ? new R2ObjectStore({
     endpoint: config.publish.r2Endpoint!, accountId: config.publish.r2AccountId!, accessKeyId: config.publish.r2AccessKeyId!, secretAccessKey: config.publish.r2SecretAccessKey!,
   }) : undefined;
   const durability = new WorkspaceDurability(config.publish, objectStore, github, config.NEST_INTERNAL_URL, config.CORE_SERVICE_SECRET, fetch, config.WORKSPACE_ROOT);
@@ -796,7 +802,6 @@ async function main(): Promise<void> {
   const modelTokens = new Map<string, SessionClaims>();
   const inflightModelCalls = new Map<string, Set<AbortController>>();
   const stoppedWorkspaces = new Map<string, number>();
-  let runtimeModelSelfCheck: Promise<void> | undefined;
   const eventSessions = new Set<EventSession>();
   const budgetStates = new Map<string, BudgetState>();
   const breakerRegistry = createBreakerRegistry({
@@ -1144,7 +1149,7 @@ async function main(): Promise<void> {
     return { engineApiKey: result.engineApiKey };
   }
 
-  async function runtimeFor(claims: Pick<SessionClaims, "sub" | "email" | "plan" | "workspaceId" | "coreWorkspaceKey" | "storeSlug">, caller = 'gateway_request', traceId?: string, intent: 'user_send' | 'user_approve' | 'preview_open' | 'restore' | 'e2e' = 'user_send'): Promise<WorkspaceRuntime> {
+  async function runtimeFor(claims: Pick<SessionClaims, "sub" | "email" | "plan" | "workspaceId" | "creditWorkspaceId" | "coreWorkspaceKey" | "storeSlug">, caller = 'gateway_request', traceId?: string, intent: 'user_send' | 'user_approve' | 'preview_open' | 'restore' | 'e2e' = 'user_send'): Promise<WorkspaceRuntime> {
     let runtime: WorkspaceRuntime;
     try {
       const entitlement = await assertEntitlement(claims, true);
@@ -1153,22 +1158,9 @@ async function main(): Promise<void> {
       const status = Number((error as { status?: number }).status) || 503;
       throw new HttpError(status, String((error as { code?: string }).code ?? "WORKSPACE_RUNTIME_UNAVAILABLE"), (error as Error).message || "Workspace runtime is unavailable.");
     }
+    runtime.syncAndVerify = (runId) => syncWorkspaceAppsNow(config, claims, runtime, true, runId, traceId);
     modelTokens.set(runtime.modelToken, claims);
-    if (config.EXECUTION_PROVIDER === "cloudflare" && !runtimeModelSelfCheck) {
-      runtimeModelSelfCheck = assertModelProviderReachable({
-        provider: config.AI_PROVIDER,
-        baseUrl: seltraEngineModelBaseUrl(config.CORE_PUBLIC_URL!),
-        apiKey: runtime.modelToken,
-        model: "seltra-planner",
-      }).then(() => {
-        console.info(JSON.stringify({ event: "ai_startup_selfcheck", status: "passed", role: "planner", path: "core_public_workspace_token" }));
-      }).catch((error) => {
-        runtimeModelSelfCheck = undefined;
-        console.error(JSON.stringify({ event: "ai_startup_selfcheck", status: "failed", role: "planner", path: "core_public_workspace_token", code: classifyModelStartupFailure(error), errorName: error instanceof Error ? error.name : typeof error }));
-        throw error;
-      });
-    }
-    await runtimeModelSelfCheck;
+    // Runtime creation also serves preview and restore requests; keep it model-free.
     return runtime;
   }
 
@@ -2078,6 +2070,7 @@ async function main(): Promise<void> {
       if (error instanceof HttpError) throw error;
       throw new HttpError(400, "INVALID_REQUEST", "Request body must be valid JSON.");
     }
+
     if (typeof body.prompt !== "string" || !body.prompt.trim() || body.prompt.length > 2048)
       throw new HttpError(400, "INVALID_REQUEST", "A non-empty image prompt of at most 2048 characters is required.");
     if (!config.AI_MODEL_IMAGE)
@@ -2169,6 +2162,47 @@ async function main(): Promise<void> {
       }).then((result) => { if (!result.ok) console.error(JSON.stringify({ event: "image_usage_report_failed", status: result.status })); })
         .catch(() => console.error(JSON.stringify({ event: "image_usage_report_failed" })));
       console.log(JSON.stringify({ event: "image_generation_usage", workspaceId: modelClaims.workspaceId, runId, model, ok, errorClass, latencyMs: Date.now() - startedAt }));
+    }
+  }
+
+  async function handleImageAssetUploadRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    const bearer = request.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1] ?? "";
+    const modelClaims = modelTokens.get(bearer);
+    const activeRuntime = modelClaims ? supervisor.getByKey(modelClaims.coreWorkspaceKey) : null;
+    if (!bearer || !modelClaims || !activeRuntime || activeRuntime.modelToken !== bearer)
+      throw new HttpError(401, "UNAUTHORIZED", "Invalid workspace model token.");
+    await assertEntitlement(modelClaims);
+    if (!objectStore || !r2AssetBucket)
+      throw new HttpError(503, "IMAGE_STORAGE_NOT_CONFIGURED", "Generated image storage is unavailable: configure an R2 asset bucket.");
+    const activeRunIdHeader = request.headers["x-seltra-run-id"];
+    if (typeof activeRunIdHeader === "string" && activeRunIdHeader.length > 128) {
+      throw new HttpError(400, "INVALID_REQUEST", "The image upload run identifier is invalid.");
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = JSON.parse((await readBody(request, MAX_IMAGE_UPLOAD_BODY_BYTES)).toString("utf8")) as Record<string, unknown>;
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(400, "INVALID_REQUEST", "Request body must be valid JSON.");
+    }
+    if (
+      typeof body.appId !== "number" || !Number.isSafeInteger(body.appId) || body.appId < 1 ||
+      typeof body.slot !== "string" || !/^[a-z0-9][a-z0-9-]{0,63}$/i.test(body.slot) ||
+      typeof body.base64 !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(body.base64) ||
+      typeof body.mimeType !== "string"
+    ) throw new HttpError(400, "INVALID_REQUEST", "A valid generated image upload is required.");
+    const bytes = Buffer.from(body.base64, "base64");
+    try {
+      const uploaded = await uploadGeneratedImage(objectStore, r2AssetBucket, modelClaims.workspaceId, body.appId, body.slot, bytes, body.mimeType);
+      sendJson(response, 200, { ok: true, key: uploaded.key, size: uploaded.size });
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+      if (code === "R2_UPLOAD_FAILED") throw new HttpError(502, code, "Generated image could not be uploaded to durable storage.");
+      const message = error instanceof Error ? error.message : "Image upload failed.";
+      throw new HttpError(400, "INVALID_IMAGE", message);
     }
   }
 
@@ -2302,8 +2336,14 @@ async function main(): Promise<void> {
       });
       return;
     }
-    if (request.method === "POST" && url.pathname === "/images/generations") {
+    if (isImageGenerationRoute(request.method ?? "", url.pathname)) {
       await handleImageGenerationRequest(request, response);
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/images/assets") {
+      const primary = isPrimaryGatewayHost(request.headers.host ?? "", config);
+      if (!primary) throw new HttpError(403, "ORIGIN_FORBIDDEN", "Image uploads require the primary workspace gateway.");
+      await handleImageAssetUploadRequest(request, response);
       return;
     }
     if (url.pathname.startsWith("/v1/")) {
@@ -2335,32 +2375,7 @@ async function main(): Promise<void> {
         const runtime = await runtimeFor(claims, 'preview_open', undefined, 'preview_open');
         let upstreamStatus = 0;
         try {
-          if (runtime.signGatewayRequest) {
-            const route = `/v1/workspaces/${runtime.workspaceKey}/preview/${appId}/`;
-            const gatewayUrl = new URL(route, runtime.baseUrl.replace(/\/runtime$/, ''));
-            const response = await fetch(gatewayUrl, {
-              headers: { ...runtime.signGatewayRequest('GET', route), accept: 'text/html' },
-              redirect: 'manual',
-              signal: AbortSignal.timeout(5_000),
-            });
-            upstreamStatus = response.status;
-            await response.body?.cancel().catch(() => undefined);
-          } else {
-            const targetResponse = await fetch(`${runtime.baseUrl}/internal/preview-target/${appId}`, {
-              headers: { authorization: `Bearer ${runtime.rpcSecret}` },
-              signal: AbortSignal.timeout(3_000),
-            });
-            const target = targetResponse.ok ? await targetResponse.json() as { appId?: number; host?: string; port?: number; previewHost?: string } : null;
-            if (target?.appId === appId && target.host === '127.0.0.1' && Number.isInteger(target.port) && target.port! >= 1024 && target.port! <= 65535 && (target.previewHost === 'localhost' || target.previewHost === `app-${appId}.localhost`)) {
-              const response = await fetch(`http://127.0.0.1:${target.port}/`, {
-                headers: { host: `${target.previewHost}:${target.port}`, accept: 'text/html' },
-                redirect: 'manual',
-                signal: AbortSignal.timeout(5_000),
-              });
-              upstreamStatus = response.status;
-              await response.body?.cancel().catch(() => undefined);
-            }
-          }
+          upstreamStatus = await probeWorkspacePreviewStatus(runtime, appId);
         } catch (error) {
           console.warn(JSON.stringify({ event: 'preview_upstream_probe', projectId: claims.workspaceId, appId, status: upstreamStatus, errorName: error instanceof Error ? error.name : typeof error }));
         }
@@ -3057,8 +3072,9 @@ async function main(): Promise<void> {
                   if (!isBinary) {
                     try {
                       const frame = JSON.parse(data.toString()) as {
+                        type?: string;
                         channel?: string;
-                        payload?: { id?: unknown; chatId?: unknown; intentId?: unknown };
+                        payload?: { id?: unknown; chatId?: unknown; intentId?: unknown; state?: unknown };
                       };
                       if (typeof frame.channel === "string" && !seenChannels.has(frame.channel)) {
                         seenChannels.add(frame.channel);
@@ -3074,9 +3090,27 @@ async function main(): Promise<void> {
                         sessionOwners.set(runtimeSessionId, claims);
                         console.info(JSON.stringify({ event: "core_project_phase", projectId: claims.workspaceId, phase: "WS subscribed", at: new Date().toISOString() }));
                       }
+                      if (frame.type === "preview_state" && frame.payload?.state === "ready") {
+                        const turnId = typeof frame.payload.intentId === "string"
+                          ? frame.payload.intentId
+                          : typeof frame.payload.chatId === "string"
+                            ? frame.payload.chatId
+                            : `preview-ready-${randomUUID()}`;
+                        void durability.persist(workspaceRuntime, "turn_end", turnId).catch((error) => {
+                          console.error(JSON.stringify({
+                            event: "workspace_persist_background_failed",
+                            code: (error as { code?: string }).code || "SOURCE_NOT_SAVED",
+                          }));
+                        });
+                      }
                       if (frame.channel === "chat:response:end" || frame.channel === "chat:response:error") {
                         const turnId = typeof frame.payload?.intentId === "string" ? frame.payload.intentId : typeof frame.payload?.chatId === "string" ? frame.payload.chatId : "turn-end";
-                        await durability.persist(workspaceRuntime, "turn_end", turnId);
+                        void durability.persist(workspaceRuntime, "turn_end", turnId).catch((error) => {
+                          console.error(JSON.stringify({
+                            event: "workspace_persist_background_failed",
+                            code: (error as { code?: string }).code || "SOURCE_NOT_SAVED",
+                          }));
+                        });
                       }
                       outgoing = JSON.stringify(
                         await rewriteWithPreviewTokens(frame, claims),

@@ -1,4 +1,5 @@
 import { createHmac, randomBytes } from 'node:crypto'
+import { deriveWorkspaceCredential } from './runtime_credentials.js'
 import { spawnSync, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs/promises'
 import net from 'node:net'
@@ -18,6 +19,7 @@ export type WorkspaceRuntime = {
   modelToken: string
   signGatewayRequest?: (method: string, path: string) => Record<string, string>
   syncFromExecution?: (scope?: 'apps') => Promise<void>
+  syncAndVerify?: (runId?: string) => Promise<{ filesCount: number; verified: boolean }>
   child: ChildProcess
   executionName: string
   traceId?: string
@@ -210,8 +212,8 @@ export class WorkspaceSupervisor {
     await Promise.all([userData, apps, temp, path.join(root, 'logs')].map((dir) => fs.mkdir(dir, { recursive: true })))
     const restoredSecretsKey = await this.options.restoreBeforeStart?.(workspaceKey, root)
     const secretsKey = await getOrCreateSecretsKey(path.join(this.options.dataRoot, '.control', `${workspaceKey}.secrets-key`), restoredSecretsKey)
-    const rpcSecret = randomBytes(32).toString('hex')
-    const modelToken = randomBytes(32).toString('hex')
+    const rpcSecret = deriveWorkspaceCredential(secretsKey, 'rpc', workspaceId, workspaceKey, userId)
+    const modelToken = deriveWorkspaceCredential(secretsKey, 'model', workspaceId, workspaceKey, userId)
     const identitySecret = this.options.env.CORE_SERVICE_SECRET
     if (!identitySecret) throw new Error('CORE_SERVICE_SECRET is required to bind Engine usage to the authenticated user.')
     const creditIdentityPayload = Buffer.from(JSON.stringify({ userId, tenantId: workspaceId, expiresAt: Date.now() + 24 * 60 * 60 * 1000 })).toString('base64url')

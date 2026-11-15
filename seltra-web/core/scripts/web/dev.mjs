@@ -493,6 +493,46 @@ try {
   if (config.FIGMA_ACCESS_TOKEN?.trim())
     gatewayEnv.FIGMA_ACCESS_TOKEN = config.FIGMA_ACCESS_TOKEN;
   if (config.DATABASE_URL) gatewayEnv.DATABASE_URL = config.DATABASE_URL;
+  for (const name of [
+    "PUBLISH_ENABLED",
+    "WORKSPACE_PERSISTENCE_ENABLED",
+    "WORKSPACE_RESTORE_ENABLED",
+    "DEPLOY_MODE",
+    "GITHUB_ORG",
+    "GITHUB_APPS_ORG",
+    "GITHUB_APP_ID",
+    "GITHUB_INSTALLATION_ID",
+    "GITHUB_APP_INSTALLATION_ID",
+    "GITHUB_APP_PRIVATE_KEY",
+    "GITHUB_PRIVATE_KEY",
+    "GITHUB_APP_PRIVATE_KEY_B64",
+    "VERCEL_TOKEN",
+    "VERCEL_TEAM_ID",
+    "VERCEL_DEPLOY_TIMEOUT_MINUTES",
+    "PUBLISH_MAX_CONCURRENT",
+    "PUBLISH_PUBLIC_API_URL",
+    "PUBLISH_GIT_AUTHOR_NAME",
+    "PUBLISH_GIT_AUTHOR_EMAIL",
+    "PUBLISH_ROOT_DOMAIN",
+    "PUBLISH_PROTECTED_SLUGS",
+    "PUBLISH_REPO_PREFIX",
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY",
+    "R2_ACCOUNT_ID",
+    "R2_S3_API_ENDPOINT",
+    "R2_BUCKET_NAME",
+    "R2_BUCKET_ROUTES",
+    "R2_BUCKET_WORKSPACES",
+    "WORKSPACE_MASTER_KEY",
+    "WORKSPACE_ROOT",
+    "SAVEPOINT_IDLE_SECONDS",
+    "SNAPSHOT_INTERVAL_MINUTES",
+    "SHUTDOWN_PERSIST_SECONDS",
+    "ALERT_WEBHOOK_URL",
+  ]) {
+    const value = config[name]?.trim();
+    if (value) gatewayEnv[name] = value;
+  }
   const gatewayLog = fs.createWriteStream(path.join(logsDir, "gateway.log"), {
     flags: isWebDeployment ? "a" : "w",
   });

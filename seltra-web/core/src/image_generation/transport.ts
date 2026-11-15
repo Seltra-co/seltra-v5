@@ -40,7 +40,7 @@ const startParamsSchema = z
     themeMode: ImageThemeModeSchema,
     targetAppId: z.number().int().positive(),
     targetAppName: z.string().min(1),
-    assetSlot: z.string().regex(/^photo-[1-9]\d?-[a-z0-9-]{1,48}$/).optional(),
+    assetSlot: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/i).optional(),
     source: z.enum(["chat", "media-library"]).optional(),
   })
   .strict();

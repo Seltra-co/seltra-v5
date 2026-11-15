@@ -15,22 +15,20 @@ export interface PlannerResult {
   inferredSummary: string // what the planner already understood, so merchant can correct it
 }
 
-const SYSTEM_PROMPT = `You are Seltra's Business Planner Agent. Creator: Seltra Inc. A merchant just typed a short prompt
-describing the business they want to launch. Your job is NOT to build the store or app — that happens after
+const SYSTEM_PROMPT = `You are Seltra's Project Planner Agent. A user just typed a prompt describing the website or app they want
+to build. Your job is NOT to build it — that happens after
 you. Your job is to read the prompt like a sharp co-founder would, and ask ONLY the questions that
-would meaningfully change how the store gets built.
+would meaningfully change how the requested project gets built.
 
 Rules:
 - Always ask at least one question. Ask 1 to 4 questions and set readyToBuild: false.
 - Never ask generic boilerplate ("what's your business about?", "who's your audience?") if the prompt
   already answers it. Only ask what's genuinely missing or ambiguous given THIS prompt.
-- Prioritize questions whose answer changes a structural decision: fulfillment (pickup vs delivery vs
-  both), price positioning (budget/mid/premium), and whether they have real product photos or need
-  AI-generated ones.
-- Ask store-specific setup questions in real time when the answer would change generated features:
-  product variants (sizes, colors, scents, pack sizes), delivery tiers, delivery speed, delivery pricing,
-  pickup availability, preorder/stock rules, or launch offers. These questions must be tailored to the
-  merchant's business, not generic boilerplate.
+- For storefronts, prioritize structural decisions such as fulfillment, price positioning, real product
+  photos versus generated images, variants, delivery, pickup, inventory, and launch offers.
+- For portfolios, service sites, and other non-store projects, ask only about relevant decisions such as
+  target clients, portfolio content, visual direction, or contact workflow. Never introduce products,
+  customers, storefronts, or commerce setup when the prompt does not request a store.
 - Do not ask the merchant to manually enumerate a full variant table or delivery matrix. Ask for the
   signal that matters (for example whether they have sizes/colors, or whether they want standard/express
   delivery and rough pricing). If the merchant answers briefly ("yes", "we do", "not sure"), downstream
@@ -57,6 +55,18 @@ function cleanJSON(raw: string): string {
 
 function fallbackPlan(prompt: string): PlannerResult {
   const lower = prompt.toLowerCase()
+  if (/portfolio|graphic designer|photographer|freelance|artist|personal website/.test(lower)) {
+    return {
+      readyToBuild: false,
+      inferredSummary: `Building a first version based on: "${prompt.slice(0, 140)}"`,
+      questions: [{
+        id: 'portfolio_direction',
+        question: 'What kind of clients or projects should this portfolio attract, and what visual direction should it use?',
+        why: 'This helps tailor the work presentation to the right audience and style.',
+        options: ['Minimal and editorial', 'Bold and expressive', 'Warm and approachable'],
+      }],
+    }
+  }
   const product = /coffee|tea|drink|beverage/.test(lower) ? 'drinks'
     : /clothing|fashion|shirt|dress|apparel/.test(lower) ? 'clothing'
       : /skin|beauty|cosmetic|soap/.test(lower) ? 'beauty products'
@@ -106,6 +116,10 @@ export async function planFromPrompt(prompt: string): Promise<PlannerResult> {
       .filter((q) => !/whats\s?app|phone|contact number|customer.*reach/i.test(q.question))
       .map((q) => ({ ...q, question: q.question.trim().slice(0, 240), why: q.why.trim().slice(0, 180), options: Array.isArray(q.options) ? q.options.filter((option): option is string => typeof option === 'string' && Boolean(option.trim())).slice(0, 4).map((option) => option.trim().slice(0, 120)) : undefined }))
       .slice(0, 4)
+    if (/portfolio|graphic designer|photographer|freelance|artist|personal website/i.test(prompt) &&
+      questions.some((question) => /product|storefront|store|delivery|pickup|inventory|launch offer/i.test(question.question))) {
+      return fallbackPlan(prompt)
+    }
     if (!questions.length || parsed.readyToBuild) return fallbackPlan(prompt)
     return {
       readyToBuild: false,

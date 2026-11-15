@@ -19,6 +19,8 @@ on:
       - "seltra-web/core/src/pro/main/ipc/handlers/local_agent/tools/run_build.ts"
       - "seltra-web/core/src/pro/main/ipc/handlers/local_agent/tools/repair_app.ts"
       - "seltra-web/core/server/src/workspace_supervisor.ts"
+      - "seltra-web/core/server/src/publish/**"
+      - "seltra-web/core/src/seltra_publish/**"
       - "seltra-web/core/scripts/build-runtime.mjs"
       - "seltra-web/core/worker/**"
       - "seltra-web/core/scripts/audit-runtime-dependencies.mjs"

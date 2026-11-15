@@ -195,18 +195,18 @@ describe('PublishService', () => {
       tenantAppId: app.id,
       status: DeploymentStatus.QUEUED,
       deployMode: PublishDeployMode.hobby,
-      repoVisibility: 'public',
+      repoVisibility: 'private',
       events: { create: { seq: 1, status: DeploymentStatus.QUEUED, message: 'Publish queued.' } },
     }) }))
   })
 
-  it('records public repository metadata in hobby mode', async () => {
+  it('records private repository metadata in hobby mode', async () => {
     db.tenantApp.findFirst.mockResolvedValue(app)
-    await service.repositorySaved({ userId: 'user-1', workspaceKey: 'workspace-1', coreAppId: 7, githubRepoId: 'repo-1', githubRepoFullName: 'Seltra-Cloud/app-1', githubRepoVisibility: 'public' })
-    expect(db.tenantApp.update).toHaveBeenCalledWith({ where: { id: app.id }, data: expect.objectContaining({ githubRepoVisibility: 'public' }) })
+    await service.repositorySaved({ userId: 'user-1', workspaceKey: 'workspace-1', coreAppId: 7, githubRepoId: 'repo-1', githubRepoFullName: 'Seltra-Cloud/app-1', githubRepoVisibility: 'private' })
+    expect(db.tenantApp.update).toHaveBeenCalledWith({ where: { id: app.id }, data: expect.objectContaining({ githubRepoVisibility: 'private' }) })
   })
 
-  it('keeps team repository metadata private', async () => {
+  it('rejects public repository metadata in team mode', async () => {
     process.env.DEPLOY_MODE = 'team'
     db.tenantApp.findFirst.mockResolvedValue(app)
     await expect(service.repositorySaved({ userId: 'user-1', workspaceKey: 'workspace-1', coreAppId: 7, githubRepoId: 'repo-1', githubRepoFullName: 'Seltra-Cloud/app-1', githubRepoVisibility: 'public' }))

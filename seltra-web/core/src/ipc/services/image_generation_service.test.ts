@@ -12,6 +12,8 @@ import {
 } from "@/testing/handler_test_harness";
 import { ImageGenerationService } from "./image_generation_service";
 
+const validPngBytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
+
 vi.mock("@/main/settings", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/main/settings")>();
   return {
@@ -97,7 +99,7 @@ describe("ImageGenerationService", () => {
   }
 
   it("writes blueprint photo slots into public assets inside Core", async () => {
-    const imageBytes = Buffer.from("test-png-bytes");
+    const imageBytes = validPngBytes;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       created: 1,
       data: [{ b64_json: imageBytes.toString("base64") }],
@@ -108,11 +110,38 @@ describe("ImageGenerationService", () => {
       prompt: "A tiny lighthouse",
       themeMode: "real-photography",
       targetAppId: appId,
-      assetSlot: "photo-1-lighthouse",
+      assetSlot: "hero",
     });
 
-    expect(result.publicAssetPath).toBe("public/assets/photo-1-lighthouse.png");
-    await expect(fs.promises.readFile(path.join(tempBase, "test-app", "public", "assets", "photo-1-lighthouse.png"))).resolves.toEqual(imageBytes);
+    expect(result.publicAssetPath).toBe("public/assets/hero.png");
+    await expect(fs.promises.readFile(path.join(tempBase, "test-app", "public", "assets", "hero.png"))).resolves.toEqual(imageBytes);
+  });
+
+  it("preserves WebP format and rejects non-raster provider data", async () => {
+    const webpBytes = Buffer.from([82, 73, 70, 70, 0, 0, 0, 0, 87, 69, 66, 80, 0, 0, 0, 0]);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      created: 1,
+      data: [{ b64_json: webpBytes.toString("base64") }],
+    }), { status: 200 })).mockResolvedValueOnce(new Response(JSON.stringify({
+      created: 1,
+      data: [{ b64_json: Buffer.from("<svg/>").toString("base64") }],
+    }), { status: 200 })));
+
+    const result = await service.generate({
+      requestId: "blueprint-webp",
+      prompt: "Editorial product photo",
+      themeMode: "real-photography",
+      targetAppId: appId,
+      assetSlot: "best-sellers",
+    });
+    expect(result.publicAssetPath).toBe("public/assets/best-sellers.webp");
+    await expect(service.generate({
+      requestId: "blueprint-svg",
+      prompt: "Not a raster",
+      themeMode: "real-photography",
+      targetAppId: appId,
+      assetSlot: "women",
+    })).rejects.toMatchObject({ kind: DyadErrorKind.External });
   });
 
   it("routes isolated web image generation through the workspace model gateway", async () => {
@@ -123,7 +152,7 @@ describe("ImageGenerationService", () => {
     vi.stubEnv("SELTRA_ENGINE_URL", "");
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       created: 1,
-      data: [{ b64_json: Buffer.from("test-png-bytes").toString("base64") }],
+      data: [{ b64_json: validPngBytes.toString("base64") }],
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -137,6 +166,40 @@ describe("ImageGenerationService", () => {
         }),
       }),
     );
+  });
+
+  it("uploads blueprint photo slots to durable storage in web runtime", async () => {
+    vi.stubEnv("DYAD_WEB_RUNTIME", "1");
+    vi.stubEnv("MODEL_GATEWAY_URL", "http://127.0.0.1:8080/v1/");
+    vi.stubEnv("WORKSPACE_MODEL_TOKEN", "workspace-model-token");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        created: 1,
+        data: [{ b64_json: validPngBytes.toString("base64") }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, size: validPngBytes.byteLength }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await service.generate({
+      requestId: "web-runtime-blueprint-photo",
+      prompt: "A tiny lighthouse",
+      themeMode: "real-photography",
+      targetAppId: appId,
+      assetSlot: "hero",
+    });
+
+    expect(result.publicAssetPath).toBe("public/assets/hero.png");
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1:8080/v1/images/assets",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1].body))).toMatchObject({
+      appId,
+      slot: "hero",
+      mimeType: "image/png",
+      base64: validPngBytes.toString("base64"),
+    });
   });
 
   async function cancel(requestId: string): Promise<{ cancelled: boolean }> {
@@ -342,7 +405,7 @@ describe("ImageGenerationService", () => {
         new Response(
           JSON.stringify({
             created: 1,
-            data: [{ b64_json: Buffer.from("image").toString("base64") }],
+            data: [{ b64_json: validPngBytes.toString("base64") }],
           }),
           { status: 200 },
         ),
@@ -381,7 +444,7 @@ describe("ImageGenerationService", () => {
         new Response(
           JSON.stringify({
             created: 1,
-            data: [{ b64_json: Buffer.from("image").toString("base64") }],
+            data: [{ b64_json: validPngBytes.toString("base64") }],
           }),
           { status: 200 },
         ),
@@ -430,7 +493,7 @@ describe("ImageGenerationService", () => {
         new Response(
           JSON.stringify({
             created: 1,
-            data: [{ b64_json: Buffer.from("image").toString("base64") }],
+            data: [{ b64_json: validPngBytes.toString("base64") }],
           }),
           { status: 200 },
         ),
@@ -486,7 +549,7 @@ describe("ImageGenerationService", () => {
         new Response(
           JSON.stringify({
             created: 1,
-            data: [{ b64_json: Buffer.from("image").toString("base64") }],
+            data: [{ b64_json: validPngBytes.toString("base64") }],
           }),
           { status: 200 },
         ),

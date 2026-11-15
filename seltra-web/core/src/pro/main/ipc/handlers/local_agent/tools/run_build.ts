@@ -86,17 +86,18 @@ export function unavailableBrowserQaPayload(appId: number, chatId: number, reaso
 export function capturedBrowserQaPayload(input: {
   appId: number;
   chatId: number;
-  evidence: { consoleErrors: string[]; failedRequests: string[]; ignoredNoise: string[]; screenshot: Buffer };
+  evidence: { consoleErrors: string[]; failedRequests: string[]; ignoredNoise: string[]; screenshot: Buffer; imageIssues?: string[] };
   screenshotPath: string;
 }) {
   const { appId, chatId, evidence, screenshotPath } = input;
   return {
     appId, chatId,
-    status: evidence.consoleErrors.length || evidence.failedRequests.length ? "failed" as const : "passed" as const,
+    status: evidence.consoleErrors.length || evidence.failedRequests.length || evidence.imageIssues?.length ? "failed" as const : "passed" as const,
     reason: null,
     consoleErrors: evidence.consoleErrors,
     failedRequests: evidence.failedRequests,
     ignoredNoise: evidence.ignoredNoise,
+    imageIssues: evidence.imageIssues ?? [],
     screenshotPath,
     screenshotBytes: evidence.screenshot.byteLength,
     screenshotSha256: createHash("sha256").update(evidence.screenshot).digest("hex"),

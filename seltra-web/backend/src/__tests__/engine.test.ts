@@ -139,6 +139,13 @@ describe('Seltra Engine service', () => {
     expect(Buffer.from(result.data[0].b64_json, 'base64')).toEqual(bytes)
   })
 
+  it('accepts webp image responses from Workers AI without falling back', async () => {
+    const bytes = Buffer.from([82, 73, 70, 70, 0, 0, 0, 0, 87, 69, 66, 80, 0, 0, 0, 0])
+    jest.spyOn(global, 'fetch').mockResolvedValue(new Response(bytes, { headers: { 'content-type': 'image/webp' } }))
+    const result = await service().generateImages(identity, { prompt: 'webp image' }, 'request-webp')
+    expect(Buffer.from(result.data[0].b64_json, 'base64')).toEqual(bytes)
+  })
+
   it('falls back from a 401 primary image model to Cloudflare FLUX Klein', async () => {
     process.env.AI_MODEL_IMAGE = '@cf/primary/image-model'
     const fetchMock = jest.spyOn(global, 'fetch')

@@ -152,10 +152,13 @@ class WorkspacePublishStateDto {
   @IsOptional() @IsDateString() snapshotAt?: string
 }
 
-class WorkspacePersistenceBeginDto {
+class WorkspacePersistenceIdentityDto {
   @IsString() userId!: string
   @IsString() workspaceKey!: string
   @IsString() @MaxLength(128) operationId!: string
+}
+
+class WorkspacePersistenceBeginDto extends WorkspacePersistenceIdentityDto {
   @IsString() @MaxLength(32) reason!: string
 }
 
@@ -163,7 +166,7 @@ class WorkspacePersistenceLatestDto {
   @IsString() workspaceKey!: string
 }
 
-class WorkspacePersistenceTransitionDto extends WorkspacePersistenceBeginDto {
+class WorkspacePersistenceTransitionDto extends WorkspacePersistenceIdentityDto {
   @IsIn(['SOURCE_VERIFIED', 'SNAPSHOT_VERIFIED', 'SAFE_TO_DESTROY', 'DEGRADED']) status!: 'SOURCE_VERIFIED' | 'SNAPSHOT_VERIFIED' | 'SAFE_TO_DESTROY' | 'DEGRADED'
   @IsOptional() @IsObject() githubRevisions?: Record<string, string>
   @IsOptional() @IsString() snapshotVersion?: string

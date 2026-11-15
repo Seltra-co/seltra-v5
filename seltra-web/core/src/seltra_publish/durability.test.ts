@@ -109,6 +109,39 @@ describe("pre-push validator", () => {
     expect(await validateAppForPush(root)).toMatchObject({ framework: "vite" });
   });
 
+  it("adds the platform GitHub-only setting to an untracked Vercel config", async () => {
+    const root = await tempDirectory();
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ dependencies: { vite: "1" } }));
+    await writeFile(path.join(root, "vercel.json"), JSON.stringify({
+      rewrites: [{ source: "/(.*)", destination: "/index.html" }],
+    }));
+
+    await installPlatformFiles(root);
+
+    const vercel = JSON.parse(await readFile(path.join(root, "vercel.json"), "utf8"));
+    expect(vercel.git.deploymentEnabled).toBe(false);
+    expect(vercel.rewrites).toEqual([{ source: "/(.*)", destination: "/index.html" }]);
+    expect(await validateAppForPush(root)).toMatchObject({ framework: "vite" });
+  });
+
+  it("adds the platform setting to an existing tracked config without its marker", async () => {
+    const root = await tempDirectory();
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ dependencies: { vite: "1" } }));
+    await writeFile(path.join(root, "vercel.json"), JSON.stringify({
+      rewrites: [{ source: "/(.*)", destination: "/index.html" }],
+    }));
+    await import("node:child_process").then(({ execFileSync }) => {
+      execFileSync("git", ["init", root], { stdio: "ignore" });
+      execFileSync("git", ["-C", root, "add", "vercel.json"], { stdio: "ignore" });
+    });
+
+    await installPlatformFiles(root);
+
+    const vercel = JSON.parse(await readFile(path.join(root, "vercel.json"), "utf8"));
+    expect(vercel.git.deploymentEnabled).toBe(false);
+    expect(await validateAppForPush(root)).toMatchObject({ framework: "vite" });
+  });
+
   it("blocks secrets, crons, external rewrites, and changes to the platform git key", async () => {
     const root = await tempDirectory();
     await writeFile(path.join(root, "package.json"), JSON.stringify({ dependencies: { vite: "1" } }));
@@ -220,7 +253,7 @@ describe("workspace snapshot and restore", () => {
     const rpc = createRpcServer({ secret: "rpc-secret-test", host: "127.0.0.1", port: 0, publishHandlers: runtimeHandlers });
     await new Promise<void>((resolve) => rpc.server.once("listening", resolve));
     const address = rpc.address() as { port: number };
-    const runtime = { workspaceId: "tenant-id", workspaceKey, userId: "user-id", storeSlug: "store", baseUrl: `http://127.0.0.1:${address.port}`, rpcSecret: "rpc-secret-test", runtimeSecretsKey: "11".repeat(32), modelToken: "model-token", touchedAt: Date.now(), child: { exitCode: null } } as any;
+    const runtime = { workspaceId: "tenant-id", workspaceKey, userId: "user-id", storeSlug: "store", baseUrl: `http://127.0.0.1:${address.port}`, rpcSecret: "rpc-secret-test", runtimeSecretsKey: "11".repeat(32), modelToken: "model-token", touchedAt: Date.now(), child: { exitCode: null }, syncAndVerify: async () => ({ filesCount: 1, verified: true }) } as any;
     const r2 = new MemoryR2();
     const savedSource = new Map<string, string>();
     const gh = {
@@ -240,8 +273,17 @@ describe("workspace snapshot and restore", () => {
         : {};
       return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     };
+    const persistenceFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.startsWith("http://backend.test/")) return backendFetch(input, init);
+      if (url.endsWith("/internal/preview-target/9")) {
+        return Response.json({ appId: 9, host: "127.0.0.1", port: 4321, previewHost: "app-9.localhost" });
+      }
+      if (url === "http://127.0.0.1:4321/") return new Response(null, { status: 200 });
+      return new Response(null, { status: 404 });
+    };
     const publishConfig = loadConfig(publishingEnv()).publish;
-    const durability = new WorkspaceDurability(publishConfig, r2 as any, gh as any, "http://backend.test", "service-secret", backendFetch);
+    const durability = new WorkspaceDurability(publishConfig, r2 as any, gh as any, "http://backend.test", "service-secret", persistenceFetch);
     try {
       await durability.persist(runtime, "turn_end", "turn-1");
       expect(r2.writes.length).toBe(3);
@@ -249,7 +291,7 @@ describe("workspace snapshot and restore", () => {
       expect(r2.writes[1].startsWith(`workspaces/${workspaceKey}/snapshots/`) && r2.writes[1].endsWith(".json")).toBe(true);
       expect(r2.writes[2]).toBe(`workspaces/${workspaceKey}/latest.json`);
       expect(backendCalls).toEqual(["workspace-persistence/begin", "publish/repository-info", "publish/repository-saved", "github/push-result", "workspace-persistence/transition", "workspace-persistence/transition", "workspace-persistence/transition"]);
-      const failedDurability = new WorkspaceDurability(publishConfig, new MemoryR2() as any, { ensureRepo: async () => ({ id: "repo-id", fullName: "Seltra-Cloud/app-tenant-app", visibility: "private", cloneUrl: "https://github.com/example/repo.git", defaultBranch: "main" }), pushApp: async () => { throw Object.assign(new Error("synthetic failure"), { code: "GITHUB_PUSH_FAILED" }); } } as any, "http://backend.test", "service-secret", backendFetch);
+      const failedDurability = new WorkspaceDurability(publishConfig, new MemoryR2() as any, { ensureRepo: async () => ({ id: "repo-id", fullName: "Seltra-Cloud/app-tenant-app", visibility: "private", cloneUrl: "https://github.com/example/repo.git", defaultBranch: "main" }), pushApp: async () => { throw Object.assign(new Error("synthetic failure"), { code: "GITHUB_PUSH_FAILED" }); } } as any, "http://backend.test", "service-secret", persistenceFetch);
       await expect(failedDurability.persist(runtime, "periodic")).rejects.toMatchObject({ code: "SOURCE_NOT_SAVED" });
       expect(await readFile(path.join(appPath, "index.html"), "utf8")).toBe("unsaved source");
       failedDurability.close();

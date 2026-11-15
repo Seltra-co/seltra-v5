@@ -5,26 +5,71 @@ import os from "node:os";
 import path from "node:path";
 
 export async function callSnapshotUserData(runtime: WorkspaceRuntime): Promise<{ backupPath: string; apps: Array<{ coreAppId: number; name: string; relPath: string }> }> {
-  const result = await callRuntime(runtime, "/internal/publish/snapshot-user-data", {}) as { backupPath: string; apps: Array<{ coreAppId: number; name: string; relPath: string }> };
+  let result: { backupPath: string; apps: Array<{ coreAppId: number; name: string; relPath: string }> };
+  try {
+    result = await callRuntime(runtime, "/internal/publish/snapshot-user-data", {}) as typeof result;
+  } catch (error) {
+    logSnapshotUserDataFailure("runtime_rpc", error);
+    throw error;
+  }
   if (!runtime.signGatewayRequest) return result;
   const relative = result.backupPath.replaceAll("\\", "/").replace(/^\/workspace\//, "");
-  if (!relative.startsWith("tmp/") || relative.split("/").includes("..")) throw Object.assign(new Error("Workspace snapshot returned an unsafe remote path."), { code: "PUBLISH_RPC_FAILED" });
-  const gatewayBase = runtime.baseUrl.replace(/\/runtime$/, "");
+  if (!relative.startsWith("tmp/") || relative.split("/").includes("..")) {
+    const error = Object.assign(new Error("Workspace snapshot returned an unsafe remote path."), { code: "PUBLISH_RPC_FAILED" });
+    logSnapshotUserDataFailure("remote_backup_path", error);
+    throw error;
+  }
   const route = `/v1/workspaces/${runtime.workspaceKey}/files`;
-  const response = await fetch(`${gatewayBase}${route}`, {
-    method: "POST",
-    headers: { ...runtime.signGatewayRequest("POST", route), "content-type": "application/json" },
-    body: JSON.stringify({ paths: [relative] }),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!response.ok) throw Object.assign(new Error("Workspace snapshot download failed."), { code: "PUBLISH_RPC_FAILED" });
-  const files = await response.json() as Array<{ path: string; base64: string }>;
-  if (files.length !== 1 || files[0].path !== relative || typeof files[0].base64 !== "string") throw Object.assign(new Error("Workspace snapshot download returned invalid data."), { code: "PUBLISH_RPC_FAILED" });
+  let response: Response;
+  try {
+    response = await fetch(new URL(route, runtime.baseUrl), {
+      method: "POST",
+      headers: { ...runtime.signGatewayRequest("POST", route), "content-type": "application/json" },
+      body: JSON.stringify({ paths: [relative] }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (error) {
+    logSnapshotUserDataFailure("workspace_file_download", error);
+    throw error;
+  }
+  if (!response.ok) {
+    const error = Object.assign(new Error("Workspace snapshot download failed."), { code: "PUBLISH_RPC_FAILED" });
+    logSnapshotUserDataFailure("workspace_file_download", error, response.status);
+    throw error;
+  }
+  let files: Array<{ path: string; base64: string }>;
+  try {
+    files = await response.json() as typeof files;
+  } catch (error) {
+    logSnapshotUserDataFailure("workspace_file_response", error, response.status);
+    throw error;
+  }
+  if (files.length !== 1 || files[0].path !== relative || typeof files[0].base64 !== "string") {
+    const error = Object.assign(new Error("Workspace snapshot download returned invalid data."), { code: "PUBLISH_RPC_FAILED" });
+    logSnapshotUserDataFailure("workspace_file_response", error, response.status);
+    throw error;
+  }
   const localRoot = path.resolve(process.env.WORKSPACE_ROOT || path.join(os.tmpdir(), "seltra-workspaces"), "ws", runtime.workspaceKey, "tmp");
-  await fs.mkdir(localRoot, { recursive: true });
   const localPath = path.join(localRoot, path.basename(relative));
-  await fs.writeFile(localPath, Buffer.from(files[0].base64, "base64"));
+  try {
+    await fs.mkdir(localRoot, { recursive: true });
+    await fs.writeFile(localPath, Buffer.from(files[0].base64, "base64"));
+  } catch (error) {
+    logSnapshotUserDataFailure("local_backup_write", error);
+    throw error;
+  }
   return { ...result, backupPath: localPath };
+}
+
+function logSnapshotUserDataFailure(stage: string, error: unknown, status?: number): void {
+  const value = error as { code?: unknown };
+  console.error(JSON.stringify({
+    event: "snapshot_user_data_rpc_failed",
+    stage,
+    code: typeof value?.code === "string" ? value.code : "PUBLISH_RPC_FAILED",
+    errorName: error instanceof Error ? error.name : "UnknownError",
+    ...(status === undefined ? {} : { status }),
+  }));
 }
 
 export async function callCommitWorkingTree(runtime: WorkspaceRuntime, input: { appId: number; author: { name: string; email: string }; turnId?: string; state: "complete" | "interrupted"; allowEmpty?: boolean }): Promise<{ appId: number; relPath: string; sha: string; changed: boolean }> {

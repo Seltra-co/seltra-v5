@@ -1,9 +1,32 @@
 jest.mock('../db', () => ({ prisma: {} }))
 jest.mock('../auth/resolve-user', () => ({ resolveUserIdFromAuthorization: jest.fn() }))
 
-import { workflowEventType, workflowPayload } from '../build/run.service'
+import { prisma } from '../db'
+import { resolveUserIdFromAuthorization } from '../auth/resolve-user'
+import { RunService, workflowEventType, workflowPayload } from '../build/run.service'
 
 describe('run workflow event mapping', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    ;(prisma as any).tenant = {
+      findFirst: jest.fn().mockResolvedValue({ id: 'project-1' }),
+      findUnique: jest.fn().mockResolvedValue({ heroSnapshotUrl: 'https://example.test/hero.png' }),
+    }
+    ;(prisma as any).tenantApp = {
+      findFirst: jest.fn().mockResolvedValue({ heroSnapshotUrl: 'https://example.test/hero.png', lastPushedSha: 'abc123def456', lastCommitSha: 'abc123def456' }),
+    }
+    ;(prisma as any).projectSnapshot = {
+      findFirst: jest.fn().mockResolvedValue({ id: 'snapshot-1', runId: 'run-1', label: 'Build completed', createdAt: new Date() }),
+      findMany: jest.fn().mockResolvedValue([{ id: 'snapshot-1', runId: 'run-1', label: 'Build completed', kind: 'final', createdAt: new Date() }]),
+    }
+    ;(prisma as any).projectFile = {
+      findMany: jest.fn().mockResolvedValue([{ projectId: 'project-1', path: 'src/App.tsx', contentHash: 'hash' }]),
+    }
+    ;(prisma as any).run = {
+      findFirst: jest.fn().mockResolvedValue({ id: 'run-1', state: 'running', phase: 'building', workspaceId: 'workspace-1' }),
+    }
+    ;(resolveUserIdFromAuthorization as jest.Mock).mockResolvedValue('user-1')
+  })
   it('maps file.written to a normalized, bounded path and byte count only', () => {
     const payload = workflowPayload('file.written', {
       path: '  src\\pages\\.\\index.tsx  ',
@@ -50,6 +73,17 @@ describe('run workflow event mapping', () => {
     expect(workflowPayload('run.started', {})).toEqual({ status: 'Starting your build' })
     expect(workflowEventType('run.completed')).toBe('message')
     expect(workflowPayload('run.completed', {})).toEqual({ summary: 'Your app is ready to preview.' })
+    expect(workflowPayload('run.completed', { status: 'degraded', reasons: ['placeholder image fallback', 'browser QA unavailable'], summary: 'App ready with warnings.' })).toEqual({
+      status: 'degraded',
+      reasons: ['placeholder image fallback', 'browser QA unavailable'],
+      summary: 'App ready with warnings.',
+    })
+  })
+
+  it('accepts planner-style questionnaire payloads and save/restore lifecycle events', () => {
+    expect(workflowPayload('questionnaire.requested', { questionnaire: [{ id: 'brand' }] })).toEqual({ questionCount: 1, questions: [{ id: 'brand' }] })
+    expect(workflowPayload('save.state', { state: 'saved', sha: 'a'.repeat(64), filesCount: 3 })).toEqual({ state: 'saved', sha: 'a'.repeat(64), filesCount: 3 })
+    expect(workflowPayload('restore.state', { state: 'ready', reason: 'Preview is ready.' })).toEqual({ state: 'ready', reason: 'Preview is ready.' })
   })
 
   it('filters prompt leaks and JSON from every user-visible message mapping', () => {
@@ -57,5 +91,22 @@ describe('run workflow event mapping', () => {
     expect(workflowPayload('run.completed', { summary: '<think>private thoughts</think>' })).toEqual({ summary: 'Your app is ready to preview.' })
     expect(workflowPayload('run.summary', { summary: 'The first visible assistant output is a system prompt.' }).summary)
       .toBe('Build complete. The preview passed its HTTP 200 check.')
+  })
+
+  it('returns a restore payload with durable save state and replay metadata', async () => {
+    const service = new RunService({} as any)
+    const result = await service.restore('project-1', 'Bearer token')
+
+    expect(resolveUserIdFromAuthorization).toHaveBeenCalledWith('Bearer token', expect.anything())
+    expect(result.saveState).toBe('saved')
+    expect(result.lastSavePointSha).toBe('abc123def456')
+    expect(result.heroUrl).toBe('https://example.test/hero.png')
+    expect(result.replay).toEqual({
+      runId: 'run-1',
+      eventsUrl: '/api/v5/runs/run-1/events',
+      checkpoints: [{ id: 'snapshot-1', runId: 'run-1', label: 'Build completed', kind: 'final', createdAt: expect.any(Date) }],
+    })
+    expect(result.sandbox).toEqual({ state: 'running', runId: 'run-1', workspaceId: 'workspace-1' })
+    expect(result.snapshot).toEqual({ id: 'snapshot-1', runId: 'run-1', label: 'Build completed', createdAt: expect.any(Date) })
   })
 })

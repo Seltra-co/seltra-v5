@@ -5,11 +5,18 @@ describe("browser QA noise classifier", () => {
   it("ignores Vite WebSocket failures and screenshot shim messages", () => {
     expect(isIgnoredBrowserNoise("[vite] failed to connect to websocket", "https://preview.example.test/")).toBe(true);
     expect(isIgnoredBrowserNoise("WebSocket handshake failed at wss://preview.example.test/" , "https://preview.example.test/")).toBe(true);
+    expect(isIgnoredBrowserNoise("WebSocket closed without opened.", "https://preview.example.test/")).toBe(true);
     expect(isIgnoredBrowserNoise("[dyad-screenshot] capture unavailable")).toBe(true);
   });
 
   it("keeps first party asset 404s and uncaught page errors", () => {
     expect(isIgnoredBrowserNoise("HTTP 404: GET https://preview.example.test/assets/x.png")).toBe(false);
     expect(isIgnoredBrowserNoise("uncaught: TypeError: cannot read property" )).toBe(false);
+  });
+
+  it("uses the classifier polarity to retain real uncaught errors and ignore benign Vite errors", () => {
+    const shouldRecordPageError = (message: string) => !isIgnoredBrowserNoise(message, "https://preview.example.test/");
+    expect(shouldRecordPageError("TypeError: Cannot read properties of undefined")).toBe(true);
+    expect(shouldRecordPageError("WebSocket closed without opened.")).toBe(false);
   });
 });

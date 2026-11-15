@@ -10,6 +10,7 @@ import { CreditsService } from '../credits/credits.service'
 import { creditAllowanceForPlan, nextUtcCreditReset } from '../common/credit-plan'
 import { provisionEngineKey } from '../engine/engine-key'
 import { deterministicPromptIntent, resolvePromptIntent } from './prompt-intent'
+import { sourceStockImage } from './stock-image'
 
 function workspaceFileMime(filePath: string) {
   const extension = filePath.toLowerCase().split('.').pop()
@@ -326,6 +327,82 @@ export class BuilderService {
       if (current) return tx.projectAsset.update({ where: { id: current.id }, data })
       return tx.projectAsset.create({ data: { projectId: tenantId, ...data } })
     })
+  }
+
+  async completeAssetRetry(
+    authorization: string | undefined,
+    tenantId: string,
+    appIdValue: string,
+    slot: string,
+    result: { status: 'generated' | 'failed'; url?: string; error?: string; source?: 'pexels' | 'pixabay' | 'unsplash'; attribution?: string },
+  ) {
+    const userId = await resolveUserIdFromAuthorization(authorization, this.jwt)
+    if (!userId) throw new ForbiddenException('Authentication is required.')
+    const coreAppId = Number(appIdValue)
+    if (!tenantId?.trim() || !Number.isSafeInteger(coreAppId) || coreAppId < 1 || !/^[a-z0-9-]{1,64}$/i.test(slot)) {
+      throw new NotFoundException('Generated asset not found.')
+    }
+    const url = result?.url
+    const error = result?.error
+    if (
+      !result || (result.status !== 'generated' && result.status !== 'failed') ||
+      (result.status === 'generated' && (typeof url !== 'string' || !/^public\/assets\/[a-z0-9][a-z0-9-]*\.(?:png|jpe?g|webp)$/i.test(url))) ||
+      (result.source !== undefined && !['pexels', 'pixabay', 'unsplash'].includes(result.source)) ||
+      (result.source !== undefined && (typeof result.attribution !== 'string' || !result.attribution.trim())) ||
+      (result.status === 'failed' && (typeof error !== 'string' || !error.trim()))
+    ) {
+      throw new NotFoundException('Generated asset result is invalid.')
+    }
+    const tenant = await prisma.tenant.findFirst({ where: { id: tenantId, ownerId: userId }, select: { id: true } })
+    if (!tenant) throw new NotFoundException('Generated asset not found.')
+    const app = await prisma.tenantApp.findUnique({ where: { tenantId_coreAppId: { tenantId, coreAppId } }, select: { id: true } })
+    if (!app) throw new NotFoundException('Generated asset not found.')
+    const storageRef = `core:${coreAppId}:${slot}`
+    return prisma.$transaction(async (tx) => {
+      const current = await tx.projectAsset.findFirst({ where: { projectId: tenantId, storageRef }, select: { id: true, status: true } })
+      if (!current || current.status !== 'generating') throw new NotFoundException('Generated asset retry is no longer active.')
+      return tx.projectAsset.update({
+        where: { id: current.id },
+        data: {
+          status: result.status,
+          sourceUrl: result.status === 'generated' ? url : null,
+          license: result.source === 'pexels'
+            ? 'https://www.pexels.com/license/'
+            : result.source === 'pixabay'
+              ? 'https://pixabay.com/service/license-summary/'
+              : result.source === 'unsplash'
+                ? 'https://unsplash.com/license'
+                : null,
+          attribution: result.source ? result.attribution!.trim().slice(0, 500) : null,
+          error: result.status === 'failed' ? error!.trim().slice(0, 1000) : null,
+        },
+      })
+    })
+  }
+
+  async sourceStockAsset(
+    authorization: string | undefined,
+    tenantId: string,
+    appIdValue: string,
+    prompt: string,
+  ) {
+    const userId = await resolveUserIdFromAuthorization(authorization, this.jwt)
+    if (!userId) throw new ForbiddenException('Authentication is required.')
+    const coreAppId = Number(appIdValue)
+    if (!tenantId?.trim() || !Number.isSafeInteger(coreAppId) || coreAppId < 1 || typeof prompt !== 'string' || !prompt.trim() || prompt.length > 2000) {
+      throw new NotFoundException('Stock image request is invalid.')
+    }
+    const tenant = await prisma.tenant.findFirst({ where: { id: tenantId, ownerId: userId }, select: { id: true } })
+    if (!tenant) throw new NotFoundException('Stock image request is invalid.')
+    const app = await prisma.tenantApp.findUnique({ where: { tenantId_coreAppId: { tenantId, coreAppId } }, select: { id: true } })
+    if (!app) throw new NotFoundException('Stock image request is invalid.')
+    const image = await sourceStockImage(prompt)
+    return {
+      base64: image.bytes.toString('base64'),
+      mimeType: image.mimeType,
+      provider: image.provider,
+      attribution: image.attribution,
+    }
   }
 
   async syncWorkspaceFiles(input: { tenantId: string; workspaceId?: string; coreAppId?: number; runId?: string; files: Array<{ path: string; content: string }> }) {

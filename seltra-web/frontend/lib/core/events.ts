@@ -12,6 +12,7 @@ export class CoreEvents {
   private lastEventId?: string
   private generation = 0
   private listenersAttached = false
+  private authFailureCount = 0
   private readonly resumeOnFocus = () => {
     if (document.visibilityState === 'visible') this.retryNow()
   }
@@ -84,6 +85,7 @@ export class CoreEvents {
       const projectId = this.client.workspaceId ?? null
       socket.onopen = () => {
         if (generation !== this.generation) return
+        this.authFailureCount = 0
         console.info(JSON.stringify({ event: 'core_project_phase', projectId, phase: 'WS open', at: new Date().toISOString(), monotonicMs: Math.round(performance.now()) }))
       }
       socket.binaryType = 'arraybuffer'
@@ -131,6 +133,16 @@ export class CoreEvents {
     } catch (error) {
       if (generation !== this.generation) return
       this.onStatus(false)
+      if (isAccessDeniedError(error)) {
+        if (this.authFailureCount < 1) {
+          this.authFailureCount += 1
+          if (!this.stopped) this.scheduleRetry()
+          return
+        }
+        this.stopped = true
+        this.onError(connectionFailureMessage(error))
+        return
+      }
       if (isPermanentConnectionError(error)) {
         this.stopped = true
         this.onError(connectionFailureMessage(error))
@@ -176,13 +188,21 @@ export class CoreEvents {
 
 }
 
+function isAccessDeniedError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const failure = error as { status?: unknown; code?: unknown }
+  const status = typeof failure.status === 'number' ? failure.status : undefined
+  const code = typeof failure.code === 'string' ? failure.code.toUpperCase() : ''
+  return status === 401 || status === 403 || code === 'AUTH_REQUIRED' || code === 'UNAUTHORIZED'
+}
+
 function isPermanentConnectionError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false
   const failure = error as { status?: unknown; code?: unknown }
   const status = typeof failure.status === 'number' ? failure.status : undefined
   const code = typeof failure.code === 'string' ? failure.code.toUpperCase() : ''
   return Boolean(
-    (status !== undefined && [400, 401, 403, 404, 410].includes(status)) ||
+    (status !== undefined && [400, 404, 410].includes(status)) ||
     [
       'APP_NOT_FOUND',
       'INVALID_REQUEST',

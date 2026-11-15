@@ -70,4 +70,29 @@ describe("image generation transport", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("accepts semantic asset slots while rejecting path-like values", () => {
+    const base = {
+      type: "SUBMIT" as const,
+      requestId: "request-asset",
+      operationId: "operation-asset",
+      job: {
+        id: "job-asset",
+        startedAt: 10,
+        prompt: "Premium editorial product photography",
+        themeMode: "real-photography" as const,
+        targetAppId: 7,
+        targetAppName: "Atelier Noor",
+        source: "chat" as const,
+      },
+    };
+    expect(ImageGenerationIntentEventSchema.safeParse({
+      ...base,
+      job: { ...base.job, assetSlot: "best-sellers" },
+    }).success).toBe(true);
+    expect(ImageGenerationIntentEventSchema.safeParse({
+      ...base,
+      job: { ...base.job, assetSlot: "../hero" },
+    }).success).toBe(false);
+  });
 });

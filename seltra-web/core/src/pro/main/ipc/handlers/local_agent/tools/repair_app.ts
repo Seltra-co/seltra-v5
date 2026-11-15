@@ -28,11 +28,12 @@ export type BrowserEvidence = {
   consoleErrors: string[];
   failedRequests: string[];
   ignoredNoise: string[];
+  imageIssues: string[];
 };
 
 /** Keep in sync with the dashboard preview console filter. */
 export function isIgnoredBrowserNoise(message: string, baseUrl?: string): boolean {
-  if (/\[vite\]\s+failed to connect to websocket|\[vite\].*websocket|websocket.*handshake|failed to connect to websocket/i.test(message)) return true;
+  if (/\[vite\]\s+failed to connect to websocket|\[vite\].*websocket|websocket.*handshake|websocket closed without opened|failed to connect to websocket/i.test(message)) return true;
   if (/\[dyad-screenshot\]/i.test(message)) return true;
   if (/favicon\.ico(?:\b|\?|$)/i.test(message) && /(?:404|not found|failed)/i.test(message)) return true;
   if (/ResizeObserver loop (?:limit exceeded|completed with undelivered notifications)/i.test(message)) return true;
@@ -99,8 +100,10 @@ export async function captureBrowserEvidence(
       }
     });
     page.on("pageerror", (error) => {
-      errors.push(`uncaught: ${error.message}`);
-      consoleErrors.push(`uncaught: ${error.message}`);
+      if (!keepOrIgnore(error.message)) return;
+      const entry = `uncaught: ${error.message}`;
+      errors.push(entry);
+      consoleErrors.push(entry);
     });
     page.on("requestfailed", (request) => {
       const failure = `${request.method()} ${request.url()} (${request.failure()?.errorText ?? "unknown"})`;
@@ -129,6 +132,60 @@ export async function captureBrowserEvidence(
     }
     await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => undefined);
     await page.waitForTimeout(1_000);
+    const imageIssues = await page.evaluate(async () => {
+      const failures = new Set<string>();
+      const images = Array.from(document.images);
+      const imageUrls = new Set<string>();
+      for (const image of images) {
+        const source = image.currentSrc || image.src;
+        const url = new URL(source, window.location.href);
+        const path = url.pathname;
+        if (source) imageUrls.add(url.href);
+        const isBlueprintAsset = url.origin === window.location.origin && /\/assets\/[a-z0-9][a-z0-9-]*\.(?:png|jpe?g|webp)$/i.test(path);
+        if (!image.complete || image.naturalWidth === 0) failures.add(`Image did not load: ${path}`);
+        if (/\.svg$/i.test(path) || /^data:image\/svg\+xml/i.test(source)) failures.add(`Placeholder SVG image is active: ${path}`);
+        if (isBlueprintAsset && image.complete && image.naturalWidth * image.naturalHeight <= 0) failures.add(`Image has no decoded pixels: ${path}`);
+      }
+
+      const backgroundUrlPattern = /url\((?:"|')?(.*?)(?:"|')?\)/g;
+      for (const element of Array.from(document.querySelectorAll<HTMLElement>("body *"))) {
+        const background = getComputedStyle(element).backgroundImage;
+        for (const match of background.matchAll(backgroundUrlPattern)) {
+          if (match[1]) imageUrls.add(new URL(match[1], window.location.href).href);
+        }
+      }
+
+      await Promise.all([...imageUrls].map(async (url) => {
+        const parsed = new URL(url);
+        const path = parsed.pathname;
+        if (/\.svg$/i.test(path) || /^data:image\/svg\+xml/i.test(url)) failures.add(`Placeholder SVG image is active: ${path}`);
+        const isBlueprintAsset = parsed.origin === window.location.origin && /\/assets\/[a-z0-9][a-z0-9-]*\.(?:png|jpe?g|webp)$/i.test(path);
+        const image = new Image();
+        image.src = url;
+        try {
+          await image.decode();
+        } catch {
+          failures.add(`CSS or document image did not decode: ${path}`);
+          return;
+        }
+        if (!isBlueprintAsset) return;
+        try {
+          const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
+          if (!response.ok) {
+            failures.add(`Generated image returned HTTP ${response.status}: ${path}`);
+            return;
+          }
+          const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+          const bytes = await response.arrayBuffer();
+          if (!["image/jpeg", "image/png", "image/webp"].includes(contentType ?? "")) failures.add(`Generated image is not a supported raster: ${path}`);
+          if (bytes.byteLength <= 20 * 1024) failures.add(`Generated image is not larger than 20 KB: ${path}`);
+        } catch {
+          failures.add(`Generated image could not be inspected: ${path}`);
+        }
+      }));
+      return [...failures].slice(0, 40);
+    });
+    for (const issue of imageIssues) errors.push(`image QA: ${issue}`);
     const screenshot = await page.screenshot({
       type: "png",
       fullPage: false,
@@ -141,6 +198,7 @@ export async function captureBrowserEvidence(
       consoleErrors: [...new Set(consoleErrors)].slice(0, 40),
       failedRequests: [...new Set(failedRequests)].slice(0, 40),
       ignoredNoise: [...new Set(ignoredNoise)].slice(0, 40),
+      imageIssues,
     };
   } finally {
     await browser.close();

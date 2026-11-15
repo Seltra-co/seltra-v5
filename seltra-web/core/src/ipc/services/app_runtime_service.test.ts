@@ -298,7 +298,8 @@ describe("executeApp", () => {
       const wrapperPath = ensureWebRuntimeViteHmrConfig(appPath);
       const wrapper = await readFile(path.join(appPath, wrapperPath), "utf8");
       expect(wrapper).toContain("./vite.config.ts");
-      expect(wrapper).toContain("clientPort: Number(process.env.VITE_HMR_CLIENT_PORT)");
+      expect(wrapper).toContain("const hmrConfig = process.env.VITE_HMR_HOST");
+      expect(wrapper).toContain("hmr: hmrConfig");
       expect(await readFile(path.join(appPath, "vite.config.ts"), "utf8")).toBe(original);
     } finally {
       await rm(appPath, { recursive: true, force: true });

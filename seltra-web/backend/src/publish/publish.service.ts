@@ -175,7 +175,7 @@ export class PublishService implements OnModuleInit {
           } : {}),
           ...(app.liveDeploymentId ? { previousDeploymentId: app.liveDeploymentId } : {}),
           deployMode,
-          repoVisibility: mode() === PublishDeployMode.hobby ? PublishRepoVisibility.public : PublishRepoVisibility.private,
+          repoVisibility: PublishRepoVisibility.private,
           lastEventSeq: 1,
           events: { create: { seq: 1, status: DeploymentStatus.QUEUED, message: 'Publish queued.' } },
         },
@@ -513,8 +513,7 @@ export class PublishService implements OnModuleInit {
   }
 
   async repositorySaved(input: { userId: string; workspaceKey: string; coreAppId: number; githubRepoId: string; githubRepoFullName: string; githubRepoVisibility: 'public' | 'private'; githubDefaultBranch?: string }) {
-    const expectedVisibility = mode() === PublishDeployMode.hobby ? 'public' : 'private'
-    if (input.githubRepoVisibility !== expectedVisibility) throw httpError(HttpStatus.CONFLICT, 'REPOSITORY_VISIBILITY_REQUIRED', `Source repositories must be ${expectedVisibility} in the configured deploy mode.`)
+    if (input.githubRepoVisibility !== 'private') throw httpError(HttpStatus.CONFLICT, 'REPOSITORY_VISIBILITY_REQUIRED', 'Durable application source repositories must be private.')
     const app = await this.resolveOwnedApp(input.userId, input.coreAppId, input.workspaceKey)
     await prisma.tenantApp.update({ where: { id: app.id }, data: {
       githubRepoId: input.githubRepoId,

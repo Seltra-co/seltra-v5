@@ -95,7 +95,7 @@ describe('CoreEvents reconnect recovery', () => {
     events.close()
   })
 
-  it('surfaces permanent restore authorization failures without retrying', async () => {
+  it('retries a restore authorization failure once before surfacing the sign-in message', async () => {
     vi.useFakeTimers()
     vi.stubGlobal('window', globalThis)
     vi.stubGlobal('WebSocket', { CONNECTING: 0, OPEN: 1 })
@@ -111,10 +111,9 @@ describe('CoreEvents reconnect recovery', () => {
     )
 
     events.connect()
-    await vi.waitFor(() => expect(errors).toHaveLength(1))
-    await vi.advanceTimersByTimeAsync(60_000)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(beforeConnect).toHaveBeenCalledTimes(2)
     expect(errors).toEqual(['You no longer have access to this project. Sign in again or contact support.'])
-    expect(beforeConnect).toHaveBeenCalledTimes(1)
     expect(wsTicket).not.toHaveBeenCalled()
     events.close()
   })

@@ -94,6 +94,18 @@ describe("run_build", () => {
     });
   });
 
+  it("fails browser QA when generated images do not satisfy image evidence checks", () => {
+    const evidence = {
+      screenshot: Buffer.from("png-bytes"),
+      consoleErrors: [],
+      failedRequests: [],
+      ignoredNoise: [],
+      imageIssues: ["Generated image is not larger than 20 KB: /assets/hero.webp"],
+    };
+    expect(capturedBrowserQaPayload({ appId: 7, chatId: 9, evidence, screenshotPath: ".dyad/media/qa-screenshot.png" }))
+      .toMatchObject({ status: "failed", imageIssues: evidence.imageIssues });
+  });
+
   it("normalizes Git paths before comparing them with filesystem paths", () => {
     expect(toPortablePath("C:\\worktree\\packages\\app")).toBe(
       "C:/worktree/packages/app",

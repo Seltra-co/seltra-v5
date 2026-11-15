@@ -6,7 +6,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 const run = promisify(execFile);
-type GithubOptions = { org: string; appId: string; installationId: string; privateKeyPem: string; mode: "hobby" | "team"; repoPrefix: string };
+type GithubOptions = { org: string; appId: string; installationId: string; privateKeyPem: string; repoPrefix: string };
 export type GithubRepository = { id: string; fullName: string; visibility: "public" | "private"; cloneUrl: string; defaultBranch: string };
 type GitRunner = (args: string[], env?: NodeJS.ProcessEnv) => Promise<{ stdout: string }>;
 
@@ -37,26 +37,43 @@ export class GithubPublisher {
   async ensureRepo(tenantAppId: string): Promise<GithubRepository> {
     const token = await this.installationToken();
     const name = `${this.options.repoPrefix}${tenantAppId.toLowerCase()}`;
-    const shouldBePrivate = this.options.mode !== "hobby";
     let response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.org)}/${encodeURIComponent(name)}`, { headers: githubHeaders(token) });
     if (response.status === 404) {
       response = await this.fetcher(`https://api.github.com/orgs/${encodeURIComponent(this.options.org)}/repos`, {
-        method: "POST", headers: githubHeaders(token), body: JSON.stringify({ name, private: shouldBePrivate, auto_init: false }),
+        method: "POST", headers: githubHeaders(token), body: JSON.stringify({ name, private: true, auto_init: false }),
       });
       if (response.status === 422) {
         response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.org)}/${encodeURIComponent(name)}`, { headers: githubHeaders(token) });
       }
     } else if (response.ok) {
       const existing = await response.clone().json() as { private?: boolean };
-      if (existing.private !== shouldBePrivate) {
+      if (existing.private !== true) {
         response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.org)}/${encodeURIComponent(name)}`, {
-          method: "PATCH", headers: githubHeaders(token), body: JSON.stringify({ private: shouldBePrivate }),
+          method: "PATCH", headers: githubHeaders(token), body: JSON.stringify({ private: true }),
         });
       }
     }
     if (!response.ok) throw safeGithubError("GITHUB_REPOSITORY_FAILED", response.status);
     const repo = await response.json() as { id: number; full_name: string; private: boolean; clone_url: string; default_branch?: string };
     return { id: String(repo.id), fullName: repo.full_name, visibility: repo.private ? "private" : "public", cloneUrl: repo.clone_url, defaultBranch: repo.default_branch || "main" };
+  }
+
+  async getBranchSha(repository: GithubRepository, branch = "main"): Promise<string | undefined> {
+    const token = await this.installationToken();
+    try {
+      const output = await this.gitRunner(["ls-remote", repository.cloneUrl, `refs/heads/${branch}`], gitAuthEnv(token));
+      const ref = output.stdout.trim().split(/\r?\n/, 1)[0];
+      if (!ref) return undefined;
+      const sha = ref.split(/\s+/)[0];
+      if (!/^[0-9a-f]{40,64}$/i.test(sha)) throw new Error("GitHub returned an invalid branch revision.");
+      return sha;
+    } catch {
+      throw Object.assign(new Error("Could not read the saved GitHub branch."), { code: "GITHUB_PUSH_FAILED" });
+    }
+  }
+
+  async hasBranch(repository: GithubRepository, branch = "main"): Promise<boolean> {
+    return (await this.getBranchSha(repository, branch)) !== undefined;
   }
 
   async pushApp(appPath: string, repository: GithubRepository, branch = "main"): Promise<string> {

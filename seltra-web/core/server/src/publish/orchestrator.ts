@@ -202,7 +202,7 @@ export class PublishOrchestrator {
     let priorRoute: RouteRecord | undefined;
     try {
       await this.stage(begun.deploymentId, "PREPARING_WORKSPACE", "Preparing the workspace.", lease);
-      const expectedVisibility = this.config.deployMode === "hobby" ? "public" : "private";
+      const expectedVisibility = "private";
       await this.stage(begun.deploymentId, "SAVING_SOURCE", `Saving the application source to its ${expectedVisibility} repository.`, lease);
       await this.durability.persist(runtime, "manual", `publish:${begun.deploymentId}`);
       const app = await this.backend<PublishApp>("publish/repository-info", { userId: claims.sub, workspaceKey: claims.coreWorkspaceKey, coreAppId });

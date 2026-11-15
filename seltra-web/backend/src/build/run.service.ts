@@ -24,6 +24,7 @@ function visibleText(value: unknown, fallback: string, limit: number) {
 function workflowPhase(type: string, phase: string | null): WorkflowPhase {
   if (type === 'run.failed' || phase === 'failed') return 'failed'
   if (type === 'run.completed' || type === 'run.summary') return 'ready'
+  if (type === 'run.timing' || type === 'save.state' || type === 'restore.state') return 'building'
   if (type === 'agent.narration') return phase === 'planning' || phase === 'preparing' || phase === 'verifying' ? phase : 'building'
   if (type === 'run.summary' || phase === 'ready') return 'ready'
   if (phase === 'planning' || phase === 'awaiting_approval' || phase === 'preparing' || phase === 'building' || phase === 'verifying') return phase
@@ -42,6 +43,7 @@ export function workflowEventType(type: string): string {
   if (type === 'file.written') return 'file_written'
   if (type === 'build.result') return 'status'
   if (type === 'assets.planned' || type === 'asset.updated' || type === 'asset.generated' || type === 'asset.failed') return 'asset_updated'
+  if (type === 'run.timing' || type === 'save.state' || type === 'restore.state' || type === 'questionnaire.requested' || type === 'questionnaire.answered' || type === 'questionnaire.skipped' || type === 'browser.qa') return 'status'
   if (/^preview\./.test(type)) return 'preview_state'
   if (type === 'run.failed') return 'error'
   if (type === 'run.summary' || type === 'run.completed' || type === 'agent.narration') return 'message'
@@ -53,6 +55,48 @@ export function workflowPayload(type: string, payload: unknown): Record<string, 
   const value = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
   if (type === 'run.started') return { status: 'Starting your build' }
   if (type === 'phase.changed') return { status: visibleText(value.status, 'Working', 160) }
+  if (type === 'run.timing') {
+    const phase = typeof value.phase === 'string' ? value.phase : 'unknown'
+    const ms = Number.isFinite(Number(value.ms)) ? Number(value.ms) : null
+    return {
+      phase,
+      ...(ms !== null ? { ms } : {}),
+      ...(typeof value.startedAt === 'string' ? { startedAt: value.startedAt } : {}),
+      ...(typeof value.endedAt === 'string' ? { endedAt: value.endedAt } : {}),
+      ...(typeof value.meta === 'object' && value.meta ? { meta: value.meta } : {}),
+    }
+  }
+  if (type === 'save.state') {
+    const state = typeof value.state === 'string' ? value.state : 'pending'
+    return {
+      state,
+      ...(typeof value.sha === 'string' ? { sha: value.sha.slice(0, 64) } : {}),
+      ...(Number.isSafeInteger(value.filesCount) ? { filesCount: Number(value.filesCount) } : {}),
+      ...(typeof value.message === 'string' ? { message: visibleText(value.message, '', 240) } : {}),
+    }
+  }
+  if (type === 'restore.state') {
+    const state = typeof value.state === 'string' ? value.state : 'waking'
+    return {
+      state,
+      ...(typeof value.reason === 'string' ? { reason: visibleText(value.reason, '', 240) } : {}),
+      ...(typeof value.browseUrl === 'string' ? { browseUrl: value.browseUrl.slice(0, 500) } : {}),
+    }
+  }
+  if (type === 'questionnaire.requested') {
+    const questions = Array.isArray(value.questions) ? value.questions : Array.isArray(value.questionnaire) ? value.questionnaire : []
+    return {
+      questionCount: questions.length,
+      ...(questions.length ? { questions: questions.slice(0, 12) } : {}),
+    }
+  }
+  if (type === 'questionnaire.answered') {
+    const answered = Number.isSafeInteger(value.answered) ? Number(value.answered) : Number.isSafeInteger(value.count) ? Number(value.count) : 0
+    return { answered }
+  }
+  if (type === 'questionnaire.skipped') {
+    return { skipped: true, ...(typeof value.reason === 'string' ? { reason: visibleText(value.reason, '', 240) } : {}) }
+  }
   if (type === 'blueprint.ready') {
     const blueprint = value.blueprint && typeof value.blueprint === 'object' && !Array.isArray(value.blueprint)
       ? value.blueprint as Record<string, unknown>
@@ -70,7 +114,23 @@ export function workflowPayload(type: string, payload: unknown): Record<string, 
   }
   if (type === 'blueprint.approved') return { status: 'Plan approved. Building your app.' }
   if (type === 'run.stopped') return { status: 'Build stopped. Your saved work is ready to continue.' }
-  if (type === 'run.completed') return { summary: visibleText(value.summary, 'Your app is ready to preview.', 1200) }
+  if (type === 'run.completed') {
+    const status = typeof value.status === 'string' ? value.status.toLowerCase() : 'ready'
+    const reasons = Array.isArray(value.reasons)
+      ? value.reasons
+          .filter((reason): reason is string => typeof reason === 'string')
+          .map((reason) => visibleText(reason, '', 240))
+          .filter(Boolean)
+      : []
+    const fallbackSummary = status === 'degraded'
+      ? 'Your app is ready to preview, but a few non-fatal checks need follow-up.'
+      : 'Your app is ready to preview.'
+    return {
+      ...(status === 'degraded' ? { status: 'degraded' } : status === 'failed' ? { status: 'failed' } : {}),
+      ...(reasons.length ? { reasons } : {}),
+      summary: visibleText(value.summary, fallbackSummary, 1200),
+    }
+  }
   if (type === 'files.persisted') {
     const n = Number.isSafeInteger(value.changed) ? value.changed as number : 0
     return { message: n ? `Saved ${n} file${n === 1 ? '' : 's'}` : 'Workspace checkpoint saved' }
@@ -102,6 +162,8 @@ export function workflowPayload(type: string, payload: unknown): Record<string, 
       url: typeof value.url === 'string' && (/^(?:public)?\/assets\/[a-z0-9._/-]+$/i.test(value.url) || /^https:\/\/res\.cloudinary\.com\/[a-z0-9_-]+\/image\/upload\/[^\s"'<>]+$/i.test(value.url)) ? value.url.slice(0, 500) : null,
       ...(typeof value.prompt === 'string' ? { prompt: visibleText(value.prompt, '', 1200) } : {}),
       ...(typeof value.error === 'string' ? { error: value.error.replace(/[\r\n]+/g, ' ').slice(0, 240) } : {}),
+      ...(value.source === 'pexels' || value.source === 'pixabay' || value.source === 'unsplash' ? { source: value.source } : {}),
+      ...(typeof value.attribution === 'string' ? { attribution: visibleText(value.attribution, '', 300) } : {}),
     }
   }
   if (type === 'run.failed') return { code: typeof value.code === 'string' ? value.code : 'BUILD_FAILED', user_message: 'The build could not be completed. Retry to continue.', retryable: true }
@@ -239,9 +301,13 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
         const existing = await tx.runEvent.findUnique({ where: { runId_eventKey: { runId, eventKey: event.eventKey } } })
         if (existing) return existing
       }
-      const failures = event.type === 'run.completed' ? await this.completionFailures(tx, runId, run.projectId) : []
+      const completionStatus = event.type === 'run.completed' && event.payload && typeof event.payload === 'object'
+        ? String((event.payload as Record<string, unknown>).status ?? '').toLowerCase()
+        : ''
+      const degradedCompletion = event.type === 'run.completed' && completionStatus === 'degraded'
+      const failures = event.type === 'run.completed' ? await this.completionFailures(tx, runId, run.projectId, degradedCompletion) : []
       const storedType = failures.length ? 'run.failed' : event.type
-      const storedState = failures.length ? 'failed' : event.state
+      const storedState = failures.length ? 'failed' : degradedCompletion ? (event.state ?? 'completed') : event.state
       const storedPayload = failures.length
         ? { code: 'COMPLETION_GATE_FAILED', message: 'Required build evidence is missing or failed.', evidenceFailures: failures }
         : event.payload
@@ -288,6 +354,15 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
           slot,
           status: state,
           sourceUrl: typeof event.payload.url === 'string' ? event.payload.url.slice(0, 500) : null,
+          prompt: typeof event.payload.prompt === 'string' ? event.payload.prompt.slice(0, 2000) : null,
+          license: event.payload.source === 'pexels'
+            ? 'https://www.pexels.com/license/'
+            : event.payload.source === 'pixabay'
+              ? 'https://pixabay.com/service/license-summary/'
+              : event.payload.source === 'unsplash'
+                ? 'https://unsplash.com/license'
+                : null,
+          attribution: typeof event.payload.attribution === 'string' ? event.payload.attribution.slice(0, 500) : null,
           error: typeof event.payload.error === 'string' ? event.payload.error.slice(0, 1000) : null,
           storageRef,
         }
@@ -315,7 +390,11 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
             type: 'run.summary',
             phase: 'ready',
             agent: 'supervisor',
-            payload: { summary: 'Build completed: production build, browser QA, workspace manifest, and preview readiness were verified.' },
+            payload: {
+              summary: degradedCompletion
+                ? 'Build completed with required build, workspace manifest, and preview checks; an image fallback or unavailable browser QA was recorded.'
+                : 'Build completed: production build, browser QA, workspace manifest, and preview readiness were verified.',
+            },
           },
         })
         await tx.run.update({ where: { id: runId }, data: { lastEventSeq: summarySeq } })
@@ -341,9 +420,13 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
         const existing = await tx.runEvent.findUnique({ where: { runId_eventKey: { runId, eventKey: event.eventKey } } })
         if (existing) return existing
       }
-      const failures = event.type === 'run.completed' ? await this.completionFailures(tx, runId, run.projectId) : []
+      const completionStatus = event.type === 'run.completed' && event.payload && typeof event.payload === 'object'
+        ? String((event.payload as Record<string, unknown>).status ?? '').toLowerCase()
+        : ''
+      const degradedCompletion = event.type === 'run.completed' && completionStatus === 'degraded'
+      const failures = event.type === 'run.completed' ? await this.completionFailures(tx, runId, run.projectId, degradedCompletion) : []
       const storedType = failures.length ? 'run.failed' : event.type
-      const storedState = failures.length ? 'failed' : event.state
+      const storedState = failures.length ? 'failed' : degradedCompletion ? (event.state ?? 'completed') : event.state
       const storedPayload = failures.length
         ? { code: 'COMPLETION_GATE_FAILED', message: 'Required build evidence is missing or failed.', evidenceFailures: failures }
         : event.payload
@@ -389,12 +472,12 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async completionFailures(tx: Prisma.TransactionClient, runId: string, projectId: string): Promise<string[]> {
+  private async completionFailures(tx: Prisma.TransactionClient, runId: string, projectId: string, allowDegraded = false): Promise<string[]> {
     const [events, apps, fileCount, assets] = await Promise.all([
       tx.runEvent.findMany({ where: { runId }, orderBy: { seq: 'asc' }, select: { type: true, payload: true } }),
       tx.tenantApp.findMany({ where: { tenantId: projectId, lastRunId: runId }, select: { status: true, previewUrl: true } }),
       tx.projectFile.count({ where: { projectId, lastRunId: runId } }),
-      tx.projectAsset.findMany({ where: { projectId, kind: 'generated_image', status: 'generated' }, select: { sourceUrl: true } }),
+      tx.projectAsset.findMany({ where: { projectId, kind: 'generated_image' }, select: { status: true, sourceUrl: true } }),
     ])
     const payload = (type: string) => {
       const event = [...events].reverse().find((item) => item.type === type)
@@ -409,10 +492,19 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
     const app = apps.find((item) => item.status === 'preview_ready' && typeof item.previewUrl === 'string')
     const failures: string[] = []
     if (build?.executed !== true || build.exitCode !== 0) failures.push('build.result must record an executed build with exitCode 0')
-    if (!qa || !Array.isArray(qa.consoleErrors) || qa.consoleErrors.length !== 0 || !Array.isArray(qa.failedRequests) || qa.failedRequests.length !== 0 || typeof qa.screenshotPath !== 'string' || typeof qa.screenshotBytes !== 'number' || !Number.isSafeInteger(qa.screenshotBytes) || qa.screenshotBytes <= 0 || typeof qa.screenshotSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(qa.screenshotSha256)) failures.push('browser.qa must record a clean browser result and a saved screenshot')
+    const qaPassed = qa?.status === 'passed' && Array.isArray(qa.consoleErrors) && qa.consoleErrors.length === 0 && Array.isArray(qa.failedRequests) && qa.failedRequests.length === 0 && typeof qa.screenshotPath === 'string' && typeof qa.screenshotBytes === 'number' && Number.isSafeInteger(qa.screenshotBytes) && qa.screenshotBytes > 0 && typeof qa.screenshotSha256 === 'string' && /^[a-f0-9]{64}$/i.test(qa.screenshotSha256)
+    const qaUnavailable = qa?.status === 'unavailable'
+    if (!qaPassed && !(allowDegraded && qaUnavailable)) failures.push('browser.qa must record a clean browser result and a saved screenshot')
     if (manifest?.verified !== true || manifest.pagesRouted !== true || manifest.assetsVerified !== true || manifest.packageScriptsValid !== true || !Array.isArray(manifest.mismatches) || manifest.mismatches.length !== 0) failures.push('manifest.verified must confirm routes, referenced assets, package scripts, and a clean workspace diff')
     if (fileCount === 0) failures.push('the run has no persisted file manifest rows')
-    if (assets.some((asset) => typeof asset.sourceUrl !== 'string' || !asset.sourceUrl)) failures.push('a generated asset is missing its URL')
+    if (assets.some((asset) => asset.status === 'generated' && (typeof asset.sourceUrl !== 'string' || !asset.sourceUrl))) failures.push('a generated asset is missing its URL')
+    const hasImageFallbackEvent = events.some((event) => {
+      if (event.type === 'asset.failed') return true
+      if (event.type !== 'asset.updated' || !event.payload || typeof event.payload !== 'object' || Array.isArray(event.payload)) return false
+      const state = (event.payload as Record<string, unknown>).state
+      return state === 'fallback' || state === 'failed' || state === 'skipped'
+    })
+    if (allowDegraded && !qaUnavailable && !hasImageFallbackEvent) failures.push('degraded completion must document a placeholder image or unavailable browser QA')
     if (!preview || preview.status !== 200 || typeof preview.previewUrl !== 'string' || !preview.previewUrl) failures.push('preview.ready must record HTTP 200 and a preview URL')
     if (!app || !app.previewUrl || /[?&](?:preview_)?token=/i.test(app.previewUrl)) failures.push('TenantApp must be preview_ready with a canonical token-free previewUrl')
     return failures
@@ -636,8 +728,57 @@ export class RunService implements OnModuleInit, OnModuleDestroy {
 
   async restore(projectId: string, authorization?: string) {
     await this.ownerId(projectId, authorization)
-    const snapshot = await prisma.projectSnapshot.findFirst({ where: { projectId }, orderBy: { createdAt: 'desc' } })
-    const files = await prisma.projectFile.findMany({ where: { projectId }, orderBy: { path: 'asc' } })
-    return { snapshot, files }
+    const [snapshot, files, activeRun, tenant, latestApp] = await Promise.all([
+      prisma.projectSnapshot.findFirst({ where: { projectId }, orderBy: { createdAt: 'desc' } }),
+      prisma.projectFile.findMany({ where: { projectId }, orderBy: { path: 'asc' } }),
+      prisma.run.findFirst({
+        where: { projectId, state: { in: ['queued', 'running', 'waiting_for_user', 'stopping', 'paused_no_credits', 'stopped', 'interrupted', 'failed', 'completed'] } },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, state: true, phase: true, workspaceId: true, startedAt: true, endedAt: true },
+      }),
+      prisma.tenant.findUnique({ where: { id: projectId }, select: { heroSnapshotUrl: true } }),
+      prisma.tenantApp.findFirst({ where: { tenantId: projectId }, orderBy: { createdAt: 'desc' }, select: { heroSnapshotUrl: true, lastPushedSha: true, lastCommitSha: true } }),
+    ])
+
+    const hasDurableSave = Boolean(snapshot || latestApp?.lastPushedSha || latestApp?.lastCommitSha)
+    const saveState = hasDurableSave
+      ? 'saved'
+      : activeRun && ['queued', 'running', 'waiting_for_user', 'stopping', 'paused_no_credits'].includes(activeRun.state)
+        ? 'restoring'
+        : 'unsaved'
+
+    const lastSavePointSha = latestApp?.lastPushedSha ?? latestApp?.lastCommitSha ?? snapshot?.runId ?? null
+    const heroUrl = latestApp?.heroSnapshotUrl ?? tenant?.heroSnapshotUrl ?? null
+    const replayRunId = activeRun?.id ?? snapshot?.runId ?? null
+    const checkpointRows = snapshot
+      ? await prisma.projectSnapshot.findMany({
+          where: { projectId },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+          select: { id: true, runId: true, label: true, kind: true, createdAt: true },
+        })
+      : []
+
+    return {
+      saveState,
+      lastSavePointSha,
+      heroUrl,
+      replay: {
+        runId: replayRunId,
+        eventsUrl: replayRunId ? `/api/v5/runs/${replayRunId}/events` : null,
+        checkpoints: checkpointRows,
+      },
+      sandbox: {
+        state: activeRun
+          ? ['queued', 'running', 'waiting_for_user', 'stopping', 'paused_no_credits'].includes(activeRun.state)
+            ? 'running'
+            : 'waking'
+          : 'absent',
+        runId: activeRun?.id ?? null,
+        workspaceId: activeRun?.workspaceId ?? null,
+      },
+      snapshot,
+      files,
+    }
   }
 }

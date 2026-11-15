@@ -18,28 +18,35 @@ const SECRET_PATTERNS = [
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_REPO_BYTES = 100 * 1024 * 1024;
 const MAX_FILE_COUNT = 20_000;
-const ALLOWED_VERCEL_KEYS = new Set(["git", "headers", "redirects", "rewrites", "cleanUrls", "trailingSlash"]);
+const ALLOWED_VERCEL_KEYS = new Set(["$schema", "git", "headers", "redirects", "rewrites", "cleanUrls", "trailingSlash"]);
 
 export async function installPlatformFiles(appPath: string): Promise<void> {
   const repoPath = path.resolve(appPath);
   const vercelPath = path.join(repoPath, "vercel.json");
   const tracked = await runGit(repoPath, ["ls-files", "--error-unmatch", "vercel.json"], true);
   let vercel: Record<string, unknown> = {};
+  let vercelExists = false;
   try {
     vercel = JSON.parse(await fs.readFile(vercelPath, "utf8")) as Record<string, unknown>;
+    vercelExists = true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") fail("VERCEL_CONFIG_INVALID", "vercel.json must contain valid JSON.");
     if (tracked) fail("PLATFORM_FILE_MODIFIED", "The platform-owned vercel.json cannot be removed.");
   }
-  if (tracked) {
-    const git = vercel.git as Record<string, unknown> | undefined;
-    if (!git || git.deploymentEnabled !== false) fail("PLATFORM_FILE_MODIFIED", "The platform-owned vercel.json git.deploymentEnabled setting cannot be removed or changed.");
+  const gitSettings = vercel.git;
+  if (gitSettings !== undefined && (typeof gitSettings !== "object" || gitSettings === null || Array.isArray(gitSettings))) {
+    fail("VERCEL_CONFIG_INVALID", "vercel.json git settings must be an object.");
+  }
+  const gitConfig = gitSettings as Record<string, unknown> | undefined;
+  if (tracked && gitConfig && Object.hasOwn(gitConfig, "deploymentEnabled")) {
+    if (gitConfig.deploymentEnabled !== false) fail("PLATFORM_FILE_MODIFIED", "The platform-owned vercel.json git.deploymentEnabled setting cannot be removed or changed.");
   } else {
-    vercel = { ...vercel, git: { ...(typeof vercel.git === "object" && vercel.git ? vercel.git as object : {}), deploymentEnabled: false } };
+    vercel = { ...vercel, git: { ...gitConfig, deploymentEnabled: false } };
     const packageJson = JSON.parse(await fs.readFile(path.join(repoPath, "package.json"), "utf8")) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
     const deps = { ...packageJson.dependencies, ...packageJson.devDependencies };
     if (deps.vite && !deps.nitro) vercel.rewrites ??= [{ source: "/(.*)", destination: "/index.html" }];
-    await fs.writeFile(vercelPath, `${JSON.stringify(vercel, null, 2)}\n`, { flag: "wx" }).catch(async (error) => {
+    validateVercelConfig(JSON.stringify(vercel));
+    await fs.writeFile(vercelPath, `${JSON.stringify(vercel, null, 2)}\n`, vercelExists ? undefined : { flag: "wx" }).catch(async (error) => {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     });
   }
@@ -96,6 +103,7 @@ function validateVercelConfig(content: string): void {
   let config: Record<string, unknown>;
   try { config = JSON.parse(content) as Record<string, unknown>; } catch { fail("VERCEL_CONFIG_INVALID", "vercel.json must contain valid JSON."); }
   if (Object.keys(config!).some((key) => !ALLOWED_VERCEL_KEYS.has(key))) fail("VERCEL_CONFIG_FORBIDDEN", "vercel.json contains a setting that is not allowed.");
+  if (config!.$schema !== undefined && typeof config!.$schema !== "string") fail("VERCEL_CONFIG_INVALID", "vercel.json $schema must be a string.");
   const git = config!.git as Record<string, unknown> | undefined;
   if (!git || git.deploymentEnabled !== false || Object.keys(git).some((key) => key !== "deploymentEnabled")) fail("PLATFORM_FILE_MODIFIED", "The platform-owned vercel.json git.deploymentEnabled setting cannot be removed or changed.");
   const rewrites = config!.rewrites;

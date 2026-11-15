@@ -137,6 +137,17 @@ export const imageGenerationContracts = {
     input: z.object({ requestId: z.string().min(1) }).strict(),
     output: ImageGenerationOperationOutcomeSchema,
   }),
+  saveBlueprintImage: defineContract({
+    channel: "image-generation:save-blueprint-image",
+    input: z.object({
+      targetAppId: z.number().int().positive(),
+      assetSlot: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/i),
+      prompt: z.string().min(1).max(2000),
+      mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+      base64: z.string().min(1).max(2_800_000),
+    }).strict(),
+    output: ImageGenerationResultViewSchema,
+  }),
 } as const;
 
 type MutuallyAssignable<Left, Right> = [Left] extends [Right]

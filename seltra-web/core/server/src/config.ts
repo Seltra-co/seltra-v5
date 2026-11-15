@@ -30,6 +30,7 @@ const schema = z.object({
   GITHUB_APP_ID: z.string().optional(),
   GITHUB_INSTALLATION_ID: z.string().optional(),
   GITHUB_APP_INSTALLATION_ID: z.string().optional(),
+  GITHUB_APP_PRIVATE_KEY: z.string().optional(),
   GITHUB_PRIVATE_KEY: z.string().optional(),
   GITHUB_APP_PRIVATE_KEY_B64: z.string().optional(),
   VERCEL_TOKEN: z.string().optional(),
@@ -43,6 +44,7 @@ const schema = z.object({
   R2_BUCKET_NAME: z.string().optional(),
   R2_BUCKET_ROUTES: z.string().optional(),
   R2_BUCKET_WORKSPACES: z.string().optional(),
+  R2_BUCKET_ASSETS: z.string().optional(),
   WORKSPACE_MASTER_KEY: z.string().optional(),
   PUBLISH_GIT_AUTHOR_NAME: z.string().optional(),
   PUBLISH_GIT_AUTHOR_EMAIL: z.string().optional(),
@@ -192,6 +194,7 @@ export type ResolvedPublishConfig = {
   r2Endpoint?: string;
   routesBucket?: string;
   workspacesBucket?: string;
+  assetsBucket?: string;
   masterKey?: Buffer;
   publicApiUrl?: string;
   gitAuthorName?: string;
@@ -212,7 +215,10 @@ function resolvePublishConfig(value: z.infer<typeof schema>): ResolvedPublishCon
   const restoreEnabled = value.WORKSPACE_RESTORE_ENABLED === "true";
   const durabilityEnabled = persistenceEnabled || restoreEnabled;
   const deployMode = value.DEPLOY_MODE;
-  const githubPrivateKeyRaw = value.GITHUB_PRIVATE_KEY?.trim() || value.GITHUB_APP_PRIVATE_KEY_B64;
+  const githubPrivateKeyRaw =
+    value.GITHUB_PRIVATE_KEY?.trim() ||
+    value.GITHUB_APP_PRIVATE_KEY?.trim() ||
+    value.GITHUB_APP_PRIVATE_KEY_B64;
   let githubPrivateKeyPem: string | undefined;
   let githubPrivateKeyValid = false;
   if (githubPrivateKeyRaw) {
@@ -225,7 +231,7 @@ function resolvePublishConfig(value: z.infer<typeof schema>): ResolvedPublishCon
       try {
         const key = createPrivateKey(candidate);
         if (key.asymmetricKeyType !== "rsa") continue;
-        githubPrivateKeyPem = candidate;
+        githubPrivateKeyPem = key.export({ format: "pem", type: "pkcs8" }).toString();
         githubPrivateKeyValid = true;
         break;
       } catch { /* only report the variable name in configurationErrors */ }
@@ -239,6 +245,7 @@ function resolvePublishConfig(value: z.infer<typeof schema>): ResolvedPublishCon
   } catch { /* report missing/invalid by variable name */ }
   const routesBucket = value.R2_BUCKET_ROUTES?.trim() || value.R2_BUCKET_NAME?.trim() || undefined;
   const workspacesBucket = value.R2_BUCKET_WORKSPACES?.trim() || value.R2_BUCKET_NAME?.trim() || undefined;
+  const assetsBucket = value.R2_BUCKET_ASSETS?.trim() || workspacesBucket;
   const configurationErrors: string[] = [];
   if (enabled || durabilityEnabled) {
     for (const [present, name] of [
@@ -290,6 +297,7 @@ function resolvePublishConfig(value: z.infer<typeof schema>): ResolvedPublishCon
     r2Endpoint,
     routesBucket,
     workspacesBucket,
+    assetsBucket,
     masterKey,
     publicApiUrl,
     gitAuthorName: value.PUBLISH_GIT_AUTHOR_NAME?.trim(),
@@ -350,6 +358,32 @@ export function loadConfig(
       return replacement ?? "";
     });
   };
+  const addAllowedOrigin = (allowedOrigins: Set<string>, rawOrigin: string) => {
+    try {
+      const parsed = new URL(rawOrigin);
+      const origin = parsed.origin;
+      allowedOrigins.add(origin);
+      const hostname = parsed.hostname.replace(/^\[(.*)\]$/, "$1");
+      const portSuffix = parsed.port ? `:${parsed.port}` : "";
+      const equivalentHosts = new Set<string>();
+      if (hostname === "localhost") {
+        equivalentHosts.add("127.0.0.1");
+        equivalentHosts.add("::1");
+      } else if (hostname === "127.0.0.1" || hostname === "::1") {
+        equivalentHosts.add("localhost");
+      }
+      for (const equivalentHost of equivalentHosts) {
+        const formatted = equivalentHost.includes(":") ? `[${equivalentHost}]` : equivalentHost;
+        allowedOrigins.add(`${parsed.protocol}//${formatted}${portSuffix}`);
+      }
+    } catch {
+      console.warn(JSON.stringify({
+        level: "warn",
+        event: "invalid_allowed_origin",
+        origin: rawOrigin,
+      }));
+    }
+  };
   const modelBaseUrl = (
     expandBaseUrlTemplate(value.MODEL_BASE_URL) ||
     (value.MODEL_ACCOUNT_ID
@@ -360,15 +394,7 @@ export function loadConfig(
   for (const entry of value.GATEWAY_ALLOWED_ORIGINS.split(",")) {
     const trimmed = entry.trim();
     if (!trimmed) continue;
-    try {
-      allowedOrigins.add(new URL(trimmed).origin);
-    } catch {
-      console.warn(JSON.stringify({
-        level: "warn",
-        event: "invalid_allowed_origin",
-        origin: trimmed,
-      }));
-    }
+    addAllowedOrigin(allowedOrigins, trimmed);
   }
   if (modelBaseUrl.includes("${") || modelBaseUrl.includes("}")) {
     throw new Error(

@@ -1113,7 +1113,7 @@ export function ensureWebRuntimeViteHmrConfig(appPath: string): string {
   const userImport = userConfig
     ? `import userConfig from ${JSON.stringify(`./${userConfig}`)};`
     : `const userConfig = {};`;
-  const source = `${userImport}\nimport { mergeConfig } from "vite";\nexport default async (env) => {\n  const base = typeof userConfig === "function" ? await userConfig(env) : userConfig;\n  return mergeConfig(base ?? {}, { server: { hmr: { host: process.env.VITE_HMR_HOST, clientPort: Number(process.env.VITE_HMR_CLIENT_PORT), protocol: process.env.VITE_HMR_PROTOCOL, path: process.env.VITE_HMR_PATH } } });\n};\n`;
+  const source = `${userImport}\nimport { mergeConfig } from "vite";\nexport default async (env) => {\n  const base = typeof userConfig === "function" ? await userConfig(env) : userConfig;\n  const hmrConfig = process.env.VITE_HMR_HOST && Number.isFinite(Number(process.env.VITE_HMR_CLIENT_PORT))\n    ? { host: process.env.VITE_HMR_HOST, clientPort: Number(process.env.VITE_HMR_CLIENT_PORT), protocol: process.env.VITE_HMR_PROTOCOL === "wss" ? "wss" : "ws", path: process.env.VITE_HMR_PATH ?? "/" }\n    : false;\n  return mergeConfig(base ?? {}, { server: { hmr: hmrConfig } });\n};\n`;
   fs.writeFileSync(wrapperPath, source, "utf8");
   return ".dyad-vite-hmr.config.mjs";
 }

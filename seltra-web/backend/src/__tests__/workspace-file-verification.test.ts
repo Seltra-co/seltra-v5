@@ -11,10 +11,13 @@ const mockProjectFileUpsert = jest.fn(async ({ where, create, update }: { where:
 })
 const mockRunEventCreate = jest.fn()
 const mockProjectAssetCreate = jest.fn()
+const mockProjectAssetFindFirst = jest.fn().mockResolvedValue(null)
+const mockProjectAssetUpdate = jest.fn()
 const mockTx = {
   runEvent: { findUnique: jest.fn().mockResolvedValue(null), create: mockRunEventCreate },
   tenantApp: { findUnique: jest.fn().mockResolvedValue(mockApp) },
   projectFile: { upsert: mockProjectFileUpsert },
+  projectAsset: { findFirst: mockProjectAssetFindFirst, update: mockProjectAssetUpdate },
   $queryRaw: jest.fn().mockResolvedValue([{ lastEventSeq: 1 }]),
 }
 const mockTransaction = jest.fn((callback: (tx: typeof mockTx) => unknown, _options?: unknown) => callback(mockTx))
@@ -31,7 +34,7 @@ jest.mock('../db', () => ({
       findMany: jest.fn().mockResolvedValue([mockApp]),
     },
     projectFile: { findMany: (...args: unknown[]) => mockProjectFileFindMany(...args as Parameters<typeof mockProjectFileFindMany>), upsert: (...args: unknown[]) => mockProjectFileUpsert(...args as Parameters<typeof mockProjectFileUpsert>) },
-    projectAsset: { findMany: jest.fn().mockResolvedValue([]), create: mockProjectAssetCreate, findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
+    projectAsset: { findMany: jest.fn().mockResolvedValue([]), create: mockProjectAssetCreate, findFirst: mockProjectAssetFindFirst, update: mockProjectAssetUpdate },
     fileBlob: { createMany: jest.fn().mockResolvedValue({ count: 1 }) },
     projectSnapshot: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn() },
     $transaction: (callback: (tx: typeof mockTx) => unknown, options?: unknown) => mockTransaction(callback, options),
@@ -50,6 +53,8 @@ describe('workspace file keys and verification evidence', () => {
     mockProjectFileUpsert.mockClear()
     mockProjectFileFindMany.mockClear()
     mockProjectAssetCreate.mockClear()
+    mockProjectAssetFindFirst.mockReset().mockResolvedValue(null)
+    mockProjectAssetUpdate.mockReset()
     mockTransaction.mockClear()
     mockTx.runEvent.findUnique.mockReset().mockResolvedValue(null)
     mockTx.runEvent.create.mockReset()
@@ -110,6 +115,21 @@ describe('workspace file keys and verification evidence', () => {
     expect(mockProjectAssetCreate).not.toHaveBeenCalled()
   })
 
+  it('persists regenerated image outcomes only for the active slot and safe asset paths', async () => {
+    mockProjectAssetFindFirst.mockResolvedValue({ id: 'asset-1', status: 'generating' })
+    mockProjectAssetUpdate.mockResolvedValue({ id: 'asset-1', status: 'generated' })
+    const builder = new BuilderService({} as never, {} as never)
+
+    await builder.completeAssetRetry('Bearer user-token', 'tenant-1', '7', 'hero', { status: 'generated', url: 'public/assets/hero-2.webp' })
+
+    expect(mockProjectAssetUpdate).toHaveBeenCalledWith({
+      where: { id: 'asset-1' },
+      data: { status: 'generated', sourceUrl: 'public/assets/hero-2.webp', license: null, attribution: null, error: null },
+    })
+    await expect(builder.completeAssetRetry('Bearer user-token', 'tenant-1', '7', 'hero', { status: 'generated', url: 'https://example.test/hero.png' }))
+      .rejects.toThrow('Generated asset result is invalid.')
+  })
+
   it('accepts browser QA evidence with clean arrays and a valid persisted screenshot', async () => {
     const run = new RunService({} as never)
     const events = [
@@ -127,5 +147,43 @@ describe('workspace file keys and verification evidence', () => {
 
     const failures = await (run as any).completionFailures(tx, 'run-1', 'tenant-1') as string[]
     expect(failures).not.toContain('browser.qa must record a clean browser result and a saved screenshot')
+  })
+
+  it('allows degraded completion only with preview/build proof and a documented image fallback', async () => {
+    const run = new RunService({} as never)
+    const events = [
+      { type: 'build.result', payload: { executed: true, exitCode: 0 } },
+      { type: 'browser.qa', payload: { status: 'passed', consoleErrors: [], failedRequests: [], screenshotPath: '.dyad/media/qa-screenshot.png', screenshotBytes: 8, screenshotSha256: contentHash('png-bytes') } },
+      { type: 'manifest.verified', payload: { verified: true, pagesRouted: true, assetsVerified: true, packageScriptsValid: true, mismatches: [] } },
+      { type: 'preview.ready', payload: { status: 200, previewUrl: 'https://preview.example.test/' } },
+      { type: 'asset.updated', payload: { slot: 'hero', state: 'fallback' } },
+    ]
+    const tx = {
+      runEvent: { findMany: jest.fn().mockResolvedValue(events) },
+      tenantApp: { findMany: jest.fn().mockResolvedValue([{ status: 'preview_ready', previewUrl: 'https://preview.example.test/' }]) },
+      projectFile: { count: jest.fn().mockResolvedValue(1) },
+      projectAsset: { findMany: jest.fn().mockResolvedValue([{ status: 'fallback', sourceUrl: 'data:image/svg+xml,...' }]) },
+    }
+
+    await expect((run as any).completionFailures(tx, 'run-1', 'tenant-1', true)).resolves.toEqual([])
+    await expect((run as any).completionFailures({ ...tx, runEvent: { findMany: jest.fn().mockResolvedValue(events.slice(0, -1)) } }, 'run-1', 'tenant-1', true))
+      .resolves.toContain('degraded completion must document a placeholder image or unavailable browser QA')
+
+    const unavailableQaEvents = events.slice(0, -1).map((event) => event.type === 'browser.qa'
+      ? { ...event, payload: { status: 'unavailable' } }
+      : event)
+    await expect((run as any).completionFailures({ ...tx, runEvent: { findMany: jest.fn().mockResolvedValue(unavailableQaEvents) } }, 'run-1', 'tenant-1', true))
+      .resolves.toEqual([])
+
+    const missingProof = await (run as any).completionFailures({
+      ...tx,
+      runEvent: { findMany: jest.fn().mockResolvedValue([{ type: 'asset.updated', payload: { slot: 'hero', state: 'fallback' } }]) },
+      tenantApp: { findMany: jest.fn().mockResolvedValue([]) },
+      projectFile: { count: jest.fn().mockResolvedValue(0) },
+    }, 'run-1', 'tenant-1', true) as string[]
+    expect(missingProof).toContain('build.result must record an executed build with exitCode 0')
+    expect(missingProof).toContain('manifest.verified must confirm routes, referenced assets, package scripts, and a clean workspace diff')
+    expect(missingProof).toContain('the run has no persisted file manifest rows')
+    expect(missingProof).toContain('preview.ready must record HTTP 200 and a preview URL')
   })
 })

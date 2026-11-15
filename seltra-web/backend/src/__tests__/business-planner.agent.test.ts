@@ -33,4 +33,35 @@ describe('business planner minimum questionnaire', () => {
     expect(result.questions).toHaveLength(1)
     expect(result.questions[0].question).toContain('clothing')
   })
+
+  it('does not ask commerce questions for a portfolio prompt', async () => {
+    ;(isModelAvailable as jest.Mock).mockReturnValue(true)
+    ;(callCloudflare as jest.Mock).mockResolvedValue({
+      content: JSON.stringify({
+        readyToBuild: false,
+        questions: [{
+          id: 'audience',
+          question: 'Who are the main customers for your products, and what design style should the store use?',
+          why: 'This helps shape the storefront.',
+        }],
+        inferredSummary: 'A graphic designer portfolio.',
+      }),
+    })
+
+    const result = await planFromPrompt('A portfolio page for a freelance graphic designer')
+
+    expect(result.questions).toHaveLength(1)
+    expect(result.questions[0].question).toMatch(/clients or projects/i)
+    expect(result.questions[0].question).not.toMatch(/products|store/i)
+  })
+
+  it('asks a project-relevant fallback question if the planner is unavailable', async () => {
+    ;(isModelAvailable as jest.Mock).mockReturnValue(false)
+    ;(chat as jest.Mock).mockRejectedValue(new Error('unavailable'))
+
+    const result = await planFromPrompt('A portfolio page for a freelance graphic designer')
+
+    expect(result.questions).toHaveLength(1)
+    expect(result.questions[0].question).toMatch(/clients or projects/i)
+  })
 })

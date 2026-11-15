@@ -7,6 +7,8 @@ import { createArchive, extractArchive } from "./archive.js";
 import { GithubPublisher } from "./github.js";
 import { R2ObjectStore } from "./r2.js";
 import { callCommitWorkingTree, callSnapshotUserData } from "./runtime_rpc.js";
+import { probeWorkspacePreviewStatus } from "./preview_probe.js";
+import { commitWorkspaceTree } from "./source_commit.js";
 import type { WorkspaceRuntime } from "../workspace_supervisor.js";
 import type { ResolvedPublishConfig } from "../config.js";
 
@@ -56,34 +58,116 @@ export class WorkspaceDurability {
   private async persistOnce(runtime: WorkspaceRuntime, reason: SavepointReason, turnId: string, operationId: string): Promise<void> {
     this.assertConfigured();
     let backupPath: string | undefined;
+    let stage = "journal_begin";
     try {
-      await runtime.syncFromExecution?.();
       const journal = await this.backend<{ status: string }>("workspace-persistence/begin", { userId: runtime.userId, workspaceKey: runtime.workspaceKey, operationId, reason });
       if (journal.status === "SAFE_TO_DESTROY") return;
+      stage = "workspace_sync";
+      const workspaceSync = await runtime.syncAndVerify?.(turnId);
+      if (!workspaceSync?.verified) {
+        throw Object.assign(
+          new Error("Workspace files were not verified before persistence."),
+          { code: "WORKSPACE_SYNC_UNVERIFIED" },
+        );
+      }
+      stage = "snapshot_user_data";
       const child = await callSnapshotUserData(runtime);
       backupPath = child.backupPath;
       assertWithin(path.resolve(this.workspaceRoot, "ws", runtime.workspaceKey, "tmp"), backupPath);
       const savedApps: SnapshotApp[] = [];
       for (const app of child.apps) {
+        stage = "preview_probe";
+        const previewStatus = await probeWorkspacePreviewStatus(runtime, app.coreAppId, this.fetcher);
+        if (previewStatus !== 200) {
+          throw Object.assign(
+            new Error("The app preview is not ready for a complete save point."),
+            { code: "PREVIEW_NOT_READY" },
+          );
+        }
+        stage = "repository_info";
         const metadata = await this.backend<BackendApp>("publish/repository-info", { userId: runtime.userId, workspaceKey: runtime.workspaceKey, coreAppId: app.coreAppId });
+        stage = "github_repository";
         const repo = await this.github!.ensureRepo(metadata.tenantAppId);
         const author = this.config.gitAuthorName && this.config.gitAuthorEmail ? { name: this.config.gitAuthorName, email: this.config.gitAuthorEmail } : undefined;
         if (!author) throw Object.assign(new Error("Publish commit identity is not configured."), { code: "CONFIG_MISSING" });
-        const committed = await callCommitWorkingTree(runtime, { appId: app.coreAppId, author, turnId, state: reason === "shutdown" ? "interrupted" : "complete" });
-        const appPath = path.resolve(path.join(path.resolve(this.workspaceRoot, "ws", runtime.workspaceKey, "apps"), committed.relPath));
-        const savedSha = await this.github!.pushApp(appPath, repo, "main");
-        if (!await this.github!.verifyRemoteSha(repo, savedSha, "main")) throw Object.assign(new Error("GitHub did not retain the pushed commit."), { code: "GITHUB_PUSH_FAILED" });
-        await this.backend("publish/repository-saved", {
-          userId: runtime.userId, workspaceKey: runtime.workspaceKey, coreAppId: app.coreAppId,
-          githubRepoId: repo.id, githubRepoFullName: repo.fullName, githubRepoVisibility: repo.visibility, githubDefaultBranch: repo.defaultBranch,
-        });
-        await this.backend("github/push-result", { userId: runtime.userId, workspaceKey: runtime.workspaceKey, coreAppId: app.coreAppId, sha: savedSha, kind: reason === "shutdown" ? "INTERRUPTED" : "COMPLETE" });
-        savedApps.push({ coreAppId: app.coreAppId, relPath: committed.relPath, repoFullName: repo.fullName, sha: savedSha });
+        stage = "commit_working_tree";
+        const appsRoot = path.resolve(this.workspaceRoot, "ws", runtime.workspaceKey, "apps");
+        const sourceRelPath = safeRelative(app.relPath);
+        const sourceAppPath = path.resolve(appsRoot, sourceRelPath);
+        assertWithin(appsRoot, sourceAppPath);
+        let committed: { appId: number; relPath: string; sha: string; changed: boolean };
+        let pushAppPath: string;
+        let fallbackRoot: string | undefined;
+        try {
+          committed = await callCommitWorkingTree(runtime, { appId: app.coreAppId, author, turnId, state: reason === "shutdown" ? "interrupted" : "complete" });
+          pushAppPath = path.resolve(appsRoot, safeRelative(committed.relPath));
+          assertWithin(appsRoot, pushAppPath);
+        } catch (error) {
+          if ((error as { code?: string }).code !== "PLATFORM_FILE_MODIFIED") throw error;
+          const remoteSha = await this.github!.getBranchSha(repo, "main");
+          if (remoteSha) {
+            fallbackRoot = await fs.mkdtemp(path.join(path.dirname(backupPath!), `source-${app.coreAppId}-`));
+            const fallbackAppPath = path.join(fallbackRoot, "app");
+            try {
+              await this.github!.cloneApp(repo.fullName, remoteSha, fallbackAppPath);
+              await fs.cp(sourceAppPath, fallbackAppPath, {
+                recursive: true,
+                force: true,
+                filter: (source) => path.basename(source) !== ".git",
+              });
+              committed = await commitWorkspaceTree({
+                appId: app.coreAppId,
+                appPath: fallbackAppPath,
+                appsRoot: fallbackRoot,
+                author,
+                turnId,
+                state: reason === "shutdown" ? "interrupted" : "complete",
+              });
+              pushAppPath = fallbackAppPath;
+            } catch (fallbackError) {
+              await fs.rm(fallbackRoot, { recursive: true, force: true }).catch(() => undefined);
+              fallbackRoot = undefined;
+              throw fallbackError;
+            }
+          } else {
+            committed = await commitWorkspaceTree({
+              appId: app.coreAppId,
+              appPath: sourceAppPath,
+              appsRoot,
+              author,
+              turnId,
+              state: reason === "shutdown" ? "interrupted" : "complete",
+            });
+            pushAppPath = sourceAppPath;
+          }
+          console.warn(JSON.stringify({ event: "workspace_commit_fallback", workspaceKey: runtime.workspaceKey, appId: app.coreAppId, reason: "PLATFORM_FILE_MODIFIED", source: "verified_workspace_sync" }));
+        }
+        try {
+          stage = "github_push";
+          const pushStart = Date.now();
+          const savedSha = await this.github!.pushApp(pushAppPath, repo, "main");
+          if (!await this.github!.verifyRemoteSha(repo, savedSha, "main")) throw Object.assign(new Error("GitHub did not retain the pushed commit."), { code: "GITHUB_PUSH_FAILED" });
+          await this.backend("publish/repository-saved", {
+            userId: runtime.userId, workspaceKey: runtime.workspaceKey, coreAppId: app.coreAppId,
+            githubRepoId: repo.id, githubRepoFullName: repo.fullName, githubRepoVisibility: repo.visibility, githubDefaultBranch: repo.defaultBranch,
+          });
+          await this.backend("github/push-result", { userId: runtime.userId, workspaceKey: runtime.workspaceKey, coreAppId: app.coreAppId, sha: savedSha, kind: reason === "shutdown" ? "INTERRUPTED" : "COMPLETE" });
+          const filesCount = await countFiles(pushAppPath);
+          savedApps.push({ coreAppId: app.coreAppId, relPath: sourceRelPath, repoFullName: repo.fullName, sha: savedSha });
+          console.info(JSON.stringify({ event: "workspace_source_pushed", appId: app.coreAppId, repository: repo.fullName, branch: "main", sha: savedSha, runId: turnId }));
+          console.info(JSON.stringify({ event: "save.state", state: "saved", appId: app.coreAppId, sha: savedSha, filesCount, runId: turnId, reason, ms: Date.now() - pushStart }));
+        } finally {
+          if (fallbackRoot) await fs.rm(fallbackRoot, { recursive: true, force: true }).catch(() => undefined);
+        }
       }
       if (!savedApps.length) throw Object.assign(new Error("No application source was available to persist."), { code: "SOURCE_NOT_SAVED" });
+      stage = "source_verification";
       await this.backend("workspace-persistence/transition", { userId: runtime.userId, workspaceKey: runtime.workspaceKey, operationId, status: "SOURCE_VERIFIED", githubRevisions: Object.fromEntries(savedApps.map((app) => [String(app.coreAppId), app.sha])) });
+      stage = "r2_snapshot";
       const snapshot = await this.createSnapshot(runtime, child.backupPath, savedApps, operationId);
+      stage = "snapshot_verification";
       await this.backend("workspace-persistence/transition", { userId: runtime.userId, workspaceKey: runtime.workspaceKey, operationId, status: "SNAPSHOT_VERIFIED", snapshotVersion: snapshot.snapshotVersion, manifestKey: snapshot.manifestKey, bundleKey: snapshot.bundleKey, bundleSha256: snapshot.bundleSha256 });
+      stage = "safe_to_destroy";
       await this.backend("workspace-persistence/transition", { userId: runtime.userId, workspaceKey: runtime.workspaceKey, operationId, status: "SAFE_TO_DESTROY" });
       this.failures.delete(runtime.workspaceKey);
       this.lastPersistAt.set(runtime.workspaceKey, Date.now());
@@ -91,7 +175,7 @@ export class WorkspaceDurability {
       console.info(JSON.stringify({ event: "workspace_persisted", reason, appCount: savedApps.length }));
     } catch (error) {
       const code = (error as { code?: string }).code || "PERSISTENCE_FAILED";
-      console.error(JSON.stringify({ event: "workspace_persist_failed", code }));
+      console.error(JSON.stringify({ event: "workspace_persist_failed", stage, code }));
       await this.backend("workspace-persistence/transition", { userId: runtime.userId, workspaceKey: runtime.workspaceKey, operationId, status: "DEGRADED", errorCode: code }).catch(() => undefined);
       await this.recordDegraded(runtime, code);
       this.scheduleRetry(runtime, reason, turnId, operationId);
@@ -282,6 +366,23 @@ function unwrapRuntimeKey(masterKey: Buffer, workspaceKey: string, wrapped: Snap
 
 function deriveWorkspaceKey(masterKey: Buffer, workspaceKey: string): Buffer {
   return Buffer.from(hkdfSync("sha256", masterKey, Buffer.from(workspaceKey), Buffer.from("seltra-workspace-runtime-key-v1"), 32));
+}
+async function countFiles(root: string): Promise<number> {
+  let count = 0;
+  const walk = async (dir: string): Promise<void> => {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if ([".git", "node_modules", "dist", "build", ".next", "out"].includes(entry.name)) continue;
+        await walk(full);
+        continue;
+      }
+      if (entry.isFile()) count += 1;
+    }
+  };
+  await walk(root);
+  return count;
 }
 function sha256(buffer: Buffer): string { return createHash("sha256").update(buffer).digest("hex"); }
 function persistenceOperationId(workspaceKey: string, reason: SavepointReason, turnId: string): string {
